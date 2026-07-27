@@ -64,7 +64,7 @@
     "wait-on": "^8.0.3"
   },
   "build": {
-    "appId": "com.college.sharedclipboard",
+    "appId": "com.vijayapardhu.sharedclipboard",
     "productName": "Shared Clipboard",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "files": [

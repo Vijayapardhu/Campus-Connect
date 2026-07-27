@@ -1,8 +1,8 @@
 # Contributing to Shared Clipboard
 
-Thanks for being here. This project started as a college assignment and is open
-source because clipboard sync between laptops is a problem plenty of people have
-and very few good, private, offline answers exist for.
+Thanks for being here. Shared Clipboard is open source because moving something
+between two machines you already own is a problem plenty of people have, and
+very few good, private, offline answers exist for.
 
 Contributions of every size are welcome — a typo fix is a real contribution.
 You do not need to ask permission to start; just open an issue or a draft pull

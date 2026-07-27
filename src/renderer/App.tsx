@@ -502,6 +502,13 @@ export default function App() {
           onRename={(name) => api.updateDeviceName(name).then(setState)}
           onUpdateSettings={(patch) => api.updateSettings(patch).then(setState)}
           onConnectPeer={(host) => api.connectPeer(host, state.listenPort, '').then(setState)}
+          onOpenExternal={(url) => {
+            api.openExternal(url).then((result) => {
+              if (!result.ok) {
+                push(result.message, 'error');
+              }
+            });
+          }}
         />
       )}
 

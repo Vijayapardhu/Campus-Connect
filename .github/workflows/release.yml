@@ -1,0 +1,162 @@
+name: Release
+
+# Push a version tag and this builds installers for all three platforms and
+# publishes them to a GitHub Release:
+#
+#   npm version patch      (or minor / major — this also creates the tag)
+#   git push --follow-tags
+#
+# `workflow_dispatch` re-runs it by hand if a build needs redoing.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and publish'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+
+      - run: npm run typecheck
+      - run: npm test
+
+  build:
+    name: Build ${{ matrix.label }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+            command: npm run package:win
+            artifacts: release/*.exe
+          - os: macos-latest
+            label: macOS
+            command: npm run package:mac
+            artifacts: release/*.dmg
+          - os: ubuntu-latest
+            label: Linux
+            command: npm run package:linux
+            artifacts: release/*.AppImage
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build installer
+        run: ${{ matrix.command }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.label }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect installers
+        uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+
+      - name: List what will be published
+        run: ls -lh installers
+
+      - name: Write release notes
+        id: notes
+        run: |
+          VERSION="${{ github.event.inputs.tag || github.ref_name }}"
+          {
+            echo "## Shared Clipboard ${VERSION}"
+            echo
+            echo "Copy on one machine, paste on another. Encrypted, room-based, and entirely on your own network."
+            echo
+            echo "### Download"
+            echo
+            echo "| Platform | File |"
+            echo "|----------|------|"
+            for f in installers/*.exe;      do [ -e "$f" ] && echo "| Windows 10/11 | \`$(basename "$f")\` |"; done
+            for f in installers/*.dmg;      do [ -e "$f" ] && echo "| macOS | \`$(basename "$f")\` |"; done
+            for f in installers/*.AppImage; do [ -e "$f" ] && echo "| Ubuntu / Linux | \`$(basename "$f")\` |"; done
+            echo
+            echo "Install it on **both** machines you want to sync, then create a room on one and join it from the other."
+            echo
+            echo "> The installers are not code-signed, so Windows SmartScreen shows a warning — choose **More info → Run anyway**. On macOS, right-click the app and choose **Open** the first time. On Ubuntu, \`chmod +x\` the AppImage before running it."
+            echo
+            echo "### What changed"
+          } > notes.md
+
+          # Everything since the previous tag, minus the noise.
+          PREVIOUS=$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)
+          if [ -n "$PREVIOUS" ]; then
+            echo >> notes.md
+            git log --no-merges --pretty='- %s' "${PREVIOUS}..${VERSION}" >> notes.md
+            echo >> notes.md
+            echo "**Full changelog:** https://github.com/${{ github.repository }}/compare/${PREVIOUS}...${VERSION}" >> notes.md
+          else
+            echo >> notes.md
+            echo "First public release." >> notes.md
+          fi
+
+          {
+            echo
+            echo "---"
+            echo
+            echo "Built by [Vijaya Pardhu](https://github.com/Vijayapardhu) · [Documentation](https://vijayapardhu.github.io/Clipboard/) · MIT licensed"
+          } >> notes.md
+
+          cat notes.md
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: Shared Clipboard ${{ github.event.inputs.tag || github.ref_name }}
+          body_path: notes.md
+          files: installers/*
+          draft: false
+          # A tag with a suffix (v1.0.0-beta.1) publishes as a prerelease.
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}

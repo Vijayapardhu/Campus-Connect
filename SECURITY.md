@@ -16,9 +16,9 @@ Please include:
 - The version you tested, and your operating system.
 
 You can expect an acknowledgement within a few days. This is a small project
-maintained by a student, so please be patient — but the security model is the
-part we care most about getting right, so these reports go to the front of the
-queue.
+with a small maintainer team, so please be patient — but the security model is
+the part we care most about getting right, so these reports go to the front of
+the queue.
 
 ## Supported versions
 

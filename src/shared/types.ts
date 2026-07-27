@@ -194,6 +194,7 @@ export const MAX_FONT_SCALE = 1.3;
 export type AppState = {
   deviceId: string;
   deviceName: string;
+  appVersion: string;
   listenPort: number;
   localAddress: string;
   peers: PeerInfo[];
@@ -209,3 +210,13 @@ export type ActionResult = {
   ok: boolean;
   message: string;
 };
+
+/** Shown in Settings → About. Single source of truth for credit and links. */
+export const APP_INFO = {
+  name: 'Shared Clipboard',
+  author: 'Vijaya Pardhu',
+  authorUrl: 'https://github.com/Vijayapardhu',
+  repositoryUrl: 'https://github.com/Vijayapardhu/Clipboard',
+  websiteUrl: 'https://vijayapardhu.github.io/Clipboard/',
+  license: 'MIT'
+} as const;

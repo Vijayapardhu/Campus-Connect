@@ -3,13 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shared Clipboard — copy on one laptop, paste on another</title>
-<meta name="description" content="An encrypted, room-based clipboard and chat for devices on the same network. No cloud, no account, no data leaving your WiFi. Open source, MIT licensed.">
+<title>Shared Clipboard — copy on one machine, paste on another</title>
+<meta name="description" content="An encrypted, room-based clipboard and chat for devices on the same network. No cloud, no account, nothing leaving your WiFi. Free and open source, by Vijaya Pardhu.">
+<meta name="author" content="Vijaya Pardhu">
 <meta name="theme-color" content="#4f46e5">
 
 <meta property="og:type" content="website">
-<meta property="og:title" content="Shared Clipboard — copy on one laptop, paste on another">
-<meta property="og:description" content="An encrypted, room-based clipboard for devices on the same network. No cloud, no account. Open source.">
+<meta property="og:title" content="Shared Clipboard — copy on one machine, paste on another">
+<meta property="og:description" content="An encrypted, room-based clipboard for devices on the same network. No cloud, no account. Built by Vijaya Pardhu.">
 <meta property="og:url" content="https://vijayapardhu.github.io/Clipboard/">
 <meta property="og:image" content="https://vijayapardhu.github.io/Clipboard/screenshots/clipboard-light.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -20,11 +21,12 @@
 /* ============================================================ tokens ==== */
 :root{
   --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;
-  --space-6:24px;--space-8:32px;--space-10:40px;--space-12:56px;--space-16:80px;
+  --space-6:24px;--space-8:32px;--space-10:40px;--space-12:56px;--space-16:80px;--space-20:112px;
   --radius-sm:6px;--radius-md:8px;--radius-lg:12px;--radius-xl:16px;--radius-2xl:24px;--radius-full:999px;
   --font-sans:'Segoe UI Variable Display','Segoe UI',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
   --font-mono:'Cascadia Mono','SF Mono','JetBrains Mono',Consolas,monospace;
   --ease:cubic-bezier(.32,.72,0,1);
+  --ease-out:cubic-bezier(.16,1,.3,1);
   color-scheme:light;
   --bg:#fbfbfc;--bg-elevated:#fff;--bg-sunken:#f2f2f4;
   --bg-hover:rgba(16,17,21,.05);
@@ -33,9 +35,11 @@
   --accent:#4f46e5;--accent-2:#4338ca;--accent-soft:rgba(79,70,229,.1);--accent-text:#4338ca;
   --success:#15803d;--success-soft:rgba(21,128,61,.11);
   --warning:#b45309;--warning-soft:rgba(180,83,9,.12);
+  --danger:#be123c;--danger-soft:rgba(190,18,60,.1);
   --shadow-sm:0 1px 2px rgba(16,17,21,.06);
   --shadow-md:0 6px 20px rgba(16,17,21,.09);
   --shadow-lg:0 24px 60px rgba(16,17,21,.14);
+  --grid-line:rgba(16,17,21,.045);
 }
 @media (prefers-color-scheme:dark){
   :root[data-theme="auto"]{
@@ -47,9 +51,11 @@
     --accent:#6366f1;--accent-2:#818cf8;--accent-soft:rgba(99,102,241,.16);--accent-text:#a5b4fc;
     --success:#4ade80;--success-soft:rgba(74,222,128,.13);
     --warning:#fbbf24;--warning-soft:rgba(251,191,36,.13);
+    --danger:#fb7185;--danger-soft:rgba(251,113,133,.13);
     --shadow-sm:0 1px 2px rgba(0,0,0,.4);
     --shadow-md:0 6px 24px rgba(0,0,0,.5);
     --shadow-lg:0 28px 70px rgba(0,0,0,.65);
+    --grid-line:rgba(255,255,255,.035);
   }
 }
 :root[data-theme="dark"]{
@@ -61,18 +67,22 @@
   --accent:#6366f1;--accent-2:#818cf8;--accent-soft:rgba(99,102,241,.16);--accent-text:#a5b4fc;
   --success:#4ade80;--success-soft:rgba(74,222,128,.13);
   --warning:#fbbf24;--warning-soft:rgba(251,191,36,.13);
+  --danger:#fb7185;--danger-soft:rgba(251,113,133,.13);
   --shadow-sm:0 1px 2px rgba(0,0,0,.4);
   --shadow-md:0 6px 24px rgba(0,0,0,.5);
   --shadow-lg:0 28px 70px rgba(0,0,0,.65);
+  --grid-line:rgba(255,255,255,.035);
 }
 
 /* ============================================================= reset ==== */
 *,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth}
 body{
   margin:0;font-family:var(--font-sans);font-size:16px;line-height:1.6;
   color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
 }
-h1,h2,h3,h4,p,ul,ol{margin:0}
+h1,h2,h3,h4,p,ul,ol,figure{margin:0}
 ul{padding:0;list-style:none}
 img{max-width:100%;height:auto;display:block}
 a{color:var(--accent-text);text-decoration:none}
@@ -80,64 +90,100 @@ a:hover{text-decoration:underline}
 button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
 :focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:var(--radius-sm)}
 code{font-family:var(--font-mono);font-size:.88em}
+
+/* ==================================================== scroll reveal ==== */
+.reveal{opacity:0;transform:translateY(18px);transition:opacity .7s var(--ease-out),transform .7s var(--ease-out)}
+.reveal.in{opacity:1;transform:none}
+.reveal[data-delay="1"]{transition-delay:.07s}
+.reveal[data-delay="2"]{transition-delay:.14s}
+.reveal[data-delay="3"]{transition-delay:.21s}
+.reveal[data-delay="4"]{transition-delay:.28s}
+.reveal[data-delay="5"]{transition-delay:.35s}
+
 @media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+  .reveal{opacity:1;transform:none}
 }
 
 /* ============================================================ layout ==== */
 .wrap{width:100%;max-width:1120px;margin:0 auto;padding:0 var(--space-6)}
-.section{padding:var(--space-16) 0}
+.narrow{max-width:820px}
+.section{padding:var(--space-20) 0}
+/* So an anchor link does not land underneath the sticky header. */
+section[id],[id]{scroll-margin-top:86px}
 .section--tight{padding:var(--space-12) 0}
 .section--sunken{background:var(--bg-sunken);border-block:1px solid var(--border)}
+@media (max-width:700px){.section{padding:var(--space-16) 0}}
 
 .eyebrow{
+  display:inline-flex;align-items:center;gap:var(--space-2);
   font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
   color:var(--accent-text);margin-bottom:var(--space-3);
 }
-.h2{font-size:clamp(26px,3.4vw,38px);line-height:1.15;letter-spacing:-.02em;font-weight:700}
+.eyebrow::before{content:'';width:18px;height:2px;border-radius:2px;background:currentColor;opacity:.55}
+.center .eyebrow::before{display:none}
+.h2{font-size:clamp(27px,3.6vw,40px);line-height:1.12;letter-spacing:-.025em;font-weight:720}
 .h3{font-size:19px;font-weight:650;letter-spacing:-.01em}
 .lede{font-size:clamp(16px,1.7vw,18px);color:var(--text-2);max-width:62ch;margin-top:var(--space-4)}
 .center{text-align:center}
 .center .lede{margin-left:auto;margin-right:auto}
+.center .eyebrow{justify-content:center}
 
 /* ============================================================ header ==== */
 .topnav{
   position:sticky;top:0;z-index:50;
-  background:color-mix(in srgb,var(--bg) 82%,transparent);
-  -webkit-backdrop-filter:saturate(180%) blur(12px);
-  backdrop-filter:saturate(180%) blur(12px);
-  border-bottom:1px solid var(--border);
+  background:color-mix(in srgb,var(--bg) 80%,transparent);
+  -webkit-backdrop-filter:saturate(180%) blur(14px);
+  backdrop-filter:saturate(180%) blur(14px);
+  border-bottom:1px solid transparent;
+  transition:border-color .3s var(--ease),background .3s var(--ease);
 }
-.topnav__inner{display:flex;align-items:center;gap:var(--space-4);height:60px}
-.brand{display:flex;align-items:center;gap:var(--space-3);font-weight:650;letter-spacing:-.01em}
+.topnav.is-stuck{border-bottom-color:var(--border)}
+.topnav__inner{display:flex;align-items:center;gap:var(--space-4);height:62px}
+.brand{display:flex;align-items:center;gap:var(--space-3);font-weight:660;letter-spacing:-.015em}
 .brand:hover{text-decoration:none}
 .brand__mark{
-  width:28px;height:28px;border-radius:var(--radius-md);background:var(--accent);
+  width:30px;height:30px;border-radius:9px;background:var(--accent);
   display:grid;place-items:center;color:#fff;flex-shrink:0;
+  box-shadow:0 2px 10px color-mix(in srgb,var(--accent) 40%,transparent);
+  transition:transform .3s var(--ease);
 }
+.brand:hover .brand__mark{transform:rotate(-8deg) scale(1.06)}
 .brand span{color:var(--text)}
 .topnav__links{display:flex;align-items:center;gap:var(--space-5);margin-left:auto}
-/* :not(.btn) so this never overrides a button's own colour. */
-.topnav__links a:not(.btn){color:var(--text-2);font-size:14px;font-weight:500}
+.topnav__links a:not(.btn){
+  position:relative;color:var(--text-2);font-size:14px;font-weight:500;
+}
+.topnav__links a:not(.btn)::after{
+  content:'';position:absolute;left:0;right:0;bottom:-5px;height:2px;border-radius:2px;
+  background:var(--accent);transform:scaleX(0);transform-origin:left;
+  transition:transform .25s var(--ease);
+}
 .topnav__links a:not(.btn):hover{color:var(--text)}
+.topnav__links a:not(.btn):hover::after{transform:scaleX(1)}
 .topnav__links a:hover{text-decoration:none}
-@media (max-width:820px){.topnav__links a:not(.btn){display:none}}
+@media (max-width:900px){.topnav__links a:not(.btn){display:none}}
 
 /* ========================================================== buttons ==== */
 .btn{
+  position:relative;overflow:hidden;
   display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);
-  height:42px;padding:0 var(--space-5);border-radius:var(--radius-md);
+  height:44px;padding:0 var(--space-5);border-radius:var(--radius-md);
   border:1px solid var(--border);background:var(--bg-elevated);color:var(--text);
-  font-size:15px;font-weight:550;white-space:nowrap;
-  transition:background .16s var(--ease),border-color .16s var(--ease),transform .16s var(--ease);
+  font-size:15px;font-weight:560;white-space:nowrap;
+  transition:background .2s var(--ease),border-color .2s var(--ease),
+             transform .2s var(--ease),box-shadow .2s var(--ease);
 }
-.btn:hover{background:var(--bg-hover);border-color:var(--border-2);text-decoration:none;transform:translateY(-1px)}
-.btn--primary{background:var(--accent);border-color:transparent;color:#fff}
-.btn--primary:hover{background:var(--accent-2);border-color:transparent}
+.btn:hover{background:var(--bg-hover);border-color:var(--border-2);text-decoration:none;transform:translateY(-2px);box-shadow:var(--shadow-sm)}
+.btn:active{transform:translateY(0)}
+.btn--primary{background:var(--accent);border-color:transparent;color:#fff;box-shadow:0 3px 14px color-mix(in srgb,var(--accent) 34%,transparent)}
+.btn--primary:hover{background:var(--accent-2);border-color:transparent;box-shadow:0 8px 24px color-mix(in srgb,var(--accent) 40%,transparent)}
 .btn--sm{height:34px;padding:0 var(--space-3);font-size:14px}
 .btn--icon{width:34px;padding:0}
+.btn-row{display:flex;flex-wrap:wrap;gap:var(--space-3);margin-top:var(--space-6)}
+.center .btn-row{justify-content:center}
 
-/* Show whichever icon represents the theme you would switch *to*. */
 .icon-moon{display:none}
 @media (prefers-color-scheme:dark){
   :root[data-theme="auto"] .icon-sun{display:none}
@@ -147,31 +193,63 @@ code{font-family:var(--font-mono);font-size:.88em}
 :root[data-theme="dark"] .icon-moon{display:block}
 :root[data-theme="light"] .icon-sun{display:block}
 :root[data-theme="light"] .icon-moon{display:none}
-.btn-row{display:flex;flex-wrap:wrap;gap:var(--space-3);margin-top:var(--space-6)}
-.center .btn-row{justify-content:center}
 
 /* ============================================================= hero ==== */
-.hero{position:relative;overflow:hidden;padding:var(--space-16) 0 var(--space-12)}
-.hero::before{
-  content:'';position:absolute;inset:-40% 0 auto;height:620px;pointer-events:none;
-  background:radial-gradient(ellipse 60% 50% at 50% 45%,var(--accent-soft),transparent 70%);
+.hero{position:relative;overflow:hidden;padding:var(--space-20) 0 var(--space-16)}
+.hero__grid{
+  position:absolute;inset:0;pointer-events:none;
+  background-image:linear-gradient(var(--grid-line) 1px,transparent 1px),
+                   linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);
+  background-size:56px 56px;
+  mask-image:radial-gradient(ellipse 70% 55% at 50% 30%,#000,transparent 75%);
+  -webkit-mask-image:radial-gradient(ellipse 70% 55% at 50% 30%,#000,transparent 75%);
 }
+.hero__glow{
+  position:absolute;left:50%;top:-160px;width:900px;height:620px;translate:-50% 0;
+  pointer-events:none;
+  background:radial-gradient(ellipse 50% 50% at 50% 50%,var(--accent-soft),transparent 70%);
+  animation:breathe 9s ease-in-out infinite;
+}
+@keyframes breathe{0%,100%{opacity:.75;transform:scale(1)}50%{opacity:1;transform:scale(1.08)}}
 .hero__inner{position:relative}
 .hero h1{
-  font-size:clamp(36px,6vw,62px);line-height:1.04;letter-spacing:-.035em;font-weight:750;
-  max-width:16ch;margin-inline:auto;
+  font-size:clamp(38px,6.4vw,66px);line-height:1.02;letter-spacing:-.04em;font-weight:760;
+  max-width:15ch;margin-inline:auto;
 }
+.hero h1 em{font-style:normal;color:var(--accent-text);position:relative;white-space:nowrap}
+.hero h1 em::after{
+  content:'';position:absolute;left:0;right:0;bottom:.08em;height:.1em;border-radius:99px;
+  background:currentColor;opacity:.22;
+  transform:scaleX(0);transform-origin:left;
+  animation:underline 1s var(--ease-out) .5s forwards;
+}
+@keyframes underline{to{transform:scaleX(1)}}
 .hero .lede{font-size:clamp(17px,2vw,20px);margin-top:var(--space-5)}
 .pill{
   display:inline-flex;align-items:center;gap:var(--space-2);
-  height:28px;padding:0 var(--space-3);margin-bottom:var(--space-5);
+  height:30px;padding:0 var(--space-4);margin-bottom:var(--space-5);
   border-radius:var(--radius-full);border:1px solid var(--border);
   background:var(--bg-elevated);font-size:13px;font-weight:550;color:var(--text-2);
+  box-shadow:var(--shadow-sm);
 }
 .pill b{color:var(--text)}
+.pill__dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 3px var(--success-soft)}
 .hero__note{margin-top:var(--space-4);font-size:13.5px;color:var(--text-3)}
+.hero__by{
+  display:inline-flex;align-items:center;gap:var(--space-3);margin-top:var(--space-8);
+  padding:var(--space-2) var(--space-4) var(--space-2) var(--space-2);
+  border-radius:var(--radius-full);border:1px solid var(--border);background:var(--bg-elevated);
+  font-size:14px;color:var(--text-2);transition:border-color .2s var(--ease),transform .2s var(--ease)
+}
+.hero__by:hover{border-color:var(--border-2);transform:translateY(-1px);text-decoration:none}
+.hero__by img,.hero__by .avatar-fallback{width:28px;height:28px;border-radius:50%;flex-shrink:0}
+.hero__by b{color:var(--text)}
+.avatar-fallback{
+  display:grid;place-items:center;background:var(--accent);color:#fff;
+  font-size:12px;font-weight:700;letter-spacing:.02em;
+}
 
-/* ============================================ the animated demo ======== */
+/* the live demo in the hero */
 .demo{
   display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:var(--space-5);
   margin-top:var(--space-12);
@@ -179,7 +257,9 @@ code{font-family:var(--font-mono);font-size:.88em}
 .laptop{
   border-radius:var(--radius-xl);border:1px solid var(--border);background:var(--bg-elevated);
   box-shadow:var(--shadow-md);overflow:hidden;
+  transition:transform .4s var(--ease),box-shadow .4s var(--ease);
 }
+.laptop:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg)}
 .laptop__bar{
   display:flex;align-items:center;gap:var(--space-2);padding:var(--space-3) var(--space-4);
   border-bottom:1px solid var(--border);background:var(--bg-sunken);
@@ -187,52 +267,65 @@ code{font-family:var(--font-mono);font-size:.88em}
 }
 .laptop__dots{display:flex;gap:5px;margin-right:var(--space-1)}
 .laptop__dots i{width:9px;height:9px;border-radius:var(--radius-full);background:var(--border-2)}
-.laptop__body{padding:var(--space-4);min-height:112px;display:grid;align-content:center;gap:var(--space-2)}
+.laptop__body{padding:var(--space-4);min-height:118px;display:grid;align-content:center;gap:var(--space-2)}
 .laptop__label{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3)}
 .snippet{
   font-family:var(--font-mono);font-size:13px;line-height:1.5;
   padding:var(--space-3);border-radius:var(--radius-md);
-  background:var(--bg-sunken);border:1px solid var(--border);
-  word-break:break-all;
+  background:var(--bg-sunken);border:1px solid var(--border);word-break:break-all;
 }
-.snippet--in{animation:land .5s var(--ease) both}
-@keyframes land{from{opacity:0;transform:translateY(6px) scale(.98)}}
-
+.snippet--in{animation:land 3.2s var(--ease) infinite}
+@keyframes land{0%,60%{opacity:0;transform:translateY(6px) scale(.98)}72%,100%{opacity:1;transform:none}}
 .demo__link{display:grid;justify-items:center;gap:6px;color:var(--text-3)}
-.demo__track{
-  position:relative;width:96px;height:2px;border-radius:2px;
-  background:linear-gradient(90deg,var(--border),var(--accent),var(--border));
-}
+.demo__track{position:relative;width:96px;height:2px;border-radius:2px;
+  background:linear-gradient(90deg,var(--border),var(--accent),var(--border))}
 .demo__packet{
   position:absolute;top:-4px;left:0;width:10px;height:10px;border-radius:var(--radius-full);
   background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft);
   animation:travel 3.2s var(--ease) infinite;
 }
 @keyframes travel{
-  0%,12%{left:0;opacity:0}
-  18%{opacity:1}
-  70%{left:calc(100% - 10px);opacity:1}
-  80%,100%{left:calc(100% - 10px);opacity:0}
+  0%,12%{left:0;opacity:0}18%{opacity:1}
+  62%{left:calc(100% - 10px);opacity:1}72%,100%{left:calc(100% - 10px);opacity:0}
 }
 .demo__caption{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
-
-/* Narrow screens stack the laptops, so the connector runs downward between
-   them. These overrides must come after the base rules above to win. */
 @media (max-width:760px){
   .demo{grid-template-columns:1fr;gap:var(--space-4)}
   .demo__link{grid-auto-flow:column;align-items:center;gap:var(--space-4);justify-self:center}
-  .demo__track{
-    width:2px;height:54px;
-    background:linear-gradient(180deg,var(--border),var(--accent),var(--border));
-  }
+  .demo__track{width:2px;height:54px;background:linear-gradient(180deg,var(--border),var(--accent),var(--border))}
   .demo__packet{top:0;left:-4px;animation-name:travel-down}
 }
 @keyframes travel-down{
-  0%,12%{top:0;opacity:0}
-  18%{opacity:1}
-  70%{top:calc(100% - 10px);opacity:1}
-  80%,100%{top:calc(100% - 10px);opacity:0}
+  0%,12%{top:0;opacity:0}18%{opacity:1}
+  62%{top:calc(100% - 10px);opacity:1}72%,100%{top:calc(100% - 10px);opacity:0}
 }
+
+/* ========================================================== download === */
+.downloads{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--space-4);margin-top:var(--space-8)}
+.dl{
+  position:relative;display:grid;gap:var(--space-3);justify-items:center;text-align:center;
+  padding:var(--space-6) var(--space-5);border-radius:var(--radius-xl);
+  border:1px solid var(--border);background:var(--bg-elevated);color:var(--text);
+  transition:border-color .25s var(--ease),transform .25s var(--ease),box-shadow .25s var(--ease);
+}
+.dl:hover{border-color:var(--border-2);transform:translateY(-3px);box-shadow:var(--shadow-md);text-decoration:none}
+.dl.is-yours{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.dl__tag{
+  position:absolute;top:-11px;left:50%;translate:-50% 0;
+  padding:2px 10px;border-radius:var(--radius-full);
+  background:var(--accent);color:#fff;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+}
+.dl__icon{color:var(--text-2)}
+.dl.is-yours .dl__icon{color:var(--accent-text)}
+.dl__name{font-size:17px;font-weight:640;letter-spacing:-.01em}
+.dl__meta{font-size:13px;color:var(--text-3);min-height:1.2em}
+.dl__cta{
+  display:inline-flex;align-items:center;gap:6px;margin-top:var(--space-1);
+  font-size:14px;font-weight:600;color:var(--accent-text);
+}
+.dl__cta svg{transition:transform .25s var(--ease)}
+.dl:hover .dl__cta svg{transform:translateY(2px)}
+.dl-note{margin-top:var(--space-5);font-size:13.5px;color:var(--text-3);text-align:center}
 
 /* =========================================================== cards ===== */
 .grid{display:grid;gap:var(--space-4)}
@@ -241,13 +334,15 @@ code{font-family:var(--font-mono);font-size:.88em}
 .card{
   padding:var(--space-6);border-radius:var(--radius-lg);
   border:1px solid var(--border);background:var(--bg-elevated);
-  transition:border-color .16s var(--ease),transform .16s var(--ease),box-shadow .16s var(--ease);
+  transition:border-color .25s var(--ease),transform .25s var(--ease),box-shadow .25s var(--ease);
 }
-.card:hover{border-color:var(--border-2);transform:translateY(-2px);box-shadow:var(--shadow-sm)}
+.card:hover{border-color:var(--border-2);transform:translateY(-3px);box-shadow:var(--shadow-md)}
 .card__icon{
-  width:38px;height:38px;border-radius:var(--radius-md);display:grid;place-items:center;
+  width:40px;height:40px;border-radius:var(--radius-md);display:grid;place-items:center;
   background:var(--accent-soft);color:var(--accent-text);margin-bottom:var(--space-4);
+  transition:transform .25s var(--ease);
 }
+.card:hover .card__icon{transform:scale(1.08) rotate(-4deg)}
 .card p{color:var(--text-2);font-size:15px;margin-top:var(--space-2)}
 .card--persona .card__icon{font-size:20px;background:var(--bg-sunken)}
 
@@ -263,33 +358,121 @@ code{font-family:var(--font-mono);font-size:.88em}
 .tick--no{color:var(--warning)}
 .tick--yes{color:var(--success)}
 
-/* ======================================================== security ===== */
-.flow{
-  display:grid;gap:var(--space-3);padding:var(--space-6);
-  border-radius:var(--radius-lg);border:1px solid var(--border);
-  background:var(--bg-elevated);font-family:var(--font-mono);font-size:13.5px;line-height:1.9;
+/* ========================================== the journey (stepper) ====== */
+.journey{display:grid;grid-template-columns:300px minmax(0,1fr);gap:var(--space-8);margin-top:var(--space-10);align-items:start}
+@media (max-width:880px){.journey{grid-template-columns:1fr;gap:var(--space-6)}}
+
+.steps{display:grid;gap:var(--space-2)}
+.step{
+  position:relative;display:flex;gap:var(--space-4);width:100%;text-align:left;
+  padding:var(--space-4);border-radius:var(--radius-lg);
+  border:1px solid transparent;background:transparent;
+  transition:background .25s var(--ease),border-color .25s var(--ease);
+}
+.step:hover{background:var(--bg-hover)}
+.step.is-active{background:var(--bg-elevated);border-color:var(--border);box-shadow:var(--shadow-sm)}
+.step__n{
+  display:grid;place-items:center;flex-shrink:0;
+  width:28px;height:28px;border-radius:50%;
+  border:1.5px solid var(--border-2);color:var(--text-3);
+  font-size:13px;font-weight:700;
+  transition:background .25s var(--ease),color .25s var(--ease),border-color .25s var(--ease);
+}
+.step.is-active .step__n{background:var(--accent);border-color:transparent;color:#fff}
+.step__body h3{font-size:16px;font-weight:640;letter-spacing:-.01em}
+.step.is-active .step__body h3{color:var(--accent-text)}
+.step__body p{font-size:14px;color:var(--text-2);margin-top:2px}
+/* progress bar that fills while a step is on screen */
+.step__bar{position:absolute;left:0;bottom:0;height:2px;width:0;background:var(--accent);border-radius:2px}
+.step.is-active .step__bar{animation:fill 7s linear forwards}
+.journey.is-paused .step.is-active .step__bar{animation-play-state:paused}
+@keyframes fill{to{width:100%}}
+
+.stage{
+  position:relative;border-radius:var(--radius-xl);border:1px solid var(--border);
+  background:var(--bg-elevated);box-shadow:var(--shadow-sm);
+  padding:var(--space-6) var(--space-6) var(--space-5);min-height:330px;display:grid;place-items:center;overflow:hidden;
+}
+.stage__scene{grid-area:1/1;width:100%;opacity:0;transform:translateY(10px);pointer-events:none;
+  transition:opacity .5s var(--ease-out),transform .5s var(--ease-out)}
+.stage__scene.is-active{opacity:1;transform:none;pointer-events:auto}
+.stage__caption{
+  margin-top:var(--space-5);font-size:14px;color:var(--text-2);text-align:center;max-width:52ch;
+  margin-inline:auto;
+}
+.stage__caption b{color:var(--text)}
+
+/* SVG diagram vocabulary, shared by every scene */
+.dg{width:100%;height:auto;display:block;overflow:visible}
+.dg-box{fill:var(--bg-sunken);stroke:var(--border-2);stroke-width:1.5}
+.dg-box--accent{fill:var(--accent-soft);stroke:var(--accent)}
+.dg-box--ok{fill:var(--success-soft);stroke:var(--success)}
+.dg-box--no{fill:var(--danger-soft);stroke:var(--danger)}
+.dg-bar{fill:var(--border);opacity:.6}
+.dg-t{fill:var(--text);font-family:var(--font-sans);font-size:13px;font-weight:600}
+.dg-t--sm{fill:var(--text-2);font-size:11.5px;font-weight:500}
+.dg-t--mono{fill:var(--accent-text);font-family:var(--font-mono);font-size:13px;font-weight:700;letter-spacing:.08em}
+.dg-line{stroke:var(--border-2);stroke-width:1.5;fill:none}
+.dg-line--accent{stroke:var(--accent);stroke-width:2}
+.dg-line--dash{stroke-dasharray:5 5}
+.dg-ico{fill:none;stroke:var(--text-2);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.dg-ico--accent{stroke:var(--accent)}
+.dg-ico--ok{stroke:var(--success)}
+.dg-ico--no{stroke:var(--danger)}
+
+/* animations used inside the scenes, only while the scene is active */
+.is-active .fly{animation:fly 2.6s var(--ease) infinite}
+@keyframes fly{0%,8%{opacity:0;transform:translateX(0)}16%{opacity:1}
+  70%{opacity:1;transform:translateX(var(--fly,190px))}80%,100%{opacity:0;transform:translateX(var(--fly,190px))}}
+.is-active .pop{animation:pop .55s var(--ease-out) both}
+.is-active .pop[data-d="1"]{animation-delay:.25s}
+.is-active .pop[data-d="2"]{animation-delay:.5s}
+.is-active .pop[data-d="3"]{animation-delay:.75s}
+.is-active .pop[data-d="4"]{animation-delay:1s}
+@keyframes pop{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:none}}
+.is-active .draw{stroke-dasharray:400;stroke-dashoffset:400;animation:draw 1.4s var(--ease-out) .2s forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+.is-active .pulse{animation:pulse 2.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+
+/* ================================================ pipeline diagram ===== */
+.pipe{
+  margin-top:var(--space-10);padding:var(--space-8) var(--space-6);
+  border-radius:var(--radius-xl);border:1px solid var(--border);background:var(--bg-elevated);
   overflow-x:auto;
 }
-.flow b{color:var(--accent-text)}
-.flow .no{color:var(--warning)}
-.flow .yes{color:var(--success)}
-
-.checks{display:grid;gap:var(--space-3);margin-top:var(--space-6)}
-.check{
-  display:flex;gap:var(--space-3);padding:var(--space-4);
-  border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-elevated);
+.pipe__row{display:flex;align-items:stretch;gap:0;min-width:840px}
+.pipe__stage{flex:1;display:grid;justify-items:center;gap:var(--space-2);text-align:center;padding:0 var(--space-2)}
+.pipe__icon{
+  width:46px;height:46px;border-radius:var(--radius-lg);display:grid;place-items:center;
+  border:1px solid var(--border-2);background:var(--bg-sunken);color:var(--text-2);
 }
+.pipe__stage--key .pipe__icon{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-text)}
+.pipe__name{font-size:13px;font-weight:640}
+.pipe__desc{font-size:11.5px;color:var(--text-3);line-height:1.45;max-width:15ch}
+.pipe__arrow{display:grid;align-content:center;color:var(--border-2);padding-top:14px}
+.pipe__legend{display:flex;flex-wrap:wrap;justify-content:center;gap:var(--space-5);margin-top:var(--space-6);font-size:13px;color:var(--text-2)}
+.pipe__legend span{display:inline-flex;align-items:center;gap:7px}
+.pipe__legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+
+/* ======================================================== security ===== */
+.checks{display:grid;gap:var(--space-3);margin-top:var(--space-8)}
+.check{
+  display:flex;gap:var(--space-4);padding:var(--space-4) var(--space-5);
+  border-radius:var(--radius-lg);border:1px solid var(--border);background:var(--bg-elevated);
+  transition:border-color .25s var(--ease),transform .25s var(--ease);
+}
+.check:hover{border-color:var(--border-2);transform:translateX(3px)}
 .check__n{
-  flex-shrink:0;width:24px;height:24px;border-radius:var(--radius-full);
+  flex-shrink:0;width:26px;height:26px;border-radius:var(--radius-full);
   display:grid;place-items:center;background:var(--accent);color:#fff;
   font-size:13px;font-weight:700;
 }
 .check div{font-size:15px}
 .check strong{display:block;color:var(--text)}
 .check span{color:var(--text-2)}
-
 .honest{
-  margin-top:var(--space-6);padding:var(--space-5);border-radius:var(--radius-lg);
+  margin-top:var(--space-6);padding:var(--space-6);border-radius:var(--radius-lg);
   border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);background:var(--warning-soft);
 }
 .honest h3{margin-bottom:var(--space-2)}
@@ -299,54 +482,18 @@ code{font-family:var(--font-mono);font-size:.88em}
 
 /* ===================================================== screenshots ===== */
 .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:var(--space-5)}
-.shot{border-radius:var(--radius-lg);overflow:hidden;border:1px solid var(--border);background:var(--bg-elevated)}
+.shot{border-radius:var(--radius-lg);overflow:hidden;border:1px solid var(--border);background:var(--bg-elevated);
+  transition:transform .3s var(--ease),box-shadow .3s var(--ease)}
+.shot:hover{transform:translateY(-4px);box-shadow:var(--shadow-lg)}
 .shot img{width:100%}
 .shot figcaption{padding:var(--space-3) var(--space-4);font-size:14px;color:var(--text-2);border-top:1px solid var(--border)}
 
 /* =========================================================== stack ===== */
 .stack-list{display:grid;gap:var(--space-1)}
-.stack-item{
-  display:flex;align-items:baseline;gap:var(--space-4);padding:var(--space-3) 0;
-  border-bottom:1px solid var(--border);font-size:15px;
-}
+.stack-item{display:flex;align-items:baseline;gap:var(--space-4);padding:var(--space-3) 0;
+  border-bottom:1px solid var(--border);font-size:15px}
 .stack-item b{min-width:132px;flex-shrink:0;color:var(--text);font-weight:600}
 .stack-item span{color:var(--text-2)}
-
-/* ========================================================= roadmap ===== */
-.road{display:grid;gap:var(--space-2)}
-.road li{
-  display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);
-  border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-elevated);
-  font-size:15px;
-}
-.road .box{
-  flex-shrink:0;width:16px;height:16px;border-radius:4px;
-  border:1.5px solid var(--border-2);
-}
-.road .tag{
-  margin-left:auto;flex-shrink:0;font-size:12px;font-weight:650;
-  padding:2px 8px;border-radius:var(--radius-full);
-  background:var(--accent-soft);color:var(--accent-text);
-}
-.road .is-done,.road li.is-done{color:var(--text-2)}
-.road .box--done{
-  display:grid;place-items:center;border-color:transparent;
-  background:var(--success);color:#fff;font-size:11px;font-weight:800;line-height:1;
-}
-.road .tag--done{background:var(--success-soft);color:var(--success)}
-
-/* ========================================================= contribute == */
-.cta{
-  padding:var(--space-12) var(--space-8);border-radius:var(--radius-2xl);
-  border:1px solid var(--border);background:var(--bg-elevated);
-  box-shadow:var(--shadow-lg);text-align:center;
-}
-.help-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--space-3);margin-top:var(--space-8);text-align:left}
-.help{padding:var(--space-4);border-radius:var(--radius-md);background:var(--bg-sunken);border:1px solid var(--border)}
-.help b{display:block;font-size:15px;margin-bottom:2px}
-.help span{font-size:14px;color:var(--text-2)}
-
-/* ============================================================= code ==== */
 .cmd{
   display:flex;align-items:center;gap:var(--space-3);
   padding:var(--space-4) var(--space-5);border-radius:var(--radius-md);
@@ -356,6 +503,54 @@ code{font-family:var(--font-mono);font-size:.88em}
 .cmd::before{content:'$';color:var(--text-3);flex-shrink:0}
 .cmd code{white-space:nowrap}
 .copy{margin-left:auto;flex-shrink:0}
+
+/* ========================================================= roadmap ===== */
+.road{display:grid;gap:var(--space-2)}
+.road li{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);
+  border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-elevated);font-size:15px}
+.road .box{flex-shrink:0;width:18px;height:18px;border-radius:5px;border:1.5px solid var(--border-2)}
+.road .box--done{display:grid;place-items:center;border-color:transparent;background:var(--success);
+  color:#fff;font-size:11px;font-weight:800;line-height:1}
+.road li.is-done{color:var(--text-2)}
+.road .tag{margin-left:auto;flex-shrink:0;font-size:12px;font-weight:650;padding:2px 8px;
+  border-radius:var(--radius-full);background:var(--accent-soft);color:var(--accent-text)}
+.road .tag--done{background:var(--success-soft);color:var(--success)}
+
+/* ========================================================== author ===== */
+.author{
+  display:grid;grid-template-columns:auto minmax(0,1fr);gap:var(--space-6);align-items:center;
+  padding:var(--space-8);border-radius:var(--radius-2xl);
+  border:1px solid var(--border);background:var(--bg-elevated);box-shadow:var(--shadow-md);
+}
+@media (max-width:640px){.author{grid-template-columns:1fr;text-align:center;justify-items:center}}
+.author__avatar,.author .avatar-fallback{width:96px;height:96px;border-radius:var(--radius-2xl);flex-shrink:0;font-size:30px}
+.author__avatar{border:1px solid var(--border)}
+.author__name{font-size:23px;font-weight:700;letter-spacing:-.02em}
+.author__role{font-size:14px;font-weight:640;color:var(--accent-text);margin-top:2px;
+  text-transform:uppercase;letter-spacing:.08em}
+.author p{color:var(--text-2);font-size:15.5px;margin-top:var(--space-3)}
+.author__links{display:flex;flex-wrap:wrap;gap:var(--space-3);margin-top:var(--space-5)}
+@media (max-width:640px){.author__links{justify-content:center}}
+
+/* ======================================================= contribute ==== */
+.cta{
+  position:relative;overflow:hidden;
+  padding:var(--space-12) var(--space-8);border-radius:var(--radius-2xl);
+  border:1px solid var(--border);background:var(--bg-elevated);
+  box-shadow:var(--shadow-lg);text-align:center;
+}
+.cta::before{
+  content:'';position:absolute;left:50%;top:-50%;width:700px;height:520px;translate:-50% 0;
+  background:radial-gradient(ellipse 50% 50% at 50% 50%,var(--accent-soft),transparent 70%);
+  pointer-events:none;
+}
+.cta>*{position:relative}
+.help-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--space-3);margin-top:var(--space-8);text-align:left}
+.help{padding:var(--space-4);border-radius:var(--radius-md);background:var(--bg-sunken);border:1px solid var(--border);
+  transition:transform .25s var(--ease),border-color .25s var(--ease)}
+.help:hover{transform:translateY(-2px);border-color:var(--border-2)}
+.help b{display:block;font-size:15px;margin-bottom:2px}
+.help span{font-size:14px;color:var(--text-2)}
 
 /* =========================================================== footer ==== */
 .footer{border-top:1px solid var(--border);padding:var(--space-10) 0;color:var(--text-2);font-size:14px}
@@ -367,11 +562,11 @@ code{font-family:var(--font-mono);font-size:.88em}
 <body>
 
 <!-- ============================================================ nav ==== -->
-<header class="topnav">
+<header class="topnav" id="topnav">
   <div class="wrap topnav__inner">
     <a class="brand" href="#top">
       <span class="brand__mark" aria-hidden="true">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
         </svg>
       </span>
@@ -379,9 +574,9 @@ code{font-family:var(--font-mono);font-size:.88em}
     </a>
     <nav class="topnav__links">
       <a href="#how">How it works</a>
+      <a href="#inside">Under the hood</a>
       <a href="#security">Security</a>
-      <a href="#screens">Screenshots</a>
-      <a href="#contribute">Contribute</a>
+      <a href="#author">Who made it</a>
       <button class="btn btn--sm btn--icon" id="theme" aria-label="Switch between light and dark">
         <svg class="icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
@@ -390,91 +585,153 @@ code{font-family:var(--font-mono);font-size:.88em}
           <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/>
         </svg>
       </button>
-      <a class="btn btn--sm btn--primary" href="https://github.com/Vijayapardhu/Clipboard">GitHub</a>
+      <a class="btn btn--sm btn--primary" href="#download">Download</a>
     </nav>
   </div>
 </header>
 
-<!-- =========================================================== hero ==== -->
 <main id="top">
+<!-- =========================================================== hero ==== -->
 <section class="hero">
+  <div class="hero__grid" aria-hidden="true"></div>
+  <div class="hero__glow" aria-hidden="true"></div>
+
   <div class="wrap hero__inner center">
-    <span class="pill">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5.5c0 4.3 2.9 8.3 7 9.5 4.1-1.2 7-5.2 7-9.5V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg>
-      Open source &middot; <b>MIT licensed</b> &middot; No account needed
-    </span>
+    <span class="pill reveal"><span class="pill__dot"></span> Free and open source &middot; <b>No account</b> &middot; Works offline</span>
 
-    <h1>Copy on one laptop. Paste on another.</h1>
+    <h1 class="reveal" data-delay="1">Copy on one machine. <em>Paste on another.</em></h1>
 
-    <p class="lede">
-      An encrypted, room-based clipboard and chat for devices on the same network.
-      No cloud, no sign-up, nothing leaving your WiFi — and you can read every
-      line of it.
+    <p class="lede reveal" data-delay="2">
+      An encrypted clipboard and chat shared between the devices on your own
+      network. Nothing touches the internet, nothing touches a server, and you
+      can read every line of how it works.
     </p>
 
-    <div class="btn-row">
-      <a class="btn btn--primary" href="https://github.com/Vijayapardhu/Clipboard/releases">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>
-        Download
+    <div class="btn-row reveal" data-delay="3">
+      <a class="btn btn--primary" href="#download">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>
+        Download free
       </a>
-      <a class="btn" href="https://github.com/Vijayapardhu/Clipboard">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2A10 10 0 0 0 8.8 21.5c.5.1.7-.2.7-.5v-1.7C6.7 19.9 6.1 18 6.1 18c-.4-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.7 1a9.4 9.4 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .3.3.7 1 .7 2v2.9c0 .3.2.6.7.5A10 10 0 0 0 12 2Z"/></svg>
-        Star on GitHub
-      </a>
-      <a class="btn" href="#contribute">Become a collaborator</a>
+      <a class="btn" href="#how">See how it works</a>
     </div>
 
-    <p class="hero__note">Windows &middot; macOS &middot; Linux — works without an internet connection</p>
+    <p class="hero__note reveal" data-delay="4">Windows &middot; macOS &middot; Ubuntu — no internet connection required</p>
 
-    <!-- the concept, in motion -->
-    <div class="demo" role="img" aria-label="A snippet copied on one laptop appearing on another laptop over the local network">
+    <a class="hero__by reveal" data-delay="4" href="#author">
+      <img src="https://github.com/Vijayapardhu.png?size=80" alt="" width="28" height="28"
+           onerror="this.outerHTML='&lt;span class=&quot;avatar-fallback&quot;&gt;VP&lt;/span&gt;'">
+      <span>An MVP built by <b>Vijaya Pardhu</b></span>
+    </a>
+
+    <div class="demo reveal" data-delay="5" role="img" aria-label="A snippet copied on one machine appearing on another over the local network">
       <div class="laptop">
-        <div class="laptop__bar"><span class="laptop__dots"><i></i><i></i><i></i></span> PARDHU-LAPTOP</div>
+        <div class="laptop__bar"><span class="laptop__dots"><i></i><i></i><i></i></span> Your laptop</div>
         <div class="laptop__body">
           <span class="laptop__label">Ctrl + C</span>
-          <div class="snippet">npm run build:exe</div>
+          <div class="snippet">https://example.com/a/very/long/link</div>
         </div>
       </div>
-
       <div class="demo__link">
         <span class="demo__caption">encrypted</span>
         <span class="demo__track"><span class="demo__packet"></span></span>
-        <span class="demo__caption">over LAN</span>
+        <span class="demo__caption">over WiFi</span>
       </div>
-
       <div class="laptop">
-        <div class="laptop__bar"><span class="laptop__dots"><i></i><i></i><i></i></span> LAB-PC-14</div>
+        <div class="laptop__bar"><span class="laptop__dots"><i></i><i></i><i></i></span> The other machine</div>
         <div class="laptop__body">
           <span class="laptop__label">Ctrl + V</span>
-          <div class="snippet snippet--in">npm run build:exe</div>
+          <div class="snippet snippet--in">https://example.com/a/very/long/link</div>
         </div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ======================================================== problem ==== -->
-<section class="section section--sunken">
+<!-- ======================================================= download ==== -->
+<section class="section section--tight section--sunken" id="download">
   <div class="wrap">
     <div class="center">
-      <p class="eyebrow">The problem</p>
-      <h2 class="h2">You have emailed yourself a link. Everyone has.</h2>
-      <p class="lede">
-        You are on the lab machine and you need something from your own laptop.
-        So you message it to yourself, or type out a forty-character URL by hand
-        and get one character wrong. Every workaround sends your clipboard to a
-        server that has no business seeing it.
+      <p class="eyebrow reveal">Download</p>
+      <h2 class="h2 reveal" data-delay="1">Install it on both machines</h2>
+      <p class="lede reveal" data-delay="2">
+        That is the only setup step. Both copies find each other on the network
+        by themselves.
       </p>
     </div>
 
-    <div class="versus" style="margin-top:var(--space-10)">
+    <div class="downloads reveal" data-delay="3">
+      <a class="dl" id="dl-win" href="https://github.com/Vijayapardhu/Clipboard/releases" data-os="windows">
+        <span class="dl__icon">
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.6 10 4.6v6.9H3V5.6Zm0 12.8 7 1v-6.8H3v5.8Zm8 1.2L21 21V12.5h-10v7.1ZM11 4.4V11.5h10V3l-10 1.4Z"/></svg>
+        </span>
+        <span class="dl__name">Windows</span>
+        <span class="dl__meta" data-meta>Windows 10 and 11</span>
+        <span class="dl__cta">
+          Download .exe
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M7 12l5 5 5-5"/></svg>
+        </span>
+      </a>
+
+      <a class="dl" id="dl-mac" href="https://github.com/Vijayapardhu/Clipboard/releases" data-os="mac">
+        <span class="dl__icon">
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9-.7 0-1.8-.9-3-.8-1.5 0-2.9.9-3.7 2.3-1.6 2.8-.4 6.9 1.1 9.1.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.2 0 2-1.1 2.8-2.2.9-1.3 1.2-2.5 1.3-2.6-.1 0-2.5-1-2.5-3.7ZM14.1 5.3c.6-.8 1-1.9.9-3-.9 0-2 .6-2.7 1.4-.6.7-1.1 1.8-.9 2.9 1 0 2-.5 2.7-1.3Z"/></svg>
+        </span>
+        <span class="dl__name">macOS</span>
+        <span class="dl__meta" data-meta>Intel and Apple silicon</span>
+        <span class="dl__cta">
+          Download .dmg
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M7 12l5 5 5-5"/></svg>
+        </span>
+      </a>
+
+      <a class="dl" id="dl-linux" href="https://github.com/Vijayapardhu/Clipboard/releases" data-os="linux">
+        <span class="dl__icon">
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c-2.2 0-3.5 1.7-3.5 4.2 0 1.5.2 2.3-.3 3.3-.6 1.2-2 2.7-2.6 4.6-.3.9-.2 1.7.1 2.1-.5.5-.8 1.2-.4 1.8.3.5 1 .6 1.6.8.7.2 1.3.6 2 .8.6.2 1.4.1 1.8-.4.5.1 1 .1 1.5.1s1 0 1.5-.1c.4.5 1.2.6 1.8.4.7-.2 1.3-.6 2-.8.6-.2 1.3-.3 1.6-.8.4-.6.1-1.3-.4-1.8.3-.4.4-1.2.1-2.1-.6-1.9-2-3.4-2.6-4.6-.5-1-.3-1.8-.3-3.3C15.5 3.7 14.2 2 12 2Zm-1.6 4.1c.4 0 .7.4.7 1s-.3 1-.7 1-.7-.5-.7-1 .3-1 .7-1Zm3.2 0c.4 0 .7.4.7 1s-.3 1-.7 1-.7-.5-.7-1 .3-1 .7-1ZM12 8.6c.9 0 1.9.5 1.9.9 0 .3-.4.5-.8.8-.4.2-.8.5-1.1.5s-.7-.3-1.1-.5c-.4-.3-.8-.5-.8-.8 0-.4 1-.9 1.9-.9Z"/></svg>
+        </span>
+        <span class="dl__name">Ubuntu &amp; Linux</span>
+        <span class="dl__meta" data-meta>AppImage, runs anywhere</span>
+        <span class="dl__cta">
+          Download .AppImage
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M7 12l5 5 5-5"/></svg>
+        </span>
+      </a>
+    </div>
+
+    <p class="dl-note reveal" id="dl-note">
+      Free forever, MIT licensed. The installers are not code-signed, so Windows
+      shows a warning — choose <b>More info → Run anyway</b>. On macOS, right-click
+      the app and choose <b>Open</b> the first time. On Ubuntu, mark the AppImage
+      executable with <code>chmod +x</code>.
+      <br>
+      <a href="https://github.com/Vijayapardhu/Clipboard/releases">All releases and changelogs →</a>
+      &middot;
+      <a href="https://github.com/Vijayapardhu/Clipboard#from-source">Build it from source →</a>
+    </p>
+  </div>
+</section>
+
+<!-- ======================================================== problem ==== -->
+<section class="section">
+  <div class="wrap">
+    <div class="center">
+      <p class="eyebrow reveal">The problem</p>
+      <h2 class="h2 reveal" data-delay="1">You have emailed yourself a link. Everyone has.</h2>
+      <p class="lede reveal" data-delay="2">
+        You are on one machine and you need something from another. So you message
+        it to yourself, or type out a forty-character URL by hand and get one
+        character wrong. Every workaround sends your clipboard to a server that
+        has no business seeing it.
+      </p>
+    </div>
+
+    <div class="versus reveal" data-delay="3" style="margin-top:var(--space-10)">
       <div class="versus__col versus__col--bad">
-        <h3 class="h3">Emailing it to yourself</h3>
+        <h3 class="h3">Messaging it to yourself</h3>
         <ul>
           <li><svg class="tick tick--no" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Your clipboard goes to <b>someone else's server</b></span></li>
           <li><svg class="tick tick--no" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Needs an <b>internet connection</b></span></li>
           <li><svg class="tick tick--no" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Log in, compose, send, open, copy — <b>every single time</b></span></li>
-          <li><svg class="tick tick--no" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Images and screenshots are <b>even more painful</b></span></li>
+          <li><svg class="tick tick--no" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Screenshots and files are <b>even more painful</b></span></li>
         </ul>
       </div>
       <div class="versus__col versus__col--good">
@@ -483,84 +740,289 @@ code{font-family:var(--font-mono);font-size:.88em}
           <li><svg class="tick tick--yes" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg><span>Stays on <b>your own network</b></span></li>
           <li><svg class="tick tick--yes" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg><span>Works on <b>WiFi with no internet</b></span></li>
           <li><svg class="tick tick--yes" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg><span><b>Ctrl+C here, Ctrl+V there.</b> That is the whole workflow</span></li>
-          <li><svg class="tick tick--yes" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg><span>Text and images, with <b>history you can go back through</b></span></li>
+          <li><svg class="tick tick--yes" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg><span>Text, images and files, with <b>history you can search</b></span></li>
         </ul>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ========================================================= how it ==== -->
-<section class="section" id="how">
+<!-- ======================================== how it works (stepper) ===== -->
+<section class="section section--sunken" id="how">
   <div class="wrap">
     <div class="center">
-      <p class="eyebrow">How it works</p>
-      <h2 class="h2">Three steps, then you forget it is there</h2>
+      <p class="eyebrow reveal">How it works</p>
+      <h2 class="h2 reveal" data-delay="1">Four steps, then you forget it is there</h2>
+      <p class="lede reveal" data-delay="2">
+        Follow along — each step draws what is actually happening between your
+        two machines.
+      </p>
     </div>
 
-    <div class="grid grid--3" style="margin-top:var(--space-10)">
-      <article class="card">
-        <div class="card__icon">
-          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-        </div>
-        <h3 class="h3">1. Make a room</h3>
-        <p>
-          A room is the privacy boundary — nothing is shared outside the one you
-          have selected. Public for a lab, private with a password for anything
-          that matters.
-        </p>
-      </article>
+    <div class="journey reveal" data-delay="3" id="journey">
+      <div class="steps" role="tablist" aria-label="How it works">
+        <button class="step is-active" role="tab" aria-selected="true" data-step="0">
+          <span class="step__n">1</span>
+          <span class="step__body">
+            <h3>Make a room</h3>
+            <p>A room is the boundary. Give it a password and it is encrypted.</p>
+          </span>
+          <span class="step__bar"></span>
+        </button>
+        <button class="step" role="tab" aria-selected="false" data-step="1">
+          <span class="step__n">2</span>
+          <span class="step__body">
+            <h3>Share the code</h3>
+            <p>Six characters, or a QR code the other device can scan.</p>
+          </span>
+          <span class="step__bar"></span>
+        </button>
+        <button class="step" role="tab" aria-selected="false" data-step="2">
+          <span class="step__n">3</span>
+          <span class="step__body">
+            <h3>Approve the request</h3>
+            <p>Nobody joins a private room without you saying yes.</p>
+          </span>
+          <span class="step__bar"></span>
+        </button>
+        <button class="step" role="tab" aria-selected="false" data-step="3">
+          <span class="step__n">4</span>
+          <span class="step__body">
+            <h3>Copy and paste</h3>
+            <p>Anything you copy appears on the other machine, ready to paste.</p>
+          </span>
+          <span class="step__bar"></span>
+        </button>
+      </div>
 
-      <article class="card">
-        <div class="card__icon">
-          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="3.5"/><path d="m10 13 8-8 3 3-2 2-2-2-1.5 1.5 2 2L15 14"/></svg>
+      <div class="stage">
+        <!-- step 1 -->
+        <div class="stage__scene is-active" data-scene="0" role="tabpanel">
+          <svg class="dg" viewBox="0 42 520 148" aria-label="A room being created on one machine, with a password turning into a key and a join code">
+            <rect class="dg-box pop" x="30" y="55" width="180" height="120" rx="12"/>
+            <rect class="dg-bar pop" x="30" y="55" width="180" height="22" rx="12"/>
+            <text class="dg-t--sm pop" x="44" y="71">Your laptop</text>
+            <text class="dg-t pop" data-d="1" x="50" y="112">Room: “Project”</text>
+            <g class="pop" data-d="2">
+              <rect class="dg-box--accent dg-box" x="50" y="126" width="140" height="30" rx="8"/>
+              <path class="dg-ico dg-ico--accent" d="M64 141v-4a4 4 0 0 1 8 0v4M62 141h12v9H62z"/>
+              <text class="dg-t--sm" x="82" y="146">Your password</text>
+            </g>
+            <path class="dg-line dg-line--accent draw" d="M215 115 H300" marker-end="url(#ar)"/>
+            <text class="dg-t--sm pop" data-d="3" x="228" y="105">scrypt</text>
+            <g class="pop" data-d="3">
+              <rect class="dg-box dg-box--ok" x="305" y="70" width="185" height="46" rx="10"/>
+              <path class="dg-ico dg-ico--ok" d="M325 95a6 6 0 1 0 0-12 6 6 0 0 0 0 12Zm5-9 14-14 6 6-4 4-4-4-3 3 4 4-6 6"/>
+              <text class="dg-t" x="350" y="94">Encryption key</text>
+            </g>
+            <g class="pop" data-d="4">
+              <rect class="dg-box" x="305" y="132" width="185" height="46" rx="10"/>
+              <text class="dg-t--sm" x="320" y="152">Join code</text>
+              <text class="dg-t--mono" x="320" y="170">K7QM2X</text>
+              <rect class="dg-box--accent dg-box pulse" x="420" y="142" width="56" height="26" rx="6"/>
+              <text class="dg-t--sm" x="431" y="159" style="fill:var(--accent-text)">public</text>
+            </g>
+            <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0 0 10 5 0 10z" fill="var(--accent)"/></marker></defs>
+          </svg>
+          <p class="stage__caption">
+            The password never leaves your machine. It is stretched into an
+            encryption key locally. The <b>join code is public</b> — it is only
+            useful to someone who also knows the password.
+          </p>
         </div>
-        <h3 class="h3">2. Let the other device in</h3>
-        <p>
-          Rooms on the network show up automatically. Enter the six-character
-          code and the password, and the owner approves you. Private rooms never
-          admit anyone silently.
-        </p>
-      </article>
 
-      <article class="card">
-        <div class="card__icon">
-          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>
+        <!-- step 2 -->
+        <div class="stage__scene" data-scene="1" role="tabpanel">
+          <svg class="dg" viewBox="0 58 520 136" aria-label="A join code travelling from one machine to another, by code or QR">
+            <rect class="dg-box" x="20" y="70" width="160" height="110" rx="12"/>
+            <rect class="dg-bar" x="20" y="70" width="160" height="22" rx="12"/>
+            <text class="dg-t--sm" x="34" y="86">Your laptop</text>
+            <text class="dg-t--mono" x="46" y="128">K7QM2X</text>
+            <rect class="dg-box" x="46" y="140" width="34" height="34" rx="5"/>
+            <g stroke="var(--text-2)" stroke-width="3">
+              <path d="M52 146h6M52 152h6M52 158h10M52 164h6M64 146h10M64 152h4M68 158h6M64 164h10"/>
+            </g>
+            <text class="dg-t--sm" x="88" y="162">or a QR code</text>
+
+            <!-- --fly is tuned so the packet stops short of the receiving box. -->
+            <g class="fly" style="--fly:78px">
+              <rect class="dg-box dg-box--accent" x="192" y="110" width="74" height="30" rx="8"/>
+              <text class="dg-t--mono" x="200" y="130" style="font-size:11px">K7QM2X</text>
+            </g>
+            <path class="dg-line dg-line--dash" d="M190 125 H330"/>
+
+            <rect class="dg-box" x="340" y="70" width="160" height="110" rx="12"/>
+            <rect class="dg-bar" x="340" y="70" width="160" height="22" rx="12"/>
+            <text class="dg-t--sm" x="354" y="86">The other machine</text>
+            <rect class="dg-box" x="360" y="106" width="120" height="26" rx="6"/>
+            <text class="dg-t--sm" x="370" y="123">code</text>
+            <rect class="dg-box" x="360" y="140" width="120" height="26" rx="6"/>
+            <text class="dg-t--sm" x="370" y="157">password</text>
+          </svg>
+          <p class="stage__caption">
+            You pass on the code however you like — read it out, or let them scan
+            the QR. The <b>password is shared separately</b>, and never appears in
+            the QR code.
+          </p>
         </div>
-        <h3 class="h3">3. Copy and paste</h3>
-        <p>
-          That is genuinely it. Copy on one machine, <code>Ctrl+V</code> on the
-          other. Everything collects in the room's history so you can go back to
-          what you copied an hour ago.
-        </p>
-      </article>
+
+        <!-- step 3 -->
+        <div class="stage__scene" data-scene="2" role="tabpanel">
+          <svg class="dg" viewBox="0 20 520 186" aria-label="A join request being approved by the room owner while a wrong password is rejected">
+            <rect class="dg-box" x="20" y="40" width="150" height="70" rx="12"/>
+            <rect class="dg-bar" x="20" y="40" width="150" height="20" rx="12"/>
+            <text class="dg-t--sm" x="32" y="54">The other machine</text>
+            <text class="dg-t--sm" x="34" y="86">proves it knows</text>
+            <text class="dg-t--sm" x="34" y="100">the password</text>
+
+            <path class="dg-line dg-line--accent draw" d="M175 75 H330" marker-end="url(#ar2)"/>
+            <text class="dg-t--sm" x="205" y="66">request + proof</text>
+
+            <rect class="dg-box dg-box--accent" x="340" y="30" width="160" height="90" rx="12"/>
+            <text class="dg-t" x="356" y="56">Your laptop</text>
+            <text class="dg-t--sm" x="356" y="76">“Meghana-Air wants</text>
+            <text class="dg-t--sm" x="356" y="90">to join.”</text>
+            <g class="pulse">
+              <rect class="dg-box dg-box--ok" x="356" y="98" width="60" height="16" rx="5"/>
+              <text class="dg-t--sm" x="368" y="110" style="fill:var(--success)">Approve</text>
+            </g>
+
+            <path class="dg-line dg-line--dash" d="M175 165 H330"/>
+            <rect class="dg-box dg-box--no" x="20" y="140" width="150" height="52" rx="12"/>
+            <text class="dg-t--sm" x="34" y="162">wrong password</text>
+            <text class="dg-t--sm" x="34" y="180">or wrong code</text>
+            <g>
+              <rect class="dg-box dg-box--no" x="340" y="140" width="160" height="52" rx="12"/>
+              <path class="dg-ico dg-ico--no" d="M360 160l14 14M374 160l-14 14"/>
+              <text class="dg-t--sm" x="386" y="171" style="fill:var(--danger)">Rejected before</text>
+              <text class="dg-t--sm" x="386" y="185" style="fill:var(--danger)">anything is shared</text>
+            </g>
+            <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0 0 10 5 0 10z" fill="var(--accent)"/></marker></defs>
+          </svg>
+          <p class="stage__caption">
+            The request carries a <b>proof</b>, not the password. Only a device
+            holding the right key can produce something you are able to open — and
+            a private room still needs your explicit approval.
+          </p>
+        </div>
+
+        <!-- step 4 -->
+        <div class="stage__scene" data-scene="3" role="tabpanel">
+          <svg class="dg" viewBox="0 20 520 216" aria-label="Copied text being sealed, sent across the network and unsealed on the other machine, while a third device cannot read it">
+            <rect class="dg-box" x="14" y="30" width="140" height="86" rx="12"/>
+            <rect class="dg-bar" x="14" y="30" width="140" height="20" rx="12"/>
+            <text class="dg-t--sm" x="26" y="44">Your laptop</text>
+            <text class="dg-t--sm" x="28" y="72">Ctrl + C</text>
+            <rect class="dg-box dg-box--accent" x="28" y="80" width="112" height="24" rx="6"/>
+            <text class="dg-t--sm" x="38" y="96">“meeting at 4pm”</text>
+
+            <g class="fly" style="--fly:86px">
+              <rect class="dg-box dg-box--ok" x="172" y="60" width="96" height="28" rx="8"/>
+              <path class="dg-ico dg-ico--ok" d="M184 74v-3a3 3 0 0 1 6 0v3M182 74h10v7h-10z"/>
+              <text class="dg-t--sm" x="198" y="79" style="fill:var(--success)">sealed</text>
+            </g>
+            <path class="dg-line dg-line--dash" d="M160 74 H360"/>
+
+            <rect class="dg-box" x="366" y="30" width="140" height="86" rx="12"/>
+            <rect class="dg-bar" x="366" y="30" width="140" height="20" rx="12"/>
+            <text class="dg-t--sm" x="378" y="44">The other machine</text>
+            <text class="dg-t--sm" x="380" y="72">Ctrl + V</text>
+            <rect class="dg-box dg-box--accent" x="380" y="80" width="112" height="24" rx="6"/>
+            <text class="dg-t--sm" x="390" y="96">“meeting at 4pm”</text>
+
+            <path class="dg-line dg-line--dash" d="M260 92 V150"/>
+            <rect class="dg-box dg-box--no" x="176" y="156" width="170" height="66" rx="12"/>
+            <rect class="dg-bar" x="176" y="156" width="170" height="20" rx="12"/>
+            <text class="dg-t--sm" x="188" y="170">Someone else on the WiFi</text>
+            <text class="dg-t--mono" x="192" y="198" style="fill:var(--danger);font-size:11px;letter-spacing:.02em">8f2a91c0e7…</text>
+            <text class="dg-t--sm" x="192" y="214" style="fill:var(--danger)">receives it, cannot read it</text>
+          </svg>
+          <p class="stage__caption">
+            Everything is sealed before it leaves. Other devices on the same WiFi
+            receive the same packets and see <b>nothing but ciphertext</b> — no
+            password, no key, no content.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =============================================== under the hood ====== -->
+<section class="section" id="inside">
+  <div class="wrap">
+    <div class="center">
+      <p class="eyebrow reveal">Under the hood</p>
+      <h2 class="h2 reveal" data-delay="1">What happens in the second after you press Ctrl+C</h2>
+      <p class="lede reveal" data-delay="2">
+        Seven stages, all on your own machine and your own network. The two
+        highlighted ones are where the privacy comes from.
+      </p>
     </div>
 
-    <div class="grid grid--3" style="margin-top:var(--space-4)">
-      <article class="card">
-        <div class="card__icon">
-          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 15a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2Z"/></svg>
+    <div class="pipe reveal" data-delay="3">
+      <div class="pipe__row">
+        <div class="pipe__stage">
+          <span class="pipe__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg></span>
+          <span class="pipe__name">You copy</span>
+          <span class="pipe__desc">Text, an image, or a file</span>
         </div>
-        <h3 class="h3">Chat, per room</h3>
-        <p>Sometimes you need a sentence, not a snippet. Chat is scoped to the room and encrypted with it.</p>
-      </article>
+        <span class="pipe__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
 
-      <article class="card">
-        <div class="card__icon">
-          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 20v-1.5a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4V20"/><circle cx="9.5" cy="7.5" r="3.5"/><path d="M21 20v-1.5a4 4 0 0 0-3-3.87"/></svg>
+        <div class="pipe__stage">
+          <span class="pipe__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span>
+          <span class="pipe__name">Noticed</span>
+          <span class="pipe__desc">Checked once a second</span>
         </div>
-        <h3 class="h3">You stay in control</h3>
-        <p>Approve or decline requests, remove a member at any time, or close the room for everyone. Removal takes effect immediately.</p>
-      </article>
+        <span class="pipe__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
 
-      <article class="card">
-        <div class="card__icon">
-          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <div class="pipe__stage pipe__stage--key">
+          <span class="pipe__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+          <span class="pipe__name">Sealed</span>
+          <span class="pipe__desc">AES-256-GCM, with your room key</span>
         </div>
-        <h3 class="h3">Comfortable to look at</h3>
-        <p>Light and dark themes, adjustable text size, and a font picker that reads the fonts actually installed on your machine.</p>
-      </article>
+        <span class="pipe__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+
+        <div class="pipe__stage">
+          <span class="pipe__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
+          <span class="pipe__name">Split up</span>
+          <span class="pipe__desc">Only if it is too big for one packet</span>
+        </div>
+        <span class="pipe__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+
+        <div class="pipe__stage">
+          <span class="pipe__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13a9.5 9.5 0 0 1 14 0M8 16.5a5 5 0 0 1 8 0M2 9.5a14 14 0 0 1 20 0M12 20v.01"/></svg></span>
+          <span class="pipe__name">Your WiFi</span>
+          <span class="pipe__desc">Straight to the other device</span>
+        </div>
+        <span class="pipe__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+
+        <div class="pipe__stage pipe__stage--key">
+          <span class="pipe__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5.5c0 4.3 2.9 8.3 7 9.5 4.1-1.2 7-5.2 7-9.5V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg></span>
+          <span class="pipe__name">Checked</span>
+          <span class="pipe__desc">Is the sender really in this room?</span>
+        </div>
+        <span class="pipe__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+
+        <div class="pipe__stage">
+          <span class="pipe__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9h12v12H9z"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg></span>
+          <span class="pipe__name">Ready to paste</span>
+          <span class="pipe__desc">Ctrl+V on the other machine</span>
+        </div>
+      </div>
+
+      <div class="pipe__legend">
+        <span><i style="background:var(--accent)"></i> Where your privacy is enforced</span>
+        <span><i style="background:var(--border-2)"></i> Ordinary plumbing</span>
+      </div>
     </div>
+
+    <p class="lede center reveal" data-delay="4" style="margin-top:var(--space-8)">
+      No step in that chain is a server. There is nothing to sign up for and
+      nothing to take offline.
+    </p>
   </div>
 </section>
 
@@ -568,23 +1030,23 @@ code{font-family:var(--font-mono);font-size:.88em}
 <section class="section section--sunken">
   <div class="wrap">
     <div class="center">
-      <p class="eyebrow">Who it is for</p>
-      <h2 class="h2">Built for a lab. Useful in an office.</h2>
+      <p class="eyebrow reveal">Who it is for</p>
+      <h2 class="h2 reveal" data-delay="1">Anyone with more than one screen</h2>
     </div>
 
-    <div class="grid grid--2" style="margin-top:var(--space-10)">
+    <div class="grid grid--2 reveal" data-delay="2" style="margin-top:var(--space-10)">
       <article class="card card--persona">
         <div class="card__icon" aria-hidden="true">🎓</div>
-        <h3 class="h3">College students</h3>
+        <h3 class="h3">Students</h3>
         <p>
-          Your laptop and the lab desktop, working on the same project. Move
-          error messages, documentation links and code between them without
-          emailing yourself.
+          Your laptop and the lab machine, working on the same thing. Move error
+          messages, documentation links and code between them without emailing
+          yourself.
         </p>
         <p>
-          Group project? One room for the team turns everyone's clipboard into a
-          shared scratchpad for the afternoon. Close the room when you are done
-          and it is gone.
+          Working in a group? One room turns everyone's clipboard into a shared
+          scratchpad for the afternoon. Close the room when you are done and it is
+          gone.
         </p>
       </article>
 
@@ -604,11 +1066,11 @@ code{font-family:var(--font-mono);font-size:.88em}
 
       <article class="card card--persona">
         <div class="card__icon" aria-hidden="true">🖥️</div>
-        <h3 class="h3">Anyone with two machines</h3>
+        <h3 class="h3">Two machines, one desk</h3>
         <p>
-          Desktop and laptop. Work machine and personal machine. A Windows box
-          and a Linux box under the same desk. One public room and your clipboard
-          simply follows you.
+          Desktop and laptop. Work machine and personal machine. A Windows box and
+          an Ubuntu box side by side. One room and your clipboard simply follows
+          you between them.
         </p>
       </article>
 
@@ -616,9 +1078,9 @@ code{font-family:var(--font-mono);font-size:.88em}
         <div class="card__icon" aria-hidden="true">🏫</div>
         <h3 class="h3">Classrooms and workshops</h3>
         <p>
-          An instructor drops a command into a public room and thirty people have
-          it instantly — instead of reading it out character by character while
-          everyone mistypes it.
+          Put a command into an open room and everyone in the room has it
+          instantly — instead of reading it out character by character while
+          everybody mistypes it.
         </p>
       </article>
     </div>
@@ -629,63 +1091,49 @@ code{font-family:var(--font-mono);font-size:.88em}
 <section class="section" id="security">
   <div class="wrap">
     <div class="center">
-      <p class="eyebrow">Security</p>
-      <h2 class="h2">"Encrypted" gets claimed a lot. Here is exactly what happens.</h2>
-      <p class="lede">
-        Everything security-related uses the Node standard library — no crypto
-        dependency to audit or trust. You can read all of it in an afternoon.
+      <p class="eyebrow reveal">Security</p>
+      <h2 class="h2 reveal" data-delay="1">"Encrypted" gets claimed a lot</h2>
+      <p class="lede reveal" data-delay="2">
+        So here is exactly what happens, and exactly what it does not cover.
+        Everything security-related uses the standard library — there is no
+        cryptography dependency to audit or trust.
       </p>
     </div>
 
-    <div class="flow" style="margin-top:var(--space-10)" aria-label="Key derivation and encryption flow">
-<pre style="margin:0;font:inherit">Your password ──<b>scrypt(N=32768)</b>──▶ 32-byte room key
-      │                                    │
-      │  never leaves this device          ▼
-      ▼                        <b>AES-256-GCM(key, payload)</b>
- <span class="no">✗ never transmitted</span>                     │
-                                          ▼
-                        { iv, ciphertext, <span class="yes">auth tag</span> } ──▶ network</pre>
-    </div>
-
     <div class="checks">
-      <div class="check">
-        <span class="check__n">1</span>
+      <div class="check reveal"><span class="check__n">1</span>
         <div><strong>The password is never sent</strong>
-        <span>It only ever feeds scrypt, locally. To join, your device seals a known phrase with the derived key and sends <em>that</em>. Only someone who knows the password could produce something the owner can open.</span></div>
+        <span>It only ever feeds the key derivation, locally. To join, your device seals a known phrase with the derived key and sends <em>that</em>. Only someone who knows the password could produce something the owner can open.</span></div>
       </div>
-      <div class="check">
-        <span class="check__n">2</span>
+      <div class="check reveal" data-delay="1"><span class="check__n">2</span>
         <div><strong>Four checks before anything is applied</strong>
         <span>A packet is acted on only when the room exists here, <em>you</em> are an accepted member, the <em>sender</em> is an accepted member, and the payload actually decrypts. Anything else is dropped.</span></div>
       </div>
-      <div class="check">
-        <span class="check__n">3</span>
+      <div class="check reveal" data-delay="2"><span class="check__n">3</span>
         <div><strong>Tampering is detected, not just decryption failure</strong>
-        <span>GCM's authentication tag means a modified packet is rejected outright instead of quietly producing garbage.</span></div>
+        <span>The authentication tag means a modified packet is rejected outright instead of quietly producing garbage.</span></div>
       </div>
-      <div class="check">
-        <span class="check__n">4</span>
+      <div class="check reveal" data-delay="3"><span class="check__n">4</span>
         <div><strong>Proofs cannot be replayed</strong>
-        <span>Each proof is bound to its room's id, so one captured from one room is useless at another.</span></div>
+        <span>Each proof is bound to its own room, so one captured from elsewhere is useless.</span></div>
       </div>
-      <div class="check">
-        <span class="check__n">5</span>
+      <div class="check reveal" data-delay="4"><span class="check__n">5</span>
         <div><strong>Removal is immediate</strong>
-        <span>The room owner is the single source of truth for the roster. Remove someone and every device updates — they cannot read anything sent afterwards.</span></div>
+        <span>The room owner is the single source of truth for who is in it. Remove someone and every device updates — they cannot read anything sent afterwards.</span></div>
       </div>
     </div>
 
-    <div class="honest">
+    <div class="honest reveal">
       <h3 class="h3">And what it does <em>not</em> protect against</h3>
       <p style="margin-bottom:var(--space-3)">
         Overclaiming is worse than a smaller claim, so these are written down
         plainly rather than buried:
       </p>
       <ul>
-        <li>Room names and owner names are public — adverts are broadcast so devices can find rooms. Rosters, join codes and content are not.</li>
-        <li>Traffic analysis: an observer can see that a room is busy and roughly how large its messages are.</li>
-        <li>Derived keys are cached on disk so you do not retype the password every launch. Anyone with access to your user profile can read them.</li>
-        <li>A public room with no password is plain text. That is what it means, and the app labels it "Not encrypted".</li>
+        <li>Room names and owner names are public — devices have to be able to find rooms. Member lists, join codes and content are not.</li>
+        <li>Someone watching the network can tell that a room is busy and roughly how large its messages are.</li>
+        <li>Keys are cached on your disk so you do not retype the password every launch. Anyone with access to your user account can read them.</li>
+        <li>An open room with no password is plain text. That is what it means, and the app labels it "Not encrypted".</li>
         <li>Physical or administrator access to a machine defeats all of it.</li>
       </ul>
       <p style="margin-top:var(--space-3)">
@@ -700,23 +1148,22 @@ code{font-family:var(--font-mono);font-size:.88em}
 <section class="section section--sunken" id="screens">
   <div class="wrap">
     <div class="center">
-      <p class="eyebrow">Screenshots</p>
-      <h2 class="h2">The whole app</h2>
-      <p class="lede">Light and dark, and every screen that matters.</p>
+      <p class="eyebrow reveal">The app</p>
+      <h2 class="h2 reveal" data-delay="1">Light or dark, and out of your way</h2>
     </div>
 
-    <div class="shots" style="margin-top:var(--space-10)">
+    <div class="shots reveal" data-delay="2" style="margin-top:var(--space-10)">
       <figure class="shot">
-        <img src="screenshots/clipboard-light.png" alt="Clipboard history for a room, in light mode" loading="lazy" width="1240" height="820">
-        <figcaption>Clipboard history, scoped to the selected room</figcaption>
+        <img src="screenshots/clipboard-light.png" alt="Clipboard history for a room, with search and a pinned item" loading="lazy" width="1240" height="860">
+        <figcaption>History you can search, with items you can pin</figcaption>
       </figure>
       <figure class="shot">
         <img src="screenshots/clipboard-dark.png" alt="The same clipboard history in dark mode" loading="lazy" width="1240" height="820">
         <figcaption>The same view in dark mode</figcaption>
       </figure>
       <figure class="shot">
-        <img src="screenshots/members-light.png" alt="Members panel showing a pending approval request and the member list" loading="lazy" width="1240" height="820">
-        <figcaption>Approvals, members, and per-room security details</figcaption>
+        <img src="screenshots/members-light.png" alt="Members panel showing a pending approval request" loading="lazy" width="1240" height="820">
+        <figcaption>Approvals, members and per-room security</figcaption>
       </figure>
       <figure class="shot">
         <img src="screenshots/chat-files.png" alt="Chat showing a shared PDF with a save button" loading="lazy" width="1240" height="860">
@@ -724,15 +1171,11 @@ code{font-family:var(--font-mono);font-size:.88em}
       </figure>
       <figure class="shot">
         <img src="screenshots/qr-code.png" alt="A QR code for a room's join code" loading="lazy" width="1240" height="860">
-        <figcaption>A scannable join code — the password is never in it</figcaption>
+        <figcaption>Scannable join codes — never the password</figcaption>
       </figure>
       <figure class="shot">
-        <img src="screenshots/create-room.png" alt="Dialog for creating a new room, choosing public or private and setting a password" loading="lazy" width="1240" height="820">
-        <figcaption>Creating a private, encrypted room</figcaption>
-      </figure>
-      <figure class="shot">
-        <img src="screenshots/locked-room.png" alt="A room that is encrypted and locked because this device has no key" loading="lazy" width="1240" height="820">
-        <figcaption>An encrypted room this device holds no key for</figcaption>
+        <img src="screenshots/settings.png" alt="Settings with theme, text size and font options" loading="lazy" width="1240" height="835">
+        <figcaption>Theme, text size and a system font picker</figcaption>
       </figure>
     </div>
   </div>
@@ -742,31 +1185,28 @@ code{font-family:var(--font-mono);font-size:.88em}
 <section class="section">
   <div class="wrap">
     <div class="grid grid--2" style="gap:var(--space-10);align-items:start">
-      <div>
-        <p class="eyebrow">Under the hood</p>
+      <div class="reveal">
+        <p class="eyebrow">Built with</p>
         <h2 class="h2">Boring, readable technology</h2>
         <p class="lede">
-          Every choice here was made so that someone can clone the repo and
-          understand the whole thing. There is no message broker, no backend,
-          and no cryptography dependency.
+          Every choice here was made so that someone can clone the repository and
+          understand the whole thing. No message broker, no backend, and no
+          cryptography dependency.
         </p>
-
         <div class="stack-list" style="margin-top:var(--space-6)">
           <div class="stack-item"><b>Electron 35</b><span>One codebase, three desktop platforms, real clipboard access</span></div>
-          <div class="stack-item"><b>TypeScript 5.8</b><span>Strict mode — a wire protocol is easy to get wrong</span></div>
+          <div class="stack-item"><b>TypeScript 5.8</b><span>Strict mode — a network protocol is easy to get wrong</span></div>
           <div class="stack-item"><b>React 19</b><span>The whole interface is state-driven</span></div>
           <div class="stack-item"><b>Vite 6</b><span>Fast dev server, small production build</span></div>
-          <div class="stack-item"><b>Node dgram</b><span>UDP broadcast on the LAN. No server, no broker</span></div>
+          <div class="stack-item"><b>Node dgram</b><span>UDP on the LAN. No server, no broker</span></div>
           <div class="stack-item"><b>Node crypto</b><span>scrypt and AES-256-GCM from the standard library</span></div>
-          <div class="stack-item"><b>electron-builder</b><span>NSIS, DMG and AppImage from one config</span></div>
         </div>
       </div>
 
-      <div>
-        <p class="eyebrow">Try it</p>
-        <h2 class="h2">Running from source takes a minute</h2>
-        <p class="lede">You need Node.js 20 or newer. That is the only prerequisite.</p>
-
+      <div class="reveal" data-delay="2">
+        <p class="eyebrow">Run it yourself</p>
+        <h2 class="h2">From source in a minute</h2>
+        <p class="lede">Node.js 20 or newer is the only prerequisite.</p>
         <div style="display:grid;gap:var(--space-2);margin-top:var(--space-6)">
           <div class="cmd"><code>git clone https://github.com/Vijayapardhu/Clipboard.git</code>
             <button class="btn btn--sm copy" data-copy="git clone https://github.com/Vijayapardhu/Clipboard.git">Copy</button></div>
@@ -775,13 +1215,11 @@ code{font-family:var(--font-mono);font-size:.88em}
           <div class="cmd"><code>npm run dev</code>
             <button class="btn btn--sm copy" data-copy="npm run dev">Copy</button></div>
         </div>
-
         <p style="margin-top:var(--space-5);color:var(--text-2);font-size:15px">
-          Run <code>npm test</code> for the 29 assertions covering key derivation,
-          envelope tampering, IV reuse, proof forgery and the membership rules.
-          They run in plain Node — the security modules import nothing from Electron.
+          <code>npm test</code> runs 56 assertions covering key derivation,
+          tampered packets, forged proofs, chunk reassembly and the membership
+          rules — in plain Node, with no framework.
         </p>
-
         <div class="btn-row">
           <a class="btn" href="https://github.com/Vijayapardhu/Clipboard/blob/main/ARCHITECTURE.md">Read the architecture</a>
         </div>
@@ -792,26 +1230,25 @@ code{font-family:var(--font-mono);font-size:.88em}
 
 <!-- ======================================================== roadmap ==== -->
 <section class="section section--sunken">
-  <div class="wrap">
+  <div class="wrap narrow">
     <div class="center">
-      <p class="eyebrow">Roadmap</p>
-      <h2 class="h2">Plenty left to build</h2>
-      <p class="lede">Every one of these is unclaimed. Pick one and it is yours.</p>
+      <p class="eyebrow reveal">Roadmap</p>
+      <h2 class="h2 reveal" data-delay="1">Shipped, and what is next</h2>
     </div>
 
-    <ul class="road" style="margin-top:var(--space-8)">
+    <ul class="road reveal" data-delay="2" style="margin-top:var(--space-8)">
       <li class="is-done"><span class="box box--done">✓</span> Chunked transfer so large screenshots sync <span class="tag tag--done">Shipped</span></li>
-      <li class="is-done"><span class="box box--done">✓</span> File transfer in chat, up to 5 MB <span class="tag tag--done">Shipped</span></li>
-      <li class="is-done"><span class="box box--done">✓</span> QR codes for join codes, so a phone can scan them <span class="tag tag--done">Shipped</span></li>
-      <li class="is-done"><span class="box box--done">✓</span> Pinned clipboard items that survive the history cap <span class="tag tag--done">Shipped</span></li>
+      <li class="is-done"><span class="box box--done">✓</span> File transfer in chat <span class="tag tag--done">Shipped</span></li>
+      <li class="is-done"><span class="box box--done">✓</span> QR codes for join codes <span class="tag tag--done">Shipped</span></li>
+      <li class="is-done"><span class="box box--done">✓</span> Pinned clipboard items <span class="tag tag--done">Shipped</span></li>
       <li class="is-done"><span class="box box--done">✓</span> Search across clipboard history <span class="tag tag--done">Shipped</span></li>
-      <li class="is-done"><span class="box box--done">✓</span> Keyboard shortcuts for switching rooms <span class="tag tag--done">Shipped</span></li>
-      <li><span class="box"></span> Translations <span class="tag">Medium</span></li>
-      <li><span class="box"></span> A mobile companion app — the protocol is documented <span class="tag">Hard</span></li>
-      <li><span class="box"></span> TCP fallback for networks that block UDP broadcast <span class="tag">Hard</span></li>
+      <li class="is-done"><span class="box box--done">✓</span> Keyboard shortcuts <span class="tag tag--done">Shipped</span></li>
+      <li><span class="box"></span> Translations <span class="tag">Open</span></li>
+      <li><span class="box"></span> A mobile companion app <span class="tag">Open</span></li>
+      <li><span class="box"></span> Working on networks that block UDP broadcast <span class="tag">Open</span></li>
     </ul>
 
-    <p class="lede center" style="margin-top:var(--space-6)">
+    <p class="lede center reveal" data-delay="3" style="margin-top:var(--space-6)">
       The three that are left are the interesting ones —
       <a href="https://github.com/Vijayapardhu/Clipboard/issues">each has an issue</a>
       explaining where to start and what "done" looks like.
@@ -819,10 +1256,41 @@ code{font-family:var(--font-mono);font-size:.88em}
   </div>
 </section>
 
+<!-- ========================================================= author ==== -->
+<section class="section" id="author">
+  <div class="wrap narrow">
+    <div class="author reveal">
+      <img class="author__avatar" src="https://github.com/Vijayapardhu.png?size=200" alt="Vijaya Pardhu" width="96" height="96"
+           onerror="this.outerHTML='&lt;span class=&quot;avatar-fallback&quot;&gt;VP&lt;/span&gt;'">
+      <div>
+        <p class="author__role">MVP designed and built by</p>
+        <h2 class="author__name">Vijaya Pardhu</h2>
+        <p>
+          The protocol, the cryptography, the interface and the documentation —
+          all of it. Shared Clipboard exists because moving something between two
+          machines you already own should not require a round trip through
+          somebody else's server.
+        </p>
+        <p>
+          It is open source so anyone can check that claim for themselves, and so
+          anyone who wants to make it better can.
+        </p>
+        <div class="author__links">
+          <a class="btn btn--primary" href="https://github.com/Vijayapardhu">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2A10 10 0 0 0 8.8 21.5c.5.1.7-.2.7-.5v-1.7C6.7 19.9 6.1 18 6.1 18c-.4-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.7 1a9.4 9.4 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .3.3.7 1 .7 2v2.9c0 .3.2.6.7.5A10 10 0 0 0 12 2Z"/></svg>
+            @Vijayapardhu
+          </a>
+          <a class="btn" href="https://github.com/Vijayapardhu/Clipboard">This project</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ===================================================== contribute ==== -->
-<section class="section" id="contribute">
+<section class="section section--tight" id="contribute">
   <div class="wrap">
-    <div class="cta">
+    <div class="cta reveal">
       <p class="eyebrow">Collaborators wanted</p>
       <h2 class="h2">This project is looking for people</h2>
       <p class="lede">
@@ -855,25 +1323,29 @@ code{font-family:var(--font-mono);font-size:.88em}
 <footer class="footer">
   <div class="wrap footer__inner">
     <span>
-      Built by <a href="https://github.com/Vijayapardhu">Vijaya Pardhu</a> as a college project,
-      kept open because the problem is bigger than one assignment.
+      Shared Clipboard — built by
+      <a href="https://github.com/Vijayapardhu">Vijaya Pardhu</a>. MIT licensed, free forever.
     </span>
     <nav>
       <a href="https://github.com/Vijayapardhu/Clipboard">GitHub</a>
+      <a href="https://github.com/Vijayapardhu/Clipboard/releases">Downloads</a>
       <a href="https://github.com/Vijayapardhu/Clipboard/blob/main/ARCHITECTURE.md">Architecture</a>
       <a href="https://github.com/Vijayapardhu/Clipboard/blob/main/SECURITY.md">Security</a>
-      <a href="https://github.com/Vijayapardhu/Clipboard/blob/main/LICENSE">MIT License</a>
     </nav>
   </div>
 </footer>
 
 <script>
-// Theme toggle. 'auto' follows the OS; clicking pins light or dark.
 (function () {
+  'use strict';
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---------------------------------------------------------------- theme
   var root = document.documentElement;
-  var saved = null;
-  try { saved = localStorage.getItem('theme'); } catch (e) {}
-  if (saved === 'light' || saved === 'dark') root.setAttribute('data-theme', saved);
+  try {
+    var saved = localStorage.getItem('theme');
+    if (saved === 'light' || saved === 'dark') root.setAttribute('data-theme', saved);
+  } catch (e) {}
 
   document.getElementById('theme').addEventListener('click', function () {
     var dark = getComputedStyle(root).getPropertyValue('color-scheme').trim() === 'dark';
@@ -881,18 +1353,141 @@ code{font-family:var(--font-mono);font-size:.88em}
     root.setAttribute('data-theme', next);
     try { localStorage.setItem('theme', next); } catch (e) {}
   });
-})();
 
-// Copy buttons on the install commands.
-document.querySelectorAll('.copy').forEach(function (button) {
-  button.addEventListener('click', function () {
-    navigator.clipboard.writeText(button.dataset.copy).then(function () {
-      var original = button.textContent;
-      button.textContent = 'Copied';
-      setTimeout(function () { button.textContent = original; }, 1400);
+  // -------------------------------------------------------- sticky header
+  var nav = document.getElementById('topnav');
+  var onScroll = function () { nav.classList.toggle('is-stuck', window.scrollY > 8); };
+  addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+
+  // --------------------------------------------------------- reveal on scroll
+  var revealables = document.querySelectorAll('.reveal');
+  if (reduced || !('IntersectionObserver' in window)) {
+    revealables.forEach(function (el) { el.classList.add('in'); });
+  } else {
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('in');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+    revealables.forEach(function (el) { observer.observe(el); });
+  }
+
+  // ------------------------------------------------------- the step-through
+  var journey = document.getElementById('journey');
+  var steps = journey.querySelectorAll('.step');
+  var scenes = journey.querySelectorAll('.stage__scene');
+  var current = 0;
+  var timer = null;
+  var STEP_MS = 7000;
+
+  function show(index) {
+    current = index;
+    steps.forEach(function (step, i) {
+      step.classList.toggle('is-active', i === index);
+      step.setAttribute('aria-selected', i === index ? 'true' : 'false');
+    });
+    scenes.forEach(function (scene, i) {
+      scene.classList.toggle('is-active', i === index);
+    });
+  }
+
+  function play() {
+    if (reduced) return;
+    stop();
+    timer = setInterval(function () { show((current + 1) % steps.length); }, STEP_MS);
+    journey.classList.remove('is-paused');
+  }
+
+  function stop() {
+    if (timer) { clearInterval(timer); timer = null; }
+    journey.classList.add('is-paused');
+  }
+
+  steps.forEach(function (step, index) {
+    step.addEventListener('click', function () { show(index); play(); });
+  });
+
+  // Pause while the pointer is over it, and while it is off screen.
+  journey.addEventListener('mouseenter', stop);
+  journey.addEventListener('mouseleave', play);
+
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) { entry.isIntersecting ? play() : stop(); });
+    }, { threshold: 0.25 }).observe(journey);
+  } else {
+    play();
+  }
+
+  // ------------------------------------------------- live download links
+  var REPO = 'Vijayapardhu/Clipboard';
+  var targets = [
+    { id: 'dl-win', test: /\.exe$/i },
+    { id: 'dl-mac', test: /\.dmg$/i },
+    { id: 'dl-linux', test: /\.AppImage$/i }
+  ];
+
+  function megabytes(bytes) { return (bytes / 1024 / 1024).toFixed(0) + ' MB'; }
+
+  fetch('https://api.github.com/repos/' + REPO + '/releases/latest', {
+    headers: { Accept: 'application/vnd.github+json' }
+  })
+    .then(function (response) { return response.ok ? response.json() : null; })
+    .then(function (release) {
+      if (!release || !release.assets) return;
+
+      targets.forEach(function (target) {
+        var element = document.getElementById(target.id);
+        var asset = release.assets.filter(function (a) { return target.test.test(a.name); })[0];
+        if (!element) return;
+
+        if (asset) {
+          element.href = asset.browser_download_url;
+          element.querySelector('[data-meta]').textContent =
+            release.tag_name + ' · ' + megabytes(asset.size);
+        } else {
+          // Nothing built for this platform in the latest release.
+          element.querySelector('[data-meta]').textContent = 'Build from source';
+        }
+      });
+    })
+    .catch(function () {
+      // Offline, rate-limited, or no release yet: the buttons already point at
+      // the releases page, which is a perfectly good destination.
+    });
+
+  // Highlight whichever platform the visitor is on.
+  var platform = (navigator.userAgentData && navigator.userAgentData.platform) ||
+                 navigator.platform || navigator.userAgent || '';
+  var yours = /Win/i.test(platform) ? 'dl-win'
+            : /Mac/i.test(platform) ? 'dl-mac'
+            : /Linux|X11|Ubuntu/i.test(platform) ? 'dl-linux'
+            : null;
+
+  if (yours) {
+    var card = document.getElementById(yours);
+    card.classList.add('is-yours');
+    var tag = document.createElement('span');
+    tag.className = 'dl__tag';
+    tag.textContent = 'Your system';
+    card.appendChild(tag);
+  }
+
+  // --------------------------------------------------------- copy buttons
+  document.querySelectorAll('.copy').forEach(function (button) {
+    button.addEventListener('click', function () {
+      navigator.clipboard.writeText(button.dataset.copy).then(function () {
+        var original = button.textContent;
+        button.textContent = 'Copied';
+        setTimeout(function () { button.textContent = original; }, 1400);
+      });
     });
   });
-});
+})();
 </script>
 
 </body>

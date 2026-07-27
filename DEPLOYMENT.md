@@ -87,7 +87,7 @@ All of it lives in the `build` block of `package.json`.
 
 ```jsonc
 {
-  "appId": "com.college.sharedclipboard",
+  "appId": "com.vijayapardhu.sharedclipboard",
   "productName": "Shared Clipboard",
   "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
   "files": ["dist/**/*", "package.json"],

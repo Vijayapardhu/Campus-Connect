@@ -939,6 +939,77 @@ select {
   color: var(--text-tertiary);
 }
 
+/* About block in Settings */
+
+.about {
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border);
+}
+
+.about__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.about__mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--text-inverse);
+}
+
+.about__name {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-md);
+  font-weight: 650;
+}
+
+.about__version {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+.about__by {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.about__links {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.about__license {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+/* Inline text button that reads as a link */
+.link {
+  padding: 0;
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link:hover {
+  color: var(--accent);
+}
+
 /* Badges */
 
 .badge {

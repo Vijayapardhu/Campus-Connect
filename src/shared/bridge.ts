@@ -27,6 +27,8 @@ export type SharedClipboardApi = {
   updateDeviceName: (deviceName: string) => Promise<AppState>;
   updateSettings: (patch: Partial<AppSettings>) => Promise<AppState>;
   connectPeer: (host: string, port: number, name: string) => Promise<AppState>;
+  /** Opens one of the project's own links in the system browser. Allowlisted. */
+  openExternal: (url: string) => Promise<ActionResult>;
 
   roomCreate: (name: string, type: RoomType, password: string) => Promise<ActionResult>;
   roomRequestJoin: (roomId: string, password: string, joinCode: string) => Promise<ActionResult>;

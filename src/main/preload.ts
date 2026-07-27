@@ -15,6 +15,7 @@ const api: SharedClipboardApi = {
   updateDeviceName: (deviceName) => ipcRenderer.invoke('app:update-device-name', deviceName),
   updateSettings: (patch) => ipcRenderer.invoke('app:update-settings', patch),
   connectPeer: (host, port, name) => ipcRenderer.invoke('app:connect-peer', host, port, name),
+  openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
 
   roomCreate: (name, type, password) => ipcRenderer.invoke('room:create', name, type, password),
   roomRequestJoin: (roomId, password, joinCode) =>

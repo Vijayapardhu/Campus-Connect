@@ -41,15 +41,12 @@ jobs:
         run: npm test
 
   package:
-    name: Package for ${{ matrix.os }}
-    # Only build installers once a change has landed on main.
+    name: Packaging smoke test
+    # Catches electron-builder config breakage without paying for all three
+    # platforms on every push — the release workflow builds the real installers.
     if: github.event_name == 'push'
     needs: verify
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -61,17 +58,14 @@ jobs:
 
       - run: npm ci
 
-      - name: Build installer
-        run: npm run dist
+      - name: Build a Linux installer
+        run: npm run package:linux
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: installer-${{ matrix.os }}
-          path: |
-            release/*.exe
-            release/*.dmg
-            release/*.AppImage
-          if-no-files-found: ignore
-          retention-days: 14
+          name: appimage-dev-build
+          path: release/*.AppImage
+          if-no-files-found: error
+          retention-days: 7

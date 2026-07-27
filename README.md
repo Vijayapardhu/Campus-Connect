@@ -369,7 +369,7 @@ Areas where help would make the most difference right now:
 <summary><strong>Does this need an internet connection?</strong></summary>
 
 No. Everything happens over your local network. It works on WiFi with no
-internet at all, which is exactly the situation in a lot of college labs.
+internet at all, which is exactly the situation in a lot of computer labs.
 </details>
 
 <details>
@@ -434,8 +434,12 @@ audit it.
 
 <div align="center">
 
-Built by [Vijaya Pardhu](https://github.com/Vijayapardhu) as a college project,
-kept open because the problem is bigger than one assignment.
+### Built by [Vijaya Pardhu](https://github.com/Vijayapardhu)
+
+Designed, architected and built as an MVP — the protocol, the cryptography, the
+interface and the documentation.
+
+[![GitHub](https://img.shields.io/badge/GitHub-Vijayapardhu-181717?logo=github)](https://github.com/Vijayapardhu)
 
 **[⭐ Star this repo](https://github.com/Vijayapardhu/Clipboard)** ·
 **[🤝 Contribute](CONTRIBUTING.md)** ·

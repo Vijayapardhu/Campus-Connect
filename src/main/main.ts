@@ -39,6 +39,7 @@ import {
   verifyProof
 } from './crypto';
 import {
+  APP_INFO,
   MAX_FONT_SCALE,
   MIN_FONT_SCALE,
   PROTOCOL_VERSION,
@@ -211,6 +212,7 @@ function getAppState(): AppState {
   return {
     deviceId: deviceId(),
     deviceName: deviceName(),
+    appVersion: app.getVersion(),
     listenPort: store.get('listenPort'),
     localAddress: getLocalIpAddress(),
     peers: store.get('peers'),
@@ -1208,6 +1210,27 @@ ipcMain.handle('app:update-device-name', (_event, name: string) => {
 });
 
 ipcMain.handle('app:update-settings', (_event, patch: Partial<AppSettings>) => updateSettings(patch));
+
+/**
+ * Opens one of the project's own links in the system browser. Restricted to an
+ * allowlist so the renderer can never hand the OS an arbitrary URL.
+ */
+const EXTERNAL_LINKS: readonly string[] = [
+  APP_INFO.authorUrl,
+  APP_INFO.repositoryUrl,
+  APP_INFO.websiteUrl,
+  `${APP_INFO.repositoryUrl}/issues`
+];
+
+ipcMain.handle('app:open-external', (_event, url: string): ActionResult => {
+  if (!EXTERNAL_LINKS.includes(url)) {
+    log.warn(`Refused to open an unrecognised URL: ${url}`);
+    return fail('That link could not be opened.');
+  }
+
+  shell.openExternal(url);
+  return ok('Opened in your browser.');
+});
 
 ipcMain.handle('app:connect-peer', (_event, host: string, port: number, name: string) => {
   const peer: PeerInfo = {

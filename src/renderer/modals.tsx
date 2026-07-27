@@ -1,10 +1,18 @@
 import React from 'react';
 import type { AppSettings, AppState, DiscoveredRoom, RoomInfo, RoomType } from '../shared/types';
-import { FONT_SCALES, MAX_FONT_SCALE, MIN_FONT_SCALE } from '../shared/types';
+import { APP_INFO, FONT_SCALES, MAX_FONT_SCALE, MIN_FONT_SCALE } from '../shared/types';
 import { Button, Field, Modal, SwitchRow } from './ui';
 import { passwordStrength } from './format';
 import { listSystemFonts } from './fonts';
-import { GlobeIcon, LockIcon, MonitorIcon, MoonIcon, SunIcon } from './icons';
+import {
+  ClipboardIcon,
+  GithubIcon,
+  GlobeIcon,
+  LockIcon,
+  MonitorIcon,
+  MoonIcon,
+  SunIcon
+} from './icons';
 
 // ------------------------------------------------------------- create a room
 
@@ -395,13 +403,15 @@ export function SettingsModal({
   onClose,
   onRename,
   onUpdateSettings,
-  onConnectPeer
+  onConnectPeer,
+  onOpenExternal
 }: {
   state: AppState;
   onClose: () => void;
   onRename: (name: string) => void;
   onUpdateSettings: (patch: Partial<AppSettings>) => void;
   onConnectPeer: (host: string) => void;
+  onOpenExternal: (url: string) => void;
 }) {
   const [name, setName] = React.useState(state.deviceName);
   const [peerHost, setPeerHost] = React.useState('');
@@ -506,6 +516,37 @@ export function SettingsModal({
           </Button>
         </div>
       </Field>
+
+      <div className="about">
+        <div className="about__head">
+          <span className="about__mark">
+            <ClipboardIcon size={16} />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="about__name">
+              {APP_INFO.name}
+              <span className="about__version">v{state.appVersion}</span>
+            </div>
+            <div className="about__by">
+              MVP designed and built by{' '}
+              <button className="link" onClick={() => onOpenExternal(APP_INFO.authorUrl)}>
+                {APP_INFO.author}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div className="about__links">
+          <Button size="sm" onClick={() => onOpenExternal(APP_INFO.repositoryUrl)}>
+            <GithubIcon size={14} />
+            Source code
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => onOpenExternal(APP_INFO.websiteUrl)}>
+            Website
+          </Button>
+          <span className="spacer" />
+          <span className="about__license">{APP_INFO.license} licensed</span>
+        </div>
+      </div>
     </Modal>
   );
 }
