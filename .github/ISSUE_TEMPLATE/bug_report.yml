@@ -1,0 +1,99 @@
+name: Bug report
+description: Something does not work the way it should
+labels: ['bug', 'needs triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. The more precisely you can
+        describe what happened, the faster it gets fixed.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what did you get instead?
+      placeholder: I copied text on my laptop, but nothing arrived on the other one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Number them, starting from a freshly opened app.
+      placeholder: |
+        1. Create a private room called "Test" with password "abcd1234"
+        2. On the second laptop, enter the join code and password
+        3. Approve the request
+        4. Copy text on the first laptop
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the app?
+      options:
+        - Clipboard sync
+        - Rooms, join codes or approval
+        - Encryption or passwords
+        - Chat
+        - History
+        - User interface or theming
+        - Installer / packaging
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11 / macOS 14.5 / Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Shown in package.json, or the installer file name.
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: devices
+    attributes:
+      label: How many devices were involved?
+      options:
+        - One
+        - Two
+        - Three or more
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Paste anything relevant. Logs live in
+        `%APPDATA%\shared-clipboard-desktop\logs` on Windows,
+        `~/Library/Logs/shared-clipboard-desktop` on macOS, and
+        `~/.config/shared-clipboard-desktop/logs` on Linux.
+        You can also press F12 in the app and copy from the Console tab.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: Both devices are on the same network
+          required: false
+        - label: I searched the existing issues
+          required: true
+        - label: I have removed any passwords or private content from the details above
+          required: true

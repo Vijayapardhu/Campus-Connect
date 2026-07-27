@@ -1,0 +1,97 @@
+{
+  "name": "shared-clipboard-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Copy on one laptop, paste on another. An encrypted, room-based clipboard and chat for devices on the same network.",
+  "main": "dist/main/main.js",
+  "license": "MIT",
+  "author": "Vijaya Pardhu",
+  "homepage": "https://vijayapardhu.github.io/Clipboard/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Vijayapardhu/Clipboard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Vijayapardhu/Clipboard/issues"
+  },
+  "keywords": [
+    "clipboard",
+    "clipboard-sync",
+    "electron",
+    "lan",
+    "local-network",
+    "end-to-end-encryption",
+    "aes-256-gcm",
+    "typescript",
+    "react",
+    "cross-platform"
+  ],
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:main\" \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:main": "tsc -p tsconfig.main.json --watch",
+    "dev:renderer": "vite",
+    "dev:electron": "wait-on dist/main/main.js http://localhost:5173 && electron .",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "test": "npm run build:main && node test/run.js",
+    "build": "npm run build:main && npm run build:renderer",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "dist": "npm run build && electron-builder",
+    "build:exe": "npm run dist -- --win",
+    "package:win": "npm run dist -- --win",
+    "package:mac": "npm run dist -- --mac",
+    "package:linux": "npm run dist -- --linux"
+  },
+  "dependencies": {
+    "electron-log": "^5.3.0",
+    "electron-store": "^8.2.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/uuid": "^10.0.0",
+    "concurrently": "^9.1.2",
+    "electron": "^35.2.1",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.college.sharedclipboard",
+    "productName": "Shared Clipboard",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "signAndEditExecutable": false
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

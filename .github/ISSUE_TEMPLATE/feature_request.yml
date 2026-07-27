@@ -1,0 +1,49 @@
+name: Feature request
+description: Suggest something the app should be able to do
+labels: ['enhancement']
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the situation, not the solution. What are you trying to do that is awkward today?
+      placeholder: When I share a screenshot it is too large to send, and I only find out afterwards.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+      validations:
+        required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you have considered
+      description: Optional, but it helps to know what you have already ruled out.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the app?
+      options:
+        - Clipboard sync
+        - Rooms and membership
+        - Security and privacy
+        - Chat
+        - History
+        - User interface, accessibility or theming
+        - Packaging and distribution
+        - Documentation
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Would you like to build it?
+      options:
+        - label: I would be happy to open a pull request for this
+          required: false

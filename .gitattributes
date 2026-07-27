@@ -1,0 +1,20 @@
+# Normalise line endings so Windows, macOS and Linux contributors do not
+# produce whole-file diffs for each other.
+* text=auto eol=lf
+
+# Windows-only files that must keep CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binary
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.icns binary
+*.exe  binary
+*.dmg  binary
+
+# Keep generated files out of diffs and language stats
+package-lock.json  linguist-generated=true -diff
+docs/screenshots/* linguist-documentation=true
