@@ -4,6 +4,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  Notification,
   session,
   Tray,
   nativeImage,
@@ -54,6 +55,7 @@ import {
   type RoomInfo,
   type RoomInvite,
   type RoomType,
+  type StorageStats,
   type WireMessage
 } from '../shared/types';
 
@@ -144,6 +146,12 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 };
 
+/** Notification bodies should be a glance, not a wall of text. */
+function truncateForNotice(text: string): string {
+  const single = text.replace(/\s+/g, ' ').trim();
+  return single.length > 120 ? `${single.slice(0, 120)}…` : single;
+}
+
 function mimeForFile(fileName: string): string {
   return MIME_BY_EXTENSION[path.extname(fileName).toLowerCase()] ?? 'application/octet-stream';
 }
@@ -154,8 +162,15 @@ const DEFAULT_SETTINGS: AppSettings = {
   shareImages: true,
   theme: 'system',
   fontScale: 1,
-  fontFamily: ''
+  fontFamily: '',
+  notifications: true,
+  sendReceipts: true,
+  retainMediaDays: 7,
+  maxStorageMb: 100
 };
+
+/** How often the stored history is swept for attachments to drop. */
+const COMPACT_INTERVAL_MS = 60 * 60 * 1000;
 
 const store = new Store<AppStore>({
   defaults: {
@@ -191,6 +206,7 @@ let udpSocket: dgram.Socket | null = null;
 let announceTimer: NodeJS.Timeout | null = null;
 let clipboardPollTimer: NodeJS.Timeout | null = null;
 let transferSweepTimer: NodeJS.Timeout | null = null;
+let compactTimer: NodeJS.Timeout | null = null;
 let tray: Tray | null = null;
 let lastLocalClipboardHash = '';
 let lastRemoteClipboardHash = '';
@@ -238,6 +254,7 @@ function getAppState(): AppState {
       .map((room) => room.roomId),
     invites: listReceivedInvites(),
     invitedDeviceIds: pendingInviteIds(),
+    storage: historyManager.stats(),
     settings: getSettings()
   };
 }
@@ -249,6 +266,29 @@ function sendStateToRenderer() {
 /** Tells the renderer to refetch history, so it never has to poll for it. */
 function notifyHistoryChanged(roomId: string) {
   mainWindow?.webContents.send('history:changed', roomId);
+}
+
+/**
+ * A system notification, but only when the window cannot already show it.
+ * Nothing is more irritating than being notified about the window you are
+ * looking at.
+ */
+function notify(title: string, body: string, onClick?: () => void): void {
+  if (!getSettings().notifications || !Notification.isSupported()) {
+    return;
+  }
+
+  const visible = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible();
+  if (visible && mainWindow?.isFocused()) {
+    return;
+  }
+
+  const notification = new Notification({ title, body, silent: false });
+  notification.on('click', () => {
+    showMainWindow();
+    onClick?.();
+  });
+  notification.show();
 }
 
 type StatusTone = 'info' | 'success' | 'warning' | 'error';
@@ -876,6 +916,7 @@ function handleRoomRequest(message: WireMessage) {
     mainWindow?.webContents.send('room:join-request', request);
     sendStateToRenderer();
     sendStatus(`${message.deviceName} is asking to join ${room.name}`, 'warning');
+    notify('Someone wants to join', `${message.deviceName} is asking to join ${room.name}`);
   }
 }
 
@@ -1040,6 +1081,11 @@ function handleClipboardMessage(message: WireMessage) {
   } else {
     sendStatus(`New item from ${message.deviceName} in history`, 'info');
   }
+
+  notify(
+    `Copied from ${message.deviceName}`,
+    payload.kind === 'image' ? 'An image is ready to paste' : truncateForNotice(payload.text)
+  );
 }
 
 function handleChatMessage(message: WireMessage) {
@@ -1062,6 +1108,13 @@ function handleChatMessage(message: WireMessage) {
     timestamp: chat.timestamp
   });
   mainWindow?.webContents.send('chat:message', stored);
+  sendReceipt(chat.deviceId, message.roomId!, [stored.id], 'delivered');
+
+  const room = roomManager.getRoom(message.roomId!);
+  notify(
+    `${stored.deviceName} in ${room?.name ?? 'a room'}`,
+    stored.type === 'text' ? stored.content : (stored.fileName ?? 'Sent a file')
+  );
 }
 
 /** An invitation addressed to this device. Carries no credentials. */
@@ -1093,6 +1146,7 @@ function handleRoomInvite(message: WireMessage, host: string) {
   mainWindow?.webContents.send('room:invite', invite);
   sendStateToRenderer();
   sendStatus(`${advert.ownerName} invited you to ${advert.name}`, 'warning');
+  notify('Room invitation', `${advert.ownerName} invited you to ${advert.name}`);
 }
 
 /**
@@ -1138,6 +1192,44 @@ function handleInviteDecline(message: WireMessage) {
   }
 }
 
+/** Tell a sender their message arrived, or that we have read it. */
+function sendReceipt(
+  toDeviceId: string,
+  roomId: string,
+  messageIds: string[],
+  receipt: 'delivered' | 'seen'
+): void {
+  if (!getSettings().sendReceipts || messageIds.length === 0) {
+    return;
+  }
+
+  const message = baseMessage('chat-receipt');
+  message.roomId = roomId;
+  message.targetDeviceId = toDeviceId;
+  message.messageIds = messageIds;
+  message.receipt = receipt;
+
+  const host = getPeerHost(toDeviceId);
+  sendUdpMessage(message, host ?? BROADCAST_ADDRESS);
+}
+
+function handleChatReceipt(message: WireMessage) {
+  if (message.targetDeviceId !== deviceId() || !message.roomId || !message.receipt) {
+    return;
+  }
+  // Receipts are room traffic like anything else: only from a fellow member.
+  if (!roomManager.isAcceptedMember(message.roomId, message.deviceId)) {
+    return;
+  }
+  if (!Array.isArray(message.messageIds)) {
+    return;
+  }
+
+  if (historyManager.recordReceipt(message.messageIds, message.deviceId, message.receipt)) {
+    mainWindow?.webContents.send('chat:receipts', message.roomId);
+  }
+}
+
 function handleWireMessage(message: WireMessage, host: string) {
   if (message.deviceId === deviceId()) {
     return; // Our own broadcast, looped back.
@@ -1180,6 +1272,8 @@ function handleWireMessage(message: WireMessage, host: string) {
       return handleInviteAccept(message);
     case 'room-invite-decline':
       return handleInviteDecline(message);
+    case 'chat-receipt':
+      return handleChatReceipt(message);
     default:
       return;
   }
@@ -1225,7 +1319,22 @@ function startUdpService() {
     }, ANNOUNCE_INTERVAL_MS);
     clipboardPollTimer = setInterval(pollLocalClipboard, CLIPBOARD_POLL_MS);
     transferSweepTimer = setInterval(sweepTransfers, TRANSFER_SWEEP_MS);
+    compactTimer = setInterval(() => {
+      if (compactStorage() > 0) {
+        sendStateToRenderer();
+      }
+    }, COMPACT_INTERVAL_MS);
   });
+}
+
+/** Applies the retention window and the size ceiling to stored history. */
+function compactStorage(): number {
+  const settings = getSettings();
+  const cleared = historyManager.compact(settings.retainMediaDays, settings.maxStorageMb);
+  if (cleared > 0) {
+    log.info(`Storage cleanup dropped ${cleared} attachment(s)`);
+  }
+  return cleared;
 }
 
 function stopUdpService() {
@@ -1240,6 +1349,10 @@ function stopUdpService() {
   if (transferSweepTimer) {
     clearInterval(transferSweepTimer);
     transferSweepTimer = null;
+  }
+  if (compactTimer) {
+    clearInterval(compactTimer);
+    compactTimer = null;
   }
   outboundTransfers.clear();
   udpSocket?.close();
@@ -1375,6 +1488,12 @@ app.whenReady().then(() => {
   if (currentRoomId && !roomManager.getRoom(currentRoomId)) {
     store.set('currentRoomId', undefined);
   }
+
+  // Windows attributes notifications by app id; without this they show as
+  // coming from "electron.app.Electron".
+  app.setAppUserModelId('com.vijayapardhu.sharedclipboard');
+
+  compactStorage();
 
   mainWindow = createWindow();
   setupTray();
@@ -1860,9 +1979,13 @@ function postChatMessage(
     roomId: room.roomId
   });
 
+  // Receipts are the sender's own bookkeeping; recipients have no business
+  // being told who else has received or read a message.
+  const { deliveredTo: _d, seenBy: _s, mediaCleared: _m, ...onTheWire } = chatMessage;
+
   const message = baseMessage('chat');
   message.roomId = room.roomId;
-  if (!attachRoomBody(message, room, { chatMessage })) {
+  if (!attachRoomBody(message, room, { chatMessage: onTheWire })) {
     return fail(`${room.name} is locked on this device — unlock it first.`);
   }
 
@@ -1997,6 +2120,42 @@ ipcMain.handle('chat:save-file', async (_event, messageId: string): Promise<Acti
   }
 
   return ok(`Saved as ${path.basename(picked.filePath)}.`);
+});
+
+/** The chat for this room is on screen, so acknowledge everything in it. */
+ipcMain.handle('chat:mark-seen', (_event, roomId: string): ActionResult => {
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return fail('Room not found.');
+  }
+
+  const bySender = new Map<string, string[]>();
+  for (const chatMessage of historyManager.getChatHistory(roomId)) {
+    if (chatMessage.deviceId === deviceId()) {
+      continue;
+    }
+    bySender.set(chatMessage.deviceId, [...(bySender.get(chatMessage.deviceId) ?? []), chatMessage.id]);
+  }
+
+  for (const [senderId, ids] of bySender) {
+    sendReceipt(senderId, roomId, ids, 'seen');
+  }
+
+  return ok('Marked as seen.');
+});
+
+ipcMain.handle('storage:stats', (): StorageStats => historyManager.stats());
+
+ipcMain.handle('storage:compact', (): ActionResult => {
+  const settings = getSettings();
+  const cleared = compactStorage();
+  sendStateToRenderer();
+
+  return ok(
+    cleared === 0
+      ? 'Nothing to clean up — storage is already tidy.'
+      : `Cleared ${cleared} attachment${cleared === 1 ? '' : 's'}. Messages and text were kept.`
+  );
 });
 
 ipcMain.handle('clipboard:read', () => readClipboardText());

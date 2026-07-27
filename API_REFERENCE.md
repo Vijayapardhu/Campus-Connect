@@ -78,6 +78,9 @@ lifted to the top.
 | `chatSend(type, content, roomId, dataUrl?, fileName?)` | `ActionResult` | Fails if you are not an accepted member |
 | `chatSendFile(roomId)` | `ActionResult` | Opens a native picker. 50 MB cap. Images are sent as `image` so they preview inline |
 | `chatSaveFile(messageId)` | `ActionResult` | Opens a native save dialog. Never opens the file |
+| `chatMarkSeen(roomId)` | `ActionResult` | Acknowledge a room's messages as read |
+| `storageStats()` | `StorageStats` | What the stored history occupies |
+| `storageCompact()` | `ActionResult` | Apply the retention window and size ceiling now |
 | `readClipboard()` | `string` | This machine's clipboard text |
 | `clipboardApply(entryId)` | `ActionResult` | Puts a history entry back on this machine's clipboard |
 | `clipboardShareNow()` | `ActionResult` | Shares the clipboard immediately instead of waiting for the poller |

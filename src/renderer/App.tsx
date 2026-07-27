@@ -12,7 +12,8 @@ import type {
 import type { StatusTone } from '../shared/bridge';
 import { Sidebar } from './sidebar';
 import { ChatPanel, ClipboardPanel, MembersPanel } from './panels';
-import { CreateRoomModal, InviteModal, JoinRoomModal, SettingsModal, UnlockRoomModal } from './modals';
+import { CreateRoomModal, InviteModal, JoinRoomModal, UnlockRoomModal } from './modals';
+import { SettingsPage } from './settings';
 import { Badge, Button, ConfirmModal, EmptyState } from './ui';
 import { toFontStack } from './fonts';
 import {
@@ -30,12 +31,14 @@ import {
   SignalIcon,
   SunIcon,
   UsersIcon,
-  XCircleIcon
+  XCircleIcon,
+  XIcon
 } from './icons';
 
 const api = window.sharedClipboard;
 
 type Tab = 'clipboard' | 'chat' | 'members';
+type View = 'room' | 'settings';
 
 type Toast = { id: number; message: string; tone: StatusTone };
 
@@ -43,7 +46,6 @@ type ModalState =
   | { kind: 'create' }
   | { kind: 'join'; target: DiscoveredRoom | null }
   | { kind: 'unlock'; roomId: string }
-  | { kind: 'settings' }
   | { kind: 'invite'; invite: RoomInvite }
   | { kind: 'confirm'; title: string; description: string; confirmLabel: string; action: () => void }
   | null;
@@ -79,6 +81,7 @@ export default function App() {
   const [clips, setClips] = React.useState<ClipboardHistoryEntry[]>([]);
   const [messages, setMessages] = React.useState<ChatMessage[]>([]);
   const [tab, setTab] = React.useState<Tab>('clipboard');
+  const [view, setView] = React.useState<View>('room');
   const [modal, setModal] = React.useState<ModalState>(null);
   const { toasts, push, dismiss } = useToasts();
 
@@ -105,6 +108,11 @@ export default function App() {
       api.onHistoryChanged((roomId) => {
         if (roomId === currentRoomIdRef.current) {
           api.historyGetClipboard(roomId).then(setClips);
+        }
+      }),
+      api.onReceipts((roomId) => {
+        if (roomId === currentRoomIdRef.current) {
+          api.historyGetChat(roomId).then(setMessages);
         }
       }),
       api.onJoinRequest((request) => {
@@ -134,6 +142,24 @@ export default function App() {
     api.historyGetClipboard(roomId).then(setClips);
     api.historyGetChat(roomId).then(setMessages);
   }, [roomId]);
+
+  // Acknowledge a room's messages while its chat is actually on screen.
+  const chatVisible = view === 'room' && tab === 'chat' && Boolean(roomId);
+  React.useEffect(() => {
+    if (!chatVisible || !roomId) {
+      return;
+    }
+
+    const acknowledge = () => {
+      if (document.hasFocus()) {
+        api.chatMarkSeen(roomId);
+      }
+    };
+
+    acknowledge();
+    window.addEventListener('focus', acknowledge);
+    return () => window.removeEventListener('focus', acknowledge);
+  }, [chatVisible, roomId, messages.length]);
 
   // Apply the chosen theme; 'system' means letting the OS preference win.
   const theme = state?.settings.theme ?? 'system';
@@ -193,6 +219,12 @@ export default function App() {
         return;
       }
 
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        api.clipboardShareNow().then((result) => push(result.message, result.ok ? 'success' : 'error'));
+        return;
+      }
+
       const digit = Number(event.key);
       if (!Number.isInteger(digit) || digit < 1 || digit > 9) {
         return;
@@ -205,6 +237,7 @@ export default function App() {
       }
 
       event.preventDefault();
+      setView('room');
       api.roomSwitch(targetRoomId).then(() => setTab('clipboard'));
     }
 
@@ -248,18 +281,30 @@ export default function App() {
         state={state}
         lockedRoomIds={lockedRoomIds}
         onSelectRoom={(id) => {
+          setView('room');
           api.roomSwitch(id).then(() => setTab('clipboard'));
         }}
         onCreateRoom={() => setModal({ kind: 'create' })}
         onJoinByCode={() => setModal({ kind: 'join', target: null })}
         onJoinDiscovered={(target) => setModal({ kind: 'join', target })}
         onOpenInvite={(invite) => setModal({ kind: 'invite', invite })}
-        onOpenSettings={() => setModal({ kind: 'settings' })}
+        onOpenSettings={() => setView((current) => (current === 'settings' ? 'room' : 'settings'))}
+        settingsOpen={view === 'settings'}
       />
 
       <main className="main">
         <header className="topbar">
-          {room ? (
+          {view === 'settings' ? (
+            <>
+              <div className="topbar__title">
+                <span className="topbar__name">Settings</span>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => setView('room')}>
+                <XIcon size={14} />
+                Close
+              </Button>
+            </>
+          ) : room ? (
             <>
               <div className="topbar__title">
                 <span className="topbar__name">{room.name}</span>
@@ -312,7 +357,7 @@ export default function App() {
           </div>
         </header>
 
-        {room && !isLocked && (
+        {view === 'room' && room && !isLocked && (
           <nav className="tabbar">
             <button
               className={tab === 'clipboard' ? 'tabbar__tab is-active' : 'tabbar__tab'}
@@ -343,7 +388,24 @@ export default function App() {
           </nav>
         )}
 
-        {!room ? (
+        {view === 'settings' ? (
+          <div className="panel">
+            <SettingsPage
+              state={state}
+              onRename={(name) => api.updateDeviceName(name).then(setState)}
+              onUpdateSettings={(patch) => api.updateSettings(patch).then(setState)}
+              onConnectPeer={(host) => api.connectPeer(host, state.listenPort, '').then(setState)}
+              onOpenExternal={(url) => {
+                api.openExternal(url).then((result) => {
+                  if (!result.ok) {
+                    push(result.message, 'error');
+                  }
+                });
+              }}
+              onCompactStorage={() => run(api.storageCompact())}
+            />
+          </div>
+        ) : !room ? (
           <div className="panel">
             <EmptyState
               icon={<ClipboardIcon size={22} />}
@@ -502,23 +564,6 @@ export default function App() {
           room={room}
           onClose={() => setModal(null)}
           onUnlock={(id, password) => run(api.roomUnlock(id, password))}
-        />
-      )}
-
-      {modal?.kind === 'settings' && (
-        <SettingsModal
-          state={state}
-          onClose={() => setModal(null)}
-          onRename={(name) => api.updateDeviceName(name).then(setState)}
-          onUpdateSettings={(patch) => api.updateSettings(patch).then(setState)}
-          onConnectPeer={(host) => api.connectPeer(host, state.listenPort, '').then(setState)}
-          onOpenExternal={(url) => {
-            api.openExternal(url).then((result) => {
-              if (!result.ok) {
-                push(result.message, 'error');
-              }
-            });
-          }}
         />
       )}
 

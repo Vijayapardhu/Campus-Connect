@@ -192,6 +192,48 @@ export const GithubIcon = ({ size = 16, className }: IconProps) => (
   </svg>
 );
 
+export const BellIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M18 9a6 6 0 1 0-12 0c0 6-2 7-2 7h16s-2-1-2-7" />
+    <path d="M13.7 20a2 2 0 0 1-3.4 0" />
+  </Svg>
+);
+
+export const DatabaseIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <ellipse cx="12" cy="6" rx="8" ry="3" />
+    <path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6" />
+    <path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
+  </Svg>
+);
+
+export const TypeIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 7V5h16v2M9 19h6M12 5v14" />
+  </Svg>
+);
+
+export const UserIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="8" r="4" />
+    <path d="M4 20v-1a5 5 0 0 1 5-5h6a5 5 0 0 1 5 5v1" />
+  </Svg>
+);
+
+export const CheckAllIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m1 12.5 4 4L13 8" />
+    <path d="m10 15.5 1.5 1.5L21 7" />
+  </Svg>
+);
+
+export const ClockIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5.5l3.5 2" />
+  </Svg>
+);
+
 export const MailIcon = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="5" width="18" height="14" rx="2" />

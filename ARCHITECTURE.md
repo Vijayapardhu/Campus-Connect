@@ -244,6 +244,7 @@ broadcast still works). Every datagram is JSON and carries `v: 2`; mismatched ve
 | `room-invite` | owner → one device | An invitation. Unicast, and carries no credentials |
 | `room-invite-accept` | invitee → owner | Accepted; the owner still has to approve |
 | `room-invite-decline` | invitee → owner | Declined |
+| `chat-receipt` | recipient → sender | Delivered and seen acknowledgements |
 
 ### 6.2 The advert is deliberately thin
 

@@ -21,7 +21,8 @@ export function Sidebar({
   onJoinByCode,
   onJoinDiscovered,
   onOpenInvite,
-  onOpenSettings
+  onOpenSettings,
+  settingsOpen
 }: {
   state: AppState;
   lockedRoomIds: Set<string>;
@@ -31,6 +32,7 @@ export function Sidebar({
   onJoinDiscovered: (room: DiscoveredRoom) => void;
   onOpenInvite: (invite: RoomInvite) => void;
   onOpenSettings: () => void;
+  settingsOpen: boolean;
 }) {
   return (
     <aside className="sidebar">
@@ -149,7 +151,11 @@ export function Sidebar({
       </div>
 
       <div className="sidebar__footer">
-        <button className="device-card" onClick={onOpenSettings} title="Settings">
+        <button
+          className={settingsOpen ? 'device-card is-active' : 'device-card'}
+          onClick={onOpenSettings}
+          title="Settings"
+        >
           <span className="device-card__avatar">{initials(state.deviceName)}</span>
           <span className="device-card__body">
             <span className="device-card__name">{state.deviceName}</span>

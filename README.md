@@ -45,7 +45,10 @@ on the other. Nothing leaves the network you are already on.
 - **Approval-based private rooms** — the owner decides who gets in
 - **Invite devices directly** — see who is on the network and invite them, instead
   of reading a code out loud
-- **Built-in chat**, per room, with **file transfer** up to 50 MB
+- **Built-in chat**, per room, with **file transfer** up to 50 MB and
+  **delivered / seen** markers
+- **Notifications** when something arrives while the window is closed
+- **Stays small on disk** — attachments are cleaned up on a schedule, the text is kept
 - **Large transfers** — multi-megabyte images are chunked and reassembled, with
   automatic retransmission of anything the network drops
 - **Clipboard history** that survives restarts, with search, pinning, and one-click copy back

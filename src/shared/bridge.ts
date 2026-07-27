@@ -6,7 +6,8 @@ import type {
   ClipboardHistoryEntry,
   JoinRequest,
   RoomInvite,
-  RoomType
+  RoomType,
+  StorageStats
 } from './types';
 
 export type StatusTone = 'info' | 'success' | 'warning' | 'error';
@@ -64,6 +65,12 @@ export type SharedClipboardApi = {
   chatSendFile: (roomId: string) => Promise<ActionResult>;
   /** Opens a native save dialog for a received file. Never opens the file. */
   chatSaveFile: (messageId: string) => Promise<ActionResult>;
+  /** Acknowledge every message in a room as read. */
+  chatMarkSeen: (roomId: string) => Promise<ActionResult>;
+
+  storageStats: () => Promise<StorageStats>;
+  /** Apply the retention window and size ceiling now. */
+  storageCompact: () => Promise<ActionResult>;
 
   readClipboard: () => Promise<string>;
   clipboardApply: (entryId: string) => Promise<ActionResult>;
@@ -73,6 +80,8 @@ export type SharedClipboardApi = {
   onStatus: (handler: (status: StatusEvent) => void) => () => void;
   onChatMessage: (handler: (message: ChatMessage) => void) => () => void;
   onHistoryChanged: (handler: (roomId: string) => void) => () => void;
+  /** Receipts changed for a room; refetch its chat. */
+  onReceipts: (handler: (roomId: string) => void) => () => void;
   onJoinRequest: (handler: (request: JoinRequest) => void) => () => void;
   onInvite: (handler: (invite: RoomInvite) => void) => () => void;
   onJoinResult: (handler: (result: JoinResultEvent) => void) => () => void;

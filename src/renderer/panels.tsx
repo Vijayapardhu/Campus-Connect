@@ -1,12 +1,20 @@
 import React from 'react';
-import type { ChatMessage, ClipboardHistoryEntry, PeerInfo, RoomInfo } from '../shared/types';
+import type {
+  ChatMessage,
+  ClipboardHistoryEntry,
+  MessageStatus,
+  PeerInfo,
+  RoomInfo
+} from '../shared/types';
 import { Badge, Button, Callout, EmptyState } from './ui';
 import { clockTime, formatBytes, initials, relativeTime, truncate } from './format';
 import {
   AlertIcon,
   ChatIcon,
+  CheckAllIcon,
   CheckIcon,
   ClipboardIcon,
+  ClockIcon,
   CopyIcon,
   DownloadIcon,
   ExitIcon,
@@ -123,7 +131,22 @@ export function ClipboardPanel({
       ) : (
         <div className="feed">
           {visible.map((entry) => (
-            <article key={entry.id} className={entry.pinned ? 'clip is-pinned' : 'clip'}>
+            <article
+              key={entry.id}
+              className={entry.pinned ? 'clip is-pinned is-clickable' : 'clip is-clickable'}
+              // The most common action by far, so the whole card does it rather
+              // than a small button you have to hover for.
+              onClick={() => onCopy(entry.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  onCopy(entry.id);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+              title="Click to copy"
+            >
               <header className="clip__head">
                 <span className={entry.deviceId === deviceId ? 'clip__author is-me' : 'clip__author'}>
                   {entry.deviceId === deviceId ? 'You' : entry.deviceName}
@@ -137,7 +160,10 @@ export function ClipboardPanel({
                 ) : null}
                 {entry.kind === 'image' ? <Badge>Image</Badge> : null}
                 <span className="spacer" />
-                <div className={entry.pinned ? 'clip__actions is-visible' : 'clip__actions'}>
+                <div
+                  className={entry.pinned ? 'clip__actions is-visible' : 'clip__actions'}
+                  onClick={(event) => event.stopPropagation()}
+                >
                   <Button
                     size="sm"
                     icon
@@ -185,6 +211,63 @@ export function ClipboardPanel({
 }
 
 // ----------------------------------------------------------------------- chat
+
+/**
+ * What the sender sees against their own message.
+ *
+ * A message counts as delivered or seen only once *every* other accepted member
+ * has acknowledged it — a half-delivered message is not delivered. Anything
+ * still unacknowledged after a grace period is called undelivered rather than
+ * left looking like it is still in flight.
+ */
+const UNDELIVERED_AFTER_MS = 25000;
+
+function statusOf(message: ChatMessage, room: RoomInfo): MessageStatus {
+  const others = room.members
+    .filter((member) => member.status === 'accepted' && member.deviceId !== message.deviceId)
+    .map((member) => member.deviceId);
+
+  if (others.length === 0) {
+    return 'sent';
+  }
+
+  const seen = message.seenBy ?? [];
+  const delivered = message.deliveredTo ?? [];
+
+  if (others.every((id) => seen.includes(id))) return 'seen';
+  if (others.every((id) => delivered.includes(id))) return 'delivered';
+  if (delivered.length > 0) return 'delivered';
+  return Date.now() - message.timestamp > UNDELIVERED_AFTER_MS ? 'undelivered' : 'sent';
+}
+
+function Receipt({ status }: { status: MessageStatus }) {
+  if (status === 'undelivered') {
+    return (
+      <span className="receipt is-undelivered" title="Not delivered — nobody has it yet">
+        <ClockIcon size={13} />
+      </span>
+    );
+  }
+  if (status === 'seen') {
+    return (
+      <span className="receipt is-seen" title="Seen by everyone">
+        <CheckAllIcon size={14} />
+      </span>
+    );
+  }
+  if (status === 'delivered') {
+    return (
+      <span className="receipt" title="Delivered">
+        <CheckAllIcon size={14} />
+      </span>
+    );
+  }
+  return (
+    <span className="receipt" title="Sent">
+      <CheckIcon size={13} />
+    </span>
+  );
+}
 
 function ChatAttachment({
   message,
@@ -249,6 +332,7 @@ export function ChatPanel({
   onSaveFile: (messageId: string) => void;
 }) {
   const [draft, setDraft] = React.useState('');
+  const [dragging, setDragging] = React.useState(false);
 
   function submit() {
     const text = draft.trim();
@@ -260,7 +344,29 @@ export function ChatPanel({
   }
 
   return (
-    <div className="chat">
+    <div
+      className={dragging ? 'chat is-dragging' : 'chat'}
+      onDragOver={(event) => {
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget === event.target) setDragging(false);
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragging(false);
+        // Electron gives a real path, but the picker in the main process is the
+        // only place allowed to read it — so a drop just opens that picker.
+        if (event.dataTransfer.files.length > 0) onSendFile();
+      }}
+    >
+      {dragging && (
+        <div className="chat__drop">
+          <PaperclipIcon size={26} />
+          <span>Drop to attach a file</span>
+        </div>
+      )}
       <div className="chat__scroll">
         {messages.length === 0 ? (
           <EmptyState
@@ -281,6 +387,7 @@ export function ChatPanel({
                   {message.deviceId === deviceId ? 'You' : message.deviceName}
                 </span>
                 <span className="msg__time">{clockTime(message.timestamp)}</span>
+                {message.deviceId === deviceId && <Receipt status={statusOf(message, room)} />}
               </div>
               {message.type === 'text' ? (
                 <div className="msg__body">{message.content}</div>

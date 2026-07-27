@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ChatMessage, ClipboardHistoryEntry } from '../shared/types';
+import type { ChatMessage, ClipboardHistoryEntry, StorageStats } from '../shared/types';
 
 const MAX_CLIPBOARD_PER_ROOM = 100;
 const MAX_CHAT_PER_ROOM = 500;
@@ -18,6 +18,7 @@ export class HistoryManager {
   private clipboard: ClipboardHistoryEntry[];
   private chat: ChatMessage[];
   private flushTimer: NodeJS.Timeout | null = null;
+  private clearedAttachments = 0;
 
   constructor(private readonly persistence: HistoryPersistence) {
     this.clipboard = persistence.readClipboard();
@@ -101,6 +102,44 @@ export class HistoryManager {
     return message;
   }
 
+  /**
+   * Records a receipt against one of our own messages. Returns true when
+   * something actually changed, so the caller can avoid a needless redraw.
+   */
+  recordReceipt(messageIds: string[], fromDeviceId: string, receipt: 'delivered' | 'seen'): boolean {
+    let changed = false;
+
+    for (const message of this.chat) {
+      if (!messageIds.includes(message.id)) {
+        continue;
+      }
+
+      // 'seen' implies delivered — a receipt can arrive without its predecessor.
+      const lists: Array<'deliveredTo' | 'seenBy'> =
+        receipt === 'seen' ? ['deliveredTo', 'seenBy'] : ['deliveredTo'];
+
+      for (const field of lists) {
+        const current = message[field] ?? [];
+        if (!current.includes(fromDeviceId)) {
+          message[field] = [...current, fromDeviceId];
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) {
+      this.scheduleFlush();
+    }
+    return changed;
+  }
+
+  /** Ids of messages in a room that came from someone else. */
+  incomingMessageIds(roomId: string, selfDeviceId: string): string[] {
+    return this.chat
+      .filter((message) => message.roomId === roomId && message.deviceId !== selfDeviceId)
+      .map((message) => message.id);
+  }
+
   hasChatMessage(id: string): boolean {
     return this.chat.some((message) => message.id === id);
   }
@@ -128,6 +167,85 @@ export class HistoryManager {
     this.clipboard = this.clipboard.filter((entry) => entry.roomId !== roomId);
     this.chat = this.chat.filter((message) => message.roomId !== roomId);
     this.scheduleFlush();
+  }
+
+  /**
+   * Drops attachments that are past the retention window, then keeps dropping
+   * the oldest remaining ones until the stored history fits the size ceiling.
+   * The message and its filename always survive — only the payload goes, which
+   * is what keeps a chat readable without keeping gigabytes of it.
+   */
+  compact(retainMediaDays: number, maxStorageMb: number): number {
+    const cutoff = retainMediaDays > 0 ? Date.now() - retainMediaDays * 24 * 60 * 60 * 1000 : Infinity;
+    let cleared = 0;
+
+    const strip = <T extends { dataUrl?: string; timestamp: number }>(item: T): void => {
+      if (item.dataUrl && item.timestamp < cutoff) {
+        item.dataUrl = undefined;
+        cleared += 1;
+      }
+    };
+
+    for (const entry of this.clipboard) {
+      strip(entry);
+    }
+    for (const message of this.chat) {
+      if (message.dataUrl && message.timestamp < cutoff) {
+        message.dataUrl = undefined;
+        message.mediaCleared = true;
+        cleared += 1;
+      }
+    }
+
+    // Still too big: drop the oldest attachments that are left, newest last.
+    const ceiling = maxStorageMb * 1024 * 1024;
+    if (this.estimateBytes() > ceiling) {
+      const withMedia = [...this.clipboard, ...this.chat]
+        .filter((item) => Boolean(item.dataUrl))
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+      for (const item of withMedia) {
+        if (this.estimateBytes() <= ceiling) {
+          break;
+        }
+        item.dataUrl = undefined;
+        if ('mediaCleared' in item) {
+          (item as ChatMessage).mediaCleared = true;
+        }
+        cleared += 1;
+      }
+    }
+
+    this.clearedAttachments += cleared;
+    if (cleared > 0) {
+      this.flush();
+    }
+    return cleared;
+  }
+
+  stats(): StorageStats {
+    let mediaBytes = 0;
+    for (const item of [...this.clipboard, ...this.chat]) {
+      mediaBytes += item.dataUrl?.length ?? 0;
+    }
+
+    return {
+      totalBytes: this.estimateBytes(),
+      mediaBytes,
+      clipboardEntries: this.clipboard.length,
+      chatMessages: this.chat.length,
+      clearedAttachments: this.clearedAttachments
+    };
+  }
+
+  /** Close enough: the store is JSON, so character count tracks file size. */
+  private estimateBytes(): number {
+    let total = 0;
+    for (const item of [...this.clipboard, ...this.chat]) {
+      total += (item.dataUrl?.length ?? 0) + 200;
+      total += 'text' in item ? item.text.length : item.content.length;
+    }
+    return total;
   }
 
   flush(): void {

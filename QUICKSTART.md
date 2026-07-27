@@ -88,7 +88,12 @@ and re-copy something from an hour ago.
 | Invite someone without sharing a code | Members tab → **Devices on this network** → **Invite** |
 | Remove someone from a room | Members tab → **Remove** |
 | Leave, or shut a room down | Members tab → **Leave room** / **Close this room** |
-| Make the text bigger, or change the font | Settings → **Text size** and **Font** |
+| Make the text bigger, or change the font | Settings → **Appearance** |
+| Copy an item | Click it — the whole card copies |
+| Send a file fast | Drag it onto the chat |
+| Share the clipboard right now | `Ctrl + Enter` |
+| Turn notifications off | Settings → **Notifications** |
+| See how much disk it is using | Settings → **Storage** |
 | Quit properly | Right-click the tray icon → **Quit** (closing the window only hides it) |
 
 ---

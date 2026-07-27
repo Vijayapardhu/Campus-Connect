@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export type RoomType = 'public' | 'private';
 export type MemberStatus = 'pending' | 'accepted';
@@ -85,7 +85,18 @@ export type ChatMessage = {
   deviceName: string;
   roomId: string;
   timestamp: number;
+  /**
+   * Receipts. Sender-local bookkeeping, stripped before the message goes on the
+   * wire — a recipient has no business being told who else has read it.
+   */
+  deliveredTo?: string[];
+  seenBy?: string[];
+  /** True once the attachment has been cleaned up but the message is kept. */
+  mediaCleared?: boolean;
 };
+
+/** What the sender shows against its own message. */
+export type MessageStatus = 'sent' | 'delivered' | 'seen' | 'undelivered';
 
 export type ClipboardPayload = {
   kind: 'text' | 'image';
@@ -141,7 +152,8 @@ export type WireMessageType =
   | 'chunk-nack'
   | 'room-invite'
   | 'room-invite-accept'
-  | 'room-invite-decline';
+  | 'room-invite-decline'
+  | 'chat-receipt';
 
 /**
  * Every datagram on the wire. Bodies that belong to an encrypted room travel in
@@ -182,6 +194,10 @@ export type WireMessage = {
   data?: string;
   /** On `chunk-nack`: the indices the receiver is still missing. */
   missing?: number[];
+
+  /** On `chat-receipt`: which messages, and how far they got. */
+  messageIds?: string[];
+  receipt?: 'delivered' | 'seen';
 };
 
 export type AppSettings = {
@@ -196,6 +212,44 @@ export type AppSettings = {
   fontScale: number;
   /** A font installed on this machine, or '' to use the system UI font. */
   fontFamily: string;
+
+  /** Show a system notification when the window is hidden or unfocused. */
+  notifications: boolean;
+  /** Tell other devices when their messages arrive and when you read them. */
+  sendReceipts: boolean;
+
+  /**
+   * Days to keep images and file attachments. Text is always kept.
+   * 0 means clean them up as soon as the next sweep runs.
+   */
+  retainMediaDays: number;
+  /** Ceiling on the stored history, in megabytes. */
+  maxStorageMb: number;
+};
+
+export const RETENTION_CHOICES = [
+  { value: 1, label: '1 day' },
+  { value: 7, label: '7 days' },
+  { value: 30, label: '30 days' },
+  { value: 0, label: 'Never keep' }
+] as const;
+
+export const STORAGE_CHOICES = [
+  { value: 25, label: '25 MB' },
+  { value: 100, label: '100 MB' },
+  { value: 250, label: '250 MB' },
+  { value: 1000, label: '1 GB' }
+] as const;
+
+export type StorageStats = {
+  /** Bytes the stored history occupies on disk. */
+  totalBytes: number;
+  /** Of that, how much is images and attachments. */
+  mediaBytes: number;
+  clipboardEntries: number;
+  chatMessages: number;
+  /** Attachments dropped by cleanup so far. */
+  clearedAttachments: number;
 };
 
 export const FONT_SCALES = [
@@ -224,6 +278,7 @@ export type AppState = {
   invites: RoomInvite[];
   /** roomId -> device ids this device has invited and not yet heard back from. */
   invitedDeviceIds: Record<string, string[]>;
+  storage: StorageStats;
   settings: AppSettings;
 };
 

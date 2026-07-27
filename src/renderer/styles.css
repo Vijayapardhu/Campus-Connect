@@ -1042,6 +1042,267 @@ select {
   background: var(--border);
 }
 
+/* ------------------------------------------------------- settings page --- */
+
+.settings {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: var(--space-6);
+  height: 100%;
+  min-height: 0;
+}
+
+@media (max-width: 820px) {
+  .settings {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+}
+
+.settings__nav {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  position: sticky;
+  top: 0;
+}
+
+@media (max-width: 820px) {
+  .settings__nav {
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    overflow-x: auto;
+    position: static;
+  }
+}
+
+.settings__tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+  transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
+}
+
+.settings__tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.settings__tab.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.settings__body {
+  min-width: 0;
+  max-width: 640px;
+}
+
+.settings__title {
+  font-size: var(--text-xl);
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.settings__lede {
+  margin: var(--space-2) 0 var(--space-5);
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  max-width: 60ch;
+}
+
+/* Key/value block */
+
+.facts {
+  display: grid;
+  gap: 0;
+  margin: var(--space-5) 0 0;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.facts > div {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elevated);
+}
+
+.facts > div + div {
+  border-top: 1px solid var(--border);
+}
+
+.facts dt {
+  min-width: 110px;
+  flex-shrink: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.facts dd {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--text-base);
+}
+
+/* Storage meter */
+
+.meter {
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  margin-bottom: var(--space-5);
+}
+
+.meter__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.meter__value {
+  font-size: var(--text-xl);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.meter__of {
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.meter__track {
+  height: 8px;
+  margin: var(--space-3) 0;
+  border-radius: var(--radius-full);
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.meter__fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  transition: width 400ms var(--ease);
+}
+
+.meter__fill.is-high {
+  background: var(--warning);
+}
+
+.meter__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+/* Shortcut reference */
+
+.shortcuts {
+  margin-top: var(--space-8);
+}
+
+.shortcut {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+}
+
+.shortcut + .shortcut {
+  border-top: 1px solid var(--border);
+}
+
+kbd {
+  min-width: 108px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  background: var(--bg-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  text-align: center;
+}
+
+/* Delivery receipts */
+
+.receipt {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: var(--space-1);
+  /* Dim on purpose: delivered is the quiet default, seen is the signal. */
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.receipt.is-seen {
+  color: #67e8f9;
+  filter: drop-shadow(0 0 4px rgba(103, 232, 249, 0.5));
+}
+
+.receipt.is-undelivered {
+  color: #fca5a5;
+}
+
+/* Clipboard cards are click-to-copy */
+
+.clip.is-clickable {
+  cursor: pointer;
+}
+
+.clip.is-clickable:hover {
+  border-color: var(--accent);
+}
+
+.clip.is-clickable:active {
+  transform: scale(0.995);
+}
+
+/* Drag a file anywhere onto the chat */
+
+.chat.is-dragging {
+  position: relative;
+}
+
+.chat__drop {
+  position: absolute;
+  inset: var(--space-4);
+  z-index: 5;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-3);
+  border-radius: var(--radius-lg);
+  border: 2px dashed var(--accent);
+  background: color-mix(in srgb, var(--bg-elevated) 88%, var(--accent));
+  color: var(--accent-text);
+  font-size: var(--text-md);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.device-card.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
 /* Badges */
 
 .badge {
