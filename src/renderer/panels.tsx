@@ -1,16 +1,22 @@
 import React from 'react';
 import type { ChatMessage, ClipboardHistoryEntry, RoomInfo } from '../shared/types';
 import { Badge, Button, Callout, EmptyState } from './ui';
-import { clockTime, initials, relativeTime, truncate } from './format';
+import { clockTime, formatBytes, initials, relativeTime, truncate } from './format';
 import {
   AlertIcon,
   ChatIcon,
   CheckIcon,
   ClipboardIcon,
   CopyIcon,
+  DownloadIcon,
   ExitIcon,
+  FileIcon,
   ImageIcon,
   LockIcon,
+  PaperclipIcon,
+  PinIcon,
+  QrIcon,
+  SearchIcon,
   SendIcon,
   ShieldIcon,
   TrashIcon,
@@ -24,19 +30,35 @@ export function ClipboardPanel({
   room,
   entries,
   deviceId,
+  searchRef,
   onCopy,
   onDelete,
+  onTogglePin,
   onShareNow,
   onClear
 }: {
   room: RoomInfo;
   entries: ClipboardHistoryEntry[];
   deviceId: string;
+  /** So Ctrl+F can put the cursor here. */
+  searchRef?: React.RefObject<HTMLInputElement | null>;
   onCopy: (entryId: string) => void;
   onDelete: (entryId: string) => void;
+  onTogglePin: (entryId: string) => void;
   onShareNow: () => void;
   onClear: () => void;
 }) {
+  const [query, setQuery] = React.useState('');
+
+  const needle = query.trim().toLowerCase();
+  const visible = needle
+    ? entries.filter(
+        (entry) =>
+          entry.text.toLowerCase().includes(needle) ||
+          entry.deviceName.toLowerCase().includes(needle)
+      )
+    : entries;
+
   if (entries.length === 0) {
     return (
       <EmptyState
@@ -56,9 +78,24 @@ export function ClipboardPanel({
   return (
     <div className="stack">
       <div className="row">
-        <span className="text-sm text-secondary">
-          {entries.length} {entries.length === 1 ? 'item' : 'items'}
-        </span>
+        <div className="search">
+          <SearchIcon size={14} />
+          <input
+            ref={searchRef}
+            className="search__input"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => event.key === 'Escape' && setQuery('')}
+            placeholder="Search this room's history"
+            aria-label="Search clipboard history"
+            spellCheck={false}
+          />
+          {query ? (
+            <Button size="sm" icon variant="ghost" onClick={() => setQuery('')} aria-label="Clear search">
+              <XIcon size={13} />
+            </Button>
+          ) : null}
+        </div>
         <span className="spacer" />
         <Button size="sm" onClick={onShareNow}>
           <CopyIcon size={14} />
@@ -70,64 +107,146 @@ export function ClipboardPanel({
         </Button>
       </div>
 
-      <div className="feed">
-        {entries.map((entry) => (
-          <article key={entry.id} className="clip">
-            <header className="clip__head">
-              <span className={entry.deviceId === deviceId ? 'clip__author is-me' : 'clip__author'}>
-                {entry.deviceId === deviceId ? 'You' : entry.deviceName}
-              </span>
-              <span className="clip__time">{relativeTime(entry.timestamp)}</span>
-              {entry.kind === 'image' ? <Badge>Image</Badge> : null}
-              <span className="spacer" />
-              <div className="clip__actions">
-                <Button size="sm" icon onClick={() => onCopy(entry.id)} aria-label="Copy to clipboard" title="Copy">
-                  <CopyIcon size={14} />
-                </Button>
-                <Button
-                  size="sm"
-                  icon
-                  variant="ghost"
-                  onClick={() => onDelete(entry.id)}
-                  aria-label="Remove from history"
-                  title="Remove"
-                >
-                  <TrashIcon size={14} />
-                </Button>
-              </div>
-            </header>
+      <span className="text-sm text-secondary">
+        {needle
+          ? `${visible.length} of ${entries.length} ${entries.length === 1 ? 'item' : 'items'}`
+          : `${entries.length} ${entries.length === 1 ? 'item' : 'items'}`}
+      </span>
 
-            {entry.kind === 'image' ? (
-              entry.dataUrl ? (
-                <img className="clip__image" src={entry.dataUrl} alt="Shared clipboard image" />
-              ) : (
-                <div className="row text-sm text-tertiary">
-                  <ImageIcon size={14} />
-                  Image preview was not kept after restart
+      {visible.length === 0 ? (
+        <EmptyState
+          icon={<SearchIcon size={22} />}
+          title="No matches"
+          text={`Nothing in ${room.name} matches “${query.trim()}”.`}
+          actions={<Button onClick={() => setQuery('')}>Clear search</Button>}
+        />
+      ) : (
+        <div className="feed">
+          {visible.map((entry) => (
+            <article key={entry.id} className={entry.pinned ? 'clip is-pinned' : 'clip'}>
+              <header className="clip__head">
+                <span className={entry.deviceId === deviceId ? 'clip__author is-me' : 'clip__author'}>
+                  {entry.deviceId === deviceId ? 'You' : entry.deviceName}
+                </span>
+                <span className="clip__time">{relativeTime(entry.timestamp)}</span>
+                {entry.pinned ? (
+                  <Badge tone="accent">
+                    <PinIcon size={10} />
+                    Pinned
+                  </Badge>
+                ) : null}
+                {entry.kind === 'image' ? <Badge>Image</Badge> : null}
+                <span className="spacer" />
+                <div className={entry.pinned ? 'clip__actions is-visible' : 'clip__actions'}>
+                  <Button
+                    size="sm"
+                    icon
+                    variant={entry.pinned ? 'primary' : 'default'}
+                    onClick={() => onTogglePin(entry.id)}
+                    aria-label={entry.pinned ? 'Unpin' : 'Pin so it is never cleared out'}
+                    title={entry.pinned ? 'Unpin' : 'Pin'}
+                  >
+                    <PinIcon size={14} />
+                  </Button>
+                  <Button size="sm" icon onClick={() => onCopy(entry.id)} aria-label="Copy to clipboard" title="Copy">
+                    <CopyIcon size={14} />
+                  </Button>
+                  <Button
+                    size="sm"
+                    icon
+                    variant="ghost"
+                    onClick={() => onDelete(entry.id)}
+                    aria-label="Remove from history"
+                    title="Remove"
+                  >
+                    <TrashIcon size={14} />
+                  </Button>
                 </div>
-              )
-            ) : (
-              <pre className="clip__text">{truncate(entry.text, 2000)}</pre>
-            )}
-          </article>
-        ))}
-      </div>
+              </header>
+
+              {entry.kind === 'image' ? (
+                entry.dataUrl ? (
+                  <img className="clip__image" src={entry.dataUrl} alt="Shared clipboard image" />
+                ) : (
+                  <div className="row text-sm text-tertiary">
+                    <ImageIcon size={14} />
+                    Image preview was not kept after restart
+                  </div>
+                )
+              ) : (
+                <pre className="clip__text">{truncate(entry.text, 2000)}</pre>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 // ----------------------------------------------------------------------- chat
 
+function ChatAttachment({
+  message,
+  onSaveFile
+}: {
+  message: ChatMessage;
+  onSaveFile: (messageId: string) => void;
+}) {
+  const label = message.fileName ?? 'File';
+  const size = formatBytes(message.fileSize);
+
+  if (message.type === 'image' && message.dataUrl) {
+    return (
+      <div className="attach">
+        <img className="attach__image" src={message.dataUrl} alt={label} />
+        <div className="attach__row">
+          <span className="attach__name truncate">{label}</span>
+          {size ? <span className="attach__size">{size}</span> : null}
+          <Button size="sm" onClick={() => onSaveFile(message.id)}>
+            <DownloadIcon size={13} />
+            Save
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="attach attach--file">
+      <span className="attach__icon">
+        <FileIcon size={18} />
+      </span>
+      <div className="attach__body">
+        <div className="attach__name truncate">{label}</div>
+        <div className="attach__size">
+          {message.dataUrl ? size : 'Not kept after restart — ask for it again'}
+        </div>
+      </div>
+      {message.dataUrl ? (
+        <Button size="sm" onClick={() => onSaveFile(message.id)}>
+          <DownloadIcon size={13} />
+          Save
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 export function ChatPanel({
   room,
   messages,
   deviceId,
-  onSend
+  onSend,
+  onSendFile,
+  onSaveFile
 }: {
   room: RoomInfo;
   messages: ChatMessage[];
   deviceId: string;
   onSend: (text: string) => void;
+  onSendFile: () => void;
+  onSaveFile: (messageId: string) => void;
 }) {
   const [draft, setDraft] = React.useState('');
 
@@ -163,15 +282,20 @@ export function ChatPanel({
                 </span>
                 <span className="msg__time">{clockTime(message.timestamp)}</span>
               </div>
-              <div className="msg__body">
-                {message.type === 'file' ? `📎 ${message.fileName ?? 'File'}` : message.content}
-              </div>
+              {message.type === 'text' ? (
+                <div className="msg__body">{message.content}</div>
+              ) : (
+                <ChatAttachment message={message} onSaveFile={onSaveFile} />
+              )}
             </div>
           ))
         )}
       </div>
 
       <div className="composer">
+        <Button icon onClick={onSendFile} aria-label="Attach a file" title="Attach a file">
+          <PaperclipIcon size={16} />
+        </Button>
         <input
           className="input"
           value={draft}
@@ -203,7 +327,8 @@ export function MembersPanel({
   onReject,
   onRemove,
   onLeave,
-  onCopyCode
+  onCopyCode,
+  onRequestQr
 }: {
   room: RoomInfo;
   deviceId: string;
@@ -212,8 +337,28 @@ export function MembersPanel({
   onRemove: (memberId: string) => void;
   onLeave: () => void;
   onCopyCode: (code: string) => void;
+  onRequestQr: (roomId: string) => Promise<string | null>;
 }) {
   const isOwner = room.ownerId === deviceId;
+  const [qr, setQr] = React.useState<string | null>(null);
+  const [showQr, setShowQr] = React.useState(false);
+
+  React.useEffect(() => {
+    // Re-render whenever the room changes; the code is baked into the image.
+    setShowQr(false);
+    setQr(null);
+  }, [room.roomId]);
+
+  async function toggleQr() {
+    if (showQr) {
+      setShowQr(false);
+      return;
+    }
+    setShowQr(true);
+    if (!qr) {
+      setQr(await onRequestQr(room.roomId));
+    }
+  }
   const pending = room.members.filter((member) => member.status === 'pending');
   const accepted = room.members.filter((member) => member.status === 'accepted');
 
@@ -326,7 +471,26 @@ export function MembersPanel({
                   <CopyIcon size={14} />
                   Copy
                 </Button>
+                <Button size="sm" onClick={toggleQr} aria-expanded={showQr}>
+                  <QrIcon size={14} />
+                  {showQr ? 'Hide QR' : 'QR code'}
+                </Button>
               </div>
+
+              {showQr && (
+                <div className="qr">
+                  {qr ? (
+                    <img className="qr__image" src={qr} alt={`QR code for join code ${room.joinCode}`} />
+                  ) : (
+                    <span className="text-sm text-tertiary">Generating…</span>
+                  )}
+                  <p className="qr__note">
+                    Scanning gives the join code only. The password still has to be shared
+                    separately — never put it on screen next to this.
+                  </p>
+                </div>
+              )}
+
               <p className="field__hint" style={{ marginTop: 6 }}>
                 Share this with the password to let someone request access.
               </p>

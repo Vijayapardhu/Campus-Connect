@@ -50,6 +50,7 @@ type ActionResult = { ok: boolean; message: string };
 | `roomApproveMember(roomId, memberId)` | `ActionResult` | Owner only |
 | `roomRejectMember(roomId, memberId)` | `ActionResult` | Owner only |
 | `roomRemoveMember(roomId, memberId)` | `ActionResult` | Owner only. Cannot remove the owner |
+| `roomQrCode(roomId)` | `string \| null` | PNG data URL of the join code. Contains the code only, never the password |
 
 **Joining is asynchronous.** `roomRequestJoin` resolving with `ok: true` means
 the request left this device. Whether it was accepted arrives later on
@@ -62,15 +63,19 @@ the request left this device. Whether it was accepted arrives later on
 | `historyGetClipboard(roomId?)` | `ClipboardHistoryEntry[]`, newest first |
 | `historyGetChat(roomId?)` | `ChatMessage[]`, newest first |
 | `historyDeleteEntry(entryId)` | `ActionResult` |
+| `historyTogglePin(entryId)` | `ActionResult` |
 | `historyClearRoom(roomId)` | `ActionResult` |
 
-Omitting `roomId` returns every room's history.
+Omitting `roomId` returns every room's history. Results come back newest-first with pinned entries
+lifted to the top.
 
 ### Content
 
 | Call | Returns | Notes |
 |------|---------|-------|
 | `chatSend(type, content, roomId, dataUrl?, fileName?)` | `ActionResult` | Fails if you are not an accepted member |
+| `chatSendFile(roomId)` | `ActionResult` | Opens a native picker. 5 MB cap. Images are sent as `image` so they preview inline |
+| `chatSaveFile(messageId)` | `ActionResult` | Opens a native save dialog. Never opens the file |
 | `readClipboard()` | `string` | This machine's clipboard text |
 | `clipboardApply(entryId)` | `ActionResult` | Puts a history entry back on this machine's clipboard |
 | `clipboardShareNow()` | `ActionResult` | Shares the clipboard immediately instead of waiting for the poller |
@@ -120,6 +125,8 @@ machines corrupting each other.
 | `room-closed` | owner → members | Room deleted |
 | `clipboard` | member → room | Clipboard payload |
 | `chat` | member → room | Chat message |
+| `chunk` | sender → room | One piece of an oversized message |
+| `chunk-nack` | receiver → sender | Indices that never arrived; please resend |
 
 ### Sealed vs plaintext bodies
 
@@ -184,11 +191,27 @@ accepted. All four must hold:
 Anything else is dropped and logged. **Do not add a second path that applies
 data from the network.**
 
-### Size limit
+### Size limits and chunking
 
-`sendUdpMessage` refuses anything over 60 KB (a UDP datagram caps at 64 KB) and
-reports it to the interface. Oversized items stay in local history but are not
-transmitted.
+Anything above 60 KB (a UDP datagram caps at 64 KB) is serialised, split into
+8 KB `chunk` messages, and rebuilt by `ChunkAssembler`. The reassembled JSON
+re-enters `handleWireMessage`, so **chunked messages are subject to exactly the
+same admission gate** — there is no shortcut around it. Reassembly happens
+before decryption so the GCM auth tag still covers the whole payload.
+
+| Limit | Value |
+|-------|-------|
+| Single datagram | 60 KB |
+| Chunk payload | 8 KB |
+| One transfer | 16 MB (sender) / 20 MB (receiver) |
+| All in-flight transfers | 64 MB, 24 concurrent |
+| Chat file | 5 MB |
+
+Lost chunks are requested again with `chunk-nack` after 500 ms of silence; a
+transfer with no progress for 20 s is abandoned and the user is told.
+
+A `chunk` may not carry another `chunk`, and its inner `deviceId` must match the
+sender — otherwise a device could attribute a payload to someone else.
 
 ---
 

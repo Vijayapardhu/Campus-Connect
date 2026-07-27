@@ -30,7 +30,10 @@ Then the manual pass that CI cannot do — clipboard sync is a two-device featur
       pending request, approval grants access
 - [ ] Removing a member takes effect — B no longer receives anything from A
 - [ ] Restart both apps: rooms, keys and history survive
-- [ ] Images sync; an oversized image produces the warning rather than silence
+- [ ] A small image syncs, and a multi-megabyte one syncs too (chunked transfer)
+- [ ] Something past 16 MB produces the warning rather than silence
+- [ ] A chat file sends, and saves intact on the far side — checksum it
+- [ ] Pinning survives 100+ newer items and a restart; search filters live
 - [ ] Light and dark themes, and a non-default text size and font
 - [ ] Tray: window closes to tray, "Share my clipboard" toggles, Quit exits
 - [ ] Installed build works, not just `npm run dev`
@@ -244,8 +247,11 @@ Things worth knowing before optimising anything:
 | Presence announcements | Every 3000 ms | Peers expire after 15 s, so three announcements are missed before a device disappears |
 | History writes | Debounced 750 ms | The poller would otherwise hit disk every second |
 | Persisted images | Skipped above 256 KB | Kept in memory, dropped from disk, so the config file cannot balloon |
-| History caps | 100 clipboard / 500 chat **per room** | Per-room, so a busy room cannot evict a quiet one |
+| History caps | 100 clipboard / 500 chat **per room** | Per-room, so a busy room cannot evict a quiet one. Pinned items are exempt |
 | Key derivation | scrypt N=32768, ~100 ms | Deliberately slow. Only runs on create, join and unlock — never per message |
+| Chunk size | 8 KB | 40 KB datagrams IP-fragment into ~28 pieces, so one lost fragment costs the whole 40 KB |
+| Socket buffers | 8 MB send and receive | Measured: at the OS default a 3 MB transfer lost ~50% of its datagrams to buffer overflow. At 8 MB it loses none |
+| Chunk pacing | 8 per 2 ms | Enough to stay ahead of the buffer without bursting into it |
 
 Encryption itself is not a bottleneck: AES-256-GCM on a few kilobytes is
 microseconds. If sync feels slow, it is the poll interval or the network, not

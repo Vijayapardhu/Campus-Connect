@@ -37,10 +37,13 @@ export type SharedClipboardApi = {
   roomApproveMember: (roomId: string, memberId: string) => Promise<ActionResult>;
   roomRejectMember: (roomId: string, memberId: string) => Promise<ActionResult>;
   roomRemoveMember: (roomId: string, memberId: string) => Promise<ActionResult>;
+  /** PNG data URL of the room's join code, or null if it has none. */
+  roomQrCode: (roomId: string) => Promise<string | null>;
 
   historyGetClipboard: (roomId?: string) => Promise<ClipboardHistoryEntry[]>;
   historyGetChat: (roomId?: string) => Promise<ChatMessage[]>;
   historyDeleteEntry: (entryId: string) => Promise<ActionResult>;
+  historyTogglePin: (entryId: string) => Promise<ActionResult>;
   historyClearRoom: (roomId: string) => Promise<ActionResult>;
 
   chatSend: (
@@ -50,6 +53,10 @@ export type SharedClipboardApi = {
     dataUrl?: string,
     fileName?: string
   ) => Promise<ActionResult>;
+  /** Opens a native picker, then sends the chosen file into the room. */
+  chatSendFile: (roomId: string) => Promise<ActionResult>;
+  /** Opens a native save dialog for a received file. Never opens the file. */
+  chatSaveFile: (messageId: string) => Promise<ActionResult>;
 
   readClipboard: () => Promise<string>;
   clipboardApply: (entryId: string) => Promise<ActionResult>;

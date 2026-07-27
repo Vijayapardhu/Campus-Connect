@@ -328,6 +328,12 @@ code{font-family:var(--font-mono);font-size:.88em}
   padding:2px 8px;border-radius:var(--radius-full);
   background:var(--accent-soft);color:var(--accent-text);
 }
+.road .is-done,.road li.is-done{color:var(--text-2)}
+.road .box--done{
+  display:grid;place-items:center;border-color:transparent;
+  background:var(--success);color:#fff;font-size:11px;font-weight:800;line-height:1;
+}
+.road .tag--done{background:var(--success-soft);color:var(--success)}
 
 /* ========================================================= contribute == */
 .cta{
@@ -713,8 +719,12 @@ code{font-family:var(--font-mono);font-size:.88em}
         <figcaption>Approvals, members, and per-room security details</figcaption>
       </figure>
       <figure class="shot">
-        <img src="screenshots/chat-dark.png" alt="Chat messages inside a room" loading="lazy" width="1240" height="820">
-        <figcaption>Chat, encrypted with the room</figcaption>
+        <img src="screenshots/chat-files.png" alt="Chat showing a shared PDF with a save button" loading="lazy" width="1240" height="860">
+        <figcaption>Chat with file transfer, encrypted with the room</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="screenshots/qr-code.png" alt="A QR code for a room's join code" loading="lazy" width="1240" height="860">
+        <figcaption>A scannable join code — the password is never in it</figcaption>
       </figure>
       <figure class="shot">
         <img src="screenshots/create-room.png" alt="Dialog for creating a new room, choosing public or private and setting a password" loading="lazy" width="1240" height="820">
@@ -790,16 +800,22 @@ code{font-family:var(--font-mono);font-size:.88em}
     </div>
 
     <ul class="road" style="margin-top:var(--space-8)">
-      <li><span class="box"></span> Chunked transfer so large screenshots sync <span class="tag">Hard</span></li>
-      <li><span class="box"></span> File transfer in chat — the message type exists, the transfer does not <span class="tag">Hard</span></li>
-      <li><span class="box"></span> QR codes for join codes, so a phone can scan them <span class="tag">Medium</span></li>
-      <li><span class="box"></span> Pinned clipboard items that survive the history cap <span class="tag">Medium</span></li>
-      <li><span class="box"></span> Search across clipboard history <span class="tag">Easy</span></li>
-      <li><span class="box"></span> Keyboard shortcuts for switching rooms <span class="tag">Easy</span></li>
+      <li class="is-done"><span class="box box--done">✓</span> Chunked transfer so large screenshots sync <span class="tag tag--done">Shipped</span></li>
+      <li class="is-done"><span class="box box--done">✓</span> File transfer in chat, up to 5 MB <span class="tag tag--done">Shipped</span></li>
+      <li class="is-done"><span class="box box--done">✓</span> QR codes for join codes, so a phone can scan them <span class="tag tag--done">Shipped</span></li>
+      <li class="is-done"><span class="box box--done">✓</span> Pinned clipboard items that survive the history cap <span class="tag tag--done">Shipped</span></li>
+      <li class="is-done"><span class="box box--done">✓</span> Search across clipboard history <span class="tag tag--done">Shipped</span></li>
+      <li class="is-done"><span class="box box--done">✓</span> Keyboard shortcuts for switching rooms <span class="tag tag--done">Shipped</span></li>
       <li><span class="box"></span> Translations <span class="tag">Medium</span></li>
       <li><span class="box"></span> A mobile companion app — the protocol is documented <span class="tag">Hard</span></li>
       <li><span class="box"></span> TCP fallback for networks that block UDP broadcast <span class="tag">Hard</span></li>
     </ul>
+
+    <p class="lede center" style="margin-top:var(--space-6)">
+      The three that are left are the interesting ones —
+      <a href="https://github.com/Vijayapardhu/Clipboard/issues">each has an issue</a>
+      explaining where to start and what "done" looks like.
+    </p>
   </div>
 </section>
 

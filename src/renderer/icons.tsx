@@ -178,6 +178,47 @@ export const MonitorIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const PinIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M15 3 21 9l-3.5 1.5-4 4L13 19l-8-8 4.5-.5 4-4L15 3ZM5 19l4-4" />
+  </Svg>
+);
+
+export const SearchIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-4-4" />
+  </Svg>
+);
+
+export const PaperclipIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M20 11.5 12.5 19a5 5 0 0 1-7-7l7.5-7.5a3.5 3.5 0 0 1 5 5L10.5 17a2 2 0 0 1-3-3l7-7" />
+  </Svg>
+);
+
+export const FileIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" />
+    <path d="M14 3v5h5" />
+  </Svg>
+);
+
+export const DownloadIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 4v11M8 12l4 4 4-4M5 20h14" />
+  </Svg>
+);
+
+export const QrIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="3" width="7" height="7" rx="1" />
+    <rect x="14" y="3" width="7" height="7" rx="1" />
+    <rect x="3" y="14" width="7" height="7" rx="1" />
+    <path d="M14 14h3v3h-3zM20 14v.01M14 20v.01M17.5 20.5v.01M21 17.5v.01M21 21v.01" />
+  </Svg>
+);
+
 export const ImageIcon = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="4" width="18" height="16" rx="2" />

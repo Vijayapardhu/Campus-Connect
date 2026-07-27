@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   Menu,
   session,
@@ -11,8 +12,10 @@ import {
 } from 'electron';
 import log from 'electron-log';
 import Store from 'electron-store';
+import QRCode from 'qrcode';
 import path from 'node:path';
 import os from 'node:os';
+import fs from 'node:fs/promises';
 import dgram from 'node:dgram';
 import { randomUUID, createHash } from 'node:crypto';
 import {
@@ -26,6 +29,7 @@ import {
 import { getSystemDeviceName } from './systemInfo';
 import { RoomManager } from './roomManager';
 import { HistoryManager } from './historyManager';
+import { ChunkAssembler, splitIntoChunks } from './transfer';
 import {
   createProof,
   deriveRoomKey,
@@ -68,11 +72,67 @@ const BROADCAST_PORT = 37777;
 const ANNOUNCE_INTERVAL_MS = 3000;
 const CLIPBOARD_POLL_MS = 1000;
 const PEER_TTL_MS = 15000;
-/**
- * A UDP datagram tops out at 64KB. Anything larger is dropped with a visible
- * message rather than failing silently halfway through a demo.
- */
+/** A UDP datagram tops out at 64KB; anything larger has to be chunked. */
 const MAX_DATAGRAM_BYTES = 60000;
+/**
+ * Characters of the serialised message per chunk.
+ *
+ * Measured rather than guessed: 40 KB datagrams IP-fragment into ~28 pieces
+ * each, so a single lost fragment costs the whole 40 KB. 8 KB keeps that
+ * amplification small without turning a multi-megabyte transfer into tens of
+ * thousands of packets.
+ */
+const CHUNK_CHARS = 8000;
+/**
+ * The socket buffers matter far more than the chunk size. With the OS default
+ * a 3 MB transfer lost ~50% of its datagrams to buffer overflow before they
+ * ever reached the wire; at 8 MB the same transfer loses none.
+ */
+const SOCKET_BUFFER_BYTES = 8 * 1024 * 1024;
+/** Refuse to even start a transfer beyond this. */
+const MAX_TRANSFER_BYTES = 16 * 1024 * 1024;
+/** How long the sender keeps chunks around to answer retransmit requests. */
+const OUTBOUND_TRANSFER_TTL_MS = 20000;
+/** Quiet period before the receiver asks for the pieces it is missing. */
+const NACK_AFTER_MS = 500;
+const TRANSFER_SWEEP_MS = 300;
+/** Chunks are paced so the socket buffer is not overwhelmed and dropped. */
+const CHUNK_BATCH = 8;
+const CHUNK_PACING_MS = 2;
+/** Cap on how many gaps one retransmit request advertises. */
+const MAX_NACK_INDICES = 256;
+/**
+ * Files are base64-encoded and then sealed, which inflates them by roughly
+ * 1.9x in total, so this sits well below MAX_TRANSFER_BYTES.
+ */
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
+
+/** Enough to make common files preview and open correctly on the far side. */
+const MIME_BY_EXTENSION: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  '.csv': 'text/csv',
+  '.json': 'application/json',
+  '.xml': 'application/xml',
+  '.zip': 'application/zip',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+};
+
+function mimeForFile(fileName: string): string {
+  return MIME_BY_EXTENSION[path.extname(fileName).toLowerCase()] ?? 'application/octet-stream';
+}
 
 const DEFAULT_SETTINGS: AppSettings = {
   syncEnabled: true,
@@ -116,6 +176,7 @@ let mainWindow: BrowserWindow | null = null;
 let udpSocket: dgram.Socket | null = null;
 let announceTimer: NodeJS.Timeout | null = null;
 let clipboardPollTimer: NodeJS.Timeout | null = null;
+let transferSweepTimer: NodeJS.Timeout | null = null;
 let tray: Tray | null = null;
 let lastLocalClipboardHash = '';
 let lastRemoteClipboardHash = '';
@@ -202,43 +263,232 @@ function baseMessage(type: WireMessage['type']): WireMessage {
 
 // --- transport ---------------------------------------------------------------
 
-function sendUdpMessage(message: WireMessage, host = '255.255.255.255'): boolean {
+const BROADCAST_ADDRESS = '255.255.255.255';
+
+/** Puts one datagram on the wire per target. Callers keep it under the size limit. */
+function sendDatagram(message: WireMessage, targets: string[]): void {
   if (!udpSocket) {
-    return false;
+    return;
   }
 
   const payload = Buffer.from(JSON.stringify(message));
-  if (payload.byteLength > MAX_DATAGRAM_BYTES) {
+  for (const host of targets) {
+    udpSocket.send(payload, BROADCAST_PORT, host, (error) => {
+      if (error) {
+        sendStatus(`Network send failed: ${error.message}`, 'error');
+      }
+    });
+  }
+}
+
+function targetList(hosts: string[], broadcast: boolean): string[] {
+  const targets = new Set<string>();
+  if (broadcast) {
+    targets.add(BROADCAST_ADDRESS);
+  }
+  for (const host of hosts) {
+    if (host) {
+      targets.add(host);
+    }
+  }
+  return Array.from(targets);
+}
+
+/**
+ * Delivers a message, splitting it across datagrams when it will not fit in
+ * one. Returns false only when the payload is past the transfer ceiling.
+ */
+function deliver(message: WireMessage, targets: string[]): boolean {
+  if (!udpSocket || targets.length === 0) {
+    return false;
+  }
+
+  const json = JSON.stringify(message);
+  const bytes = Buffer.byteLength(json);
+
+  if (bytes <= MAX_DATAGRAM_BYTES) {
+    sendDatagram(message, targets);
+    return true;
+  }
+
+  if (bytes > MAX_TRANSFER_BYTES) {
     sendStatus(
-      `Item is too large to send over the network (${Math.round(payload.byteLength / 1024)} KB). It was kept in local history only.`,
+      `That item is too large to share (${Math.round(bytes / 1024 / 1024)} MB). It stayed in local history only.`,
       'warning'
     );
     return false;
   }
 
-  udpSocket.send(payload, BROADCAST_PORT, host, (error) => {
-    if (error) {
-      sendStatus(`Network send failed: ${error.message}`, 'error');
-    }
-  });
+  startChunkedSend(json, targets);
   return true;
 }
 
-/** Broadcast, then unicast to known peers so a blocked broadcast is survivable. */
+/** Send to one specific host. */
+function sendUdpMessage(message: WireMessage, host = BROADCAST_ADDRESS): boolean {
+  return deliver(message, targetList([host], false));
+}
+
+/** Broadcast, plus unicast to known peers so a blocked broadcast is survivable. */
 function fanOut(message: WireMessage, hosts: string[] = []): boolean {
-  const sent = sendUdpMessage(message);
-  if (!sent) {
-    return false;
+  return deliver(message, targetList(hosts, true));
+}
+
+// --- chunked transfer --------------------------------------------------------
+
+type OutboundTransfer = {
+  parts: string[];
+  targets: string[];
+  createdAt: number;
+};
+
+const outboundTransfers = new Map<string, OutboundTransfer>();
+const assembler = new ChunkAssembler();
+
+function chunkDatagram(transferId: string, index: number, total: number, data: string): WireMessage {
+  const message = baseMessage('chunk');
+  message.transferId = transferId;
+  message.index = index;
+  message.total = total;
+  message.data = data;
+  return message;
+}
+
+function startChunkedSend(json: string, targets: string[]): void {
+  const transferId = randomUUID();
+  const parts = splitIntoChunks(json, CHUNK_CHARS);
+
+  outboundTransfers.set(transferId, { parts, targets, createdAt: Date.now() });
+  log.info(`Sending ${Math.round(json.length / 1024)} KB as ${parts.length} chunks (${transferId})`);
+
+  sendChunks(transferId, parts.map((_, index) => index));
+}
+
+/**
+ * Chunks go out in small batches rather than all at once. Blasting a few
+ * hundred datagrams into the socket at once overflows its buffer and most of
+ * them are dropped before they reach the wire.
+ */
+function sendChunks(transferId: string, indices: number[]): void {
+  let cursor = 0;
+
+  const tick = () => {
+    const transfer = outboundTransfers.get(transferId);
+    if (!transfer) {
+      return;
+    }
+
+    for (let sent = 0; sent < CHUNK_BATCH && cursor < indices.length; sent += 1, cursor += 1) {
+      const index = indices[cursor];
+      const data = transfer.parts[index];
+      if (data !== undefined) {
+        sendDatagram(
+          chunkDatagram(transferId, index, transfer.parts.length, data),
+          transfer.targets
+        );
+      }
+    }
+
+    if (cursor < indices.length) {
+      setTimeout(tick, CHUNK_PACING_MS);
+    }
+  };
+
+  tick();
+}
+
+function handleChunk(message: WireMessage, host: string): void {
+  const complete = assembler.accept(message.deviceId, {
+    transferId: message.transferId ?? '',
+    index: message.index ?? -1,
+    total: message.total ?? 0,
+    data: message.data ?? ''
+  });
+
+  if (complete === null) {
+    return;
   }
 
-  const seen = new Set<string>();
-  for (const host of hosts) {
-    if (host && !seen.has(host)) {
-      seen.add(host);
-      sendUdpMessage(message, host);
+  let inner: WireMessage;
+  try {
+    inner = JSON.parse(complete) as WireMessage;
+  } catch {
+    return;
+  }
+
+  // The reassembled message re-enters the normal handler, so membership and
+  // decryption are still enforced. A chunk may not carry another chunk, and it
+  // may not attribute its payload to some other device.
+  if (!inner?.type || inner.type === 'chunk' || inner.type === 'chunk-nack') {
+    return;
+  }
+  if (inner.v !== PROTOCOL_VERSION || inner.deviceId !== message.deviceId) {
+    return;
+  }
+
+  handleWireMessage(inner, host);
+}
+
+function handleChunkNack(message: WireMessage): void {
+  if (message.targetDeviceId !== deviceId() || !message.transferId) {
+    return;
+  }
+
+  const transfer = outboundTransfers.get(message.transferId);
+  if (!transfer || !Array.isArray(message.missing)) {
+    return;
+  }
+
+  const indices = message.missing
+    .filter((index) => Number.isInteger(index) && index >= 0 && index < transfer.parts.length)
+    .slice(0, MAX_NACK_INDICES);
+
+  if (indices.length > 0) {
+    sendChunks(message.transferId, indices);
+  }
+}
+
+/**
+ * Retires finished senders, abandons stalled receives, and asks for the pieces
+ * that never turned up. UDP drops packets, so without this a single lost chunk
+ * would lose the whole transfer.
+ */
+function sweepTransfers(): void {
+  const now = Date.now();
+
+  for (const [transferId, transfer] of outboundTransfers) {
+    if (now - transfer.createdAt > OUTBOUND_TRANSFER_TTL_MS) {
+      outboundTransfers.delete(transferId);
     }
   }
-  return true;
+
+  for (const expired of assembler.sweep(now)) {
+    log.warn(
+      `Abandoned incomplete transfer from ${expired.senderId}: ${expired.received}/${expired.total} chunks`
+    );
+    sendStatus('An incoming item did not arrive completely and was discarded.', 'warning');
+  }
+
+  for (const pending of assembler.pending()) {
+    if (now - pending.lastChunkAt < NACK_AFTER_MS) {
+      continue;
+    }
+
+    const missing = assembler
+      .missing(pending.senderId, pending.transferId)
+      .slice(0, MAX_NACK_INDICES);
+
+    if (missing.length === 0) {
+      continue;
+    }
+
+    const nack = baseMessage('chunk-nack');
+    nack.transferId = pending.transferId;
+    nack.targetDeviceId = pending.senderId;
+    nack.missing = missing;
+
+    const host = getPeerHost(pending.senderId);
+    sendDatagram(nack, targetList(host ? [host] : [], !host));
+  }
 }
 
 function getPeerHost(targetDeviceId: string): string | undefined {
@@ -663,17 +913,18 @@ function handleChatMessage(message: WireMessage) {
     return;
   }
 
-  const stored = historyManager.addChatMessage(
-    chat.type,
-    chat.content,
-    chat.deviceId,
-    chat.deviceName,
-    message.roomId!,
-    chat.dataUrl,
-    chat.fileName,
-    chat.id,
-    chat.timestamp
-  );
+  const stored = historyManager.addChatMessage({
+    type: chat.type,
+    content: chat.content,
+    deviceId: chat.deviceId,
+    deviceName: chat.deviceName,
+    roomId: message.roomId!,
+    dataUrl: chat.dataUrl,
+    fileName: chat.fileName,
+    fileSize: chat.fileSize,
+    id: chat.id,
+    timestamp: chat.timestamp
+  });
   mainWindow?.webContents.send('chat:message', stored);
 }
 
@@ -709,6 +960,10 @@ function handleWireMessage(message: WireMessage, host: string) {
       return handleClipboardMessage(message);
     case 'chat':
       return handleChatMessage(message);
+    case 'chunk':
+      return handleChunk(message, host);
+    case 'chunk-nack':
+      return handleChunkNack(message);
     default:
       return;
   }
@@ -717,7 +972,14 @@ function handleWireMessage(message: WireMessage, host: string) {
 // --- lifecycle ---------------------------------------------------------------
 
 function startUdpService() {
-  udpSocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+  udpSocket = dgram.createSocket({
+    type: 'udp4',
+    reuseAddr: true,
+    // Without these, a large chunked transfer overflows the default buffers and
+    // most of it is dropped before it reaches the network.
+    recvBufferSize: SOCKET_BUFFER_BYTES,
+    sendBufferSize: SOCKET_BUFFER_BYTES
+  });
 
   udpSocket.on('error', (error) => {
     sendStatus(`Network error: ${error.message}`, 'error');
@@ -746,6 +1008,7 @@ function startUdpService() {
       advertiseOwnedRooms();
     }, ANNOUNCE_INTERVAL_MS);
     clipboardPollTimer = setInterval(pollLocalClipboard, CLIPBOARD_POLL_MS);
+    transferSweepTimer = setInterval(sweepTransfers, TRANSFER_SWEEP_MS);
   });
 }
 
@@ -758,6 +1021,11 @@ function stopUdpService() {
     clearInterval(clipboardPollTimer);
     clipboardPollTimer = null;
   }
+  if (transferSweepTimer) {
+    clearInterval(transferSweepTimer);
+    transferSweepTimer = null;
+  }
+  outboundTransfers.clear();
   udpSocket?.close();
   udpSocket = null;
 }
@@ -1106,6 +1374,32 @@ ipcMain.handle('room:unlock', (_event, roomId: string, password: string): Action
   return ok(`${room.name} unlocked.`);
 });
 
+/**
+ * A scannable version of the join code. Rendered dark-on-white regardless of
+ * theme, because that is what scanners expect. The password is deliberately
+ * not included — a QR code is something you hold up in a room full of people.
+ */
+ipcMain.handle('room:qr-code', async (_event, roomId: string): Promise<string | null> => {
+  const room = roomManager.getRoom(roomId);
+  if (!room?.joinCode) {
+    return null;
+  }
+
+  const uri = `sharedclipboard://join?code=${room.joinCode}&room=${encodeURIComponent(room.name)}`;
+
+  try {
+    return await QRCode.toDataURL(uri, {
+      errorCorrectionLevel: 'M',
+      margin: 2,
+      width: 320,
+      color: { dark: '#18181b', light: '#ffffff' }
+    });
+  } catch (error) {
+    log.warn(`Could not render a QR code: ${(error as Error).message}`);
+    return null;
+  }
+});
+
 ipcMain.handle('room:switch', (_event, roomId: string): ActionResult => {
   const room = roomManager.getRoom(roomId);
   if (!room) {
@@ -1212,44 +1506,181 @@ ipcMain.handle('history:delete-entry', (_event, entryId: string) => {
   return ok('Removed from history.');
 });
 
+ipcMain.handle('history:toggle-pin', (_event, entryId: string): ActionResult => {
+  const entry = historyManager.getClipboardHistory().find((candidate) => candidate.id === entryId);
+  const pinned = historyManager.togglePin(entryId);
+  if (pinned === undefined) {
+    return fail('That item is no longer in history.');
+  }
+
+  if (entry) {
+    notifyHistoryChanged(entry.roomId);
+  }
+  return ok(pinned ? 'Pinned — it will not be cleared out.' : 'Unpinned.');
+});
+
 ipcMain.handle('history:clear-room', (_event, roomId: string) => {
   historyManager.clearRoom(roomId);
   notifyHistoryChanged(roomId);
   return ok('History cleared for this room.');
 });
 
+/** Shared by text messages and file sends. */
+function postChatMessage(
+  room: RoomInfo,
+  input: {
+    type: ChatMessage['type'];
+    content: string;
+    dataUrl?: string;
+    fileName?: string;
+    fileSize?: number;
+  }
+): ActionResult {
+  const chatMessage = historyManager.addChatMessage({
+    ...input,
+    deviceId: deviceId(),
+    deviceName: deviceName(),
+    roomId: room.roomId
+  });
+
+  const message = baseMessage('chat');
+  message.roomId = room.roomId;
+  if (!attachRoomBody(message, room, { chatMessage })) {
+    return fail(`${room.name} is locked on this device — unlock it first.`);
+  }
+
+  if (!fanOut(message, memberHosts(room.roomId))) {
+    return fail('That was too large to send.');
+  }
+
+  mainWindow?.webContents.send('chat:message', chatMessage);
+  return ok('Sent');
+}
+
+/** Shared guard for anything that writes into a room. */
+function requireWritableRoom(roomId: string): RoomInfo | ActionResult {
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return fail('Join a room before sending messages.');
+  }
+  if (!roomManager.isAcceptedMember(roomId, deviceId())) {
+    return fail('You are not an approved member of this room yet.');
+  }
+  if (roomManager.isLocked(roomId)) {
+    return fail(`${room.name} is locked on this device — unlock it first.`);
+  }
+  return room;
+}
+
+function isActionResult(value: RoomInfo | ActionResult): value is ActionResult {
+  return 'ok' in value;
+}
+
 ipcMain.handle(
   'chat:send',
   (_event, type: ChatMessage['type'], content: string, roomId: string, dataUrl?: string, fileName?: string): ActionResult => {
-    const room = roomManager.getRoom(roomId);
-    if (!room) {
-      return fail('Join a room before sending messages.');
-    }
-    if (!roomManager.isAcceptedMember(roomId, deviceId())) {
-      return fail('You are not an approved member of this room yet.');
+    const room = requireWritableRoom(roomId);
+    if (isActionResult(room)) {
+      return room;
     }
 
-    const chatMessage = historyManager.addChatMessage(
-      type,
-      content,
-      deviceId(),
-      deviceName(),
-      roomId,
-      dataUrl,
-      fileName
-    );
-
-    const message = baseMessage('chat');
-    message.roomId = roomId;
-    if (!attachRoomBody(message, room, { chatMessage })) {
-      return fail(`${room.name} is locked on this device — unlock it first.`);
-    }
-
-    fanOut(message, memberHosts(roomId));
-    mainWindow?.webContents.send('chat:message', chatMessage);
-    return ok('Sent');
+    return postChatMessage(room, { type, content, dataUrl, fileName });
   }
 );
+
+/** Pick a file with the native dialog and send it into the room. */
+ipcMain.handle('chat:send-file', async (_event, roomId: string): Promise<ActionResult> => {
+  const room = requireWritableRoom(roomId);
+  if (isActionResult(room)) {
+    return room;
+  }
+  if (!mainWindow) {
+    return fail('No window available.');
+  }
+
+  const picked = await dialog.showOpenDialog(mainWindow, {
+    title: `Send a file to ${room.name}`,
+    buttonLabel: 'Send',
+    properties: ['openFile']
+  });
+
+  if (picked.canceled || picked.filePaths.length === 0) {
+    return ok('Cancelled.');
+  }
+
+  const filePath = picked.filePaths[0];
+
+  let stats;
+  try {
+    stats = await fs.stat(filePath);
+  } catch {
+    return fail('That file could not be read.');
+  }
+
+  if (!stats.isFile()) {
+    return fail('That is not a file.');
+  }
+  if (stats.size > MAX_FILE_BYTES) {
+    return fail(
+      `Files are limited to ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB — that one is ${(stats.size / 1024 / 1024).toFixed(1)} MB.`
+    );
+  }
+
+  let buffer: Buffer;
+  try {
+    buffer = await fs.readFile(filePath);
+  } catch {
+    return fail('That file could not be read.');
+  }
+
+  const fileName = path.basename(filePath);
+  const mime = mimeForFile(fileName);
+  const dataUrl = `data:${mime};base64,${buffer.toString('base64')}`;
+
+  return postChatMessage(room, {
+    // Images go as 'image' so the far side can preview them inline.
+    type: mime.startsWith('image/') ? 'image' : 'file',
+    content: fileName,
+    dataUrl,
+    fileName,
+    fileSize: stats.size
+  });
+});
+
+/**
+ * Write a received file wherever the user chooses. Deliberately never opens it
+ * — running something that arrived over the network is the user's decision.
+ */
+ipcMain.handle('chat:save-file', async (_event, messageId: string): Promise<ActionResult> => {
+  const message = historyManager.getChatHistory().find((candidate) => candidate.id === messageId);
+  if (!message) {
+    return fail('That message is no longer in history.');
+  }
+  if (!message.dataUrl) {
+    return fail('That file was not kept after the app restarted. Ask for it again.');
+  }
+  if (!mainWindow) {
+    return fail('No window available.');
+  }
+
+  const picked = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save file',
+    defaultPath: message.fileName || 'shared-file'
+  });
+
+  if (picked.canceled || !picked.filePath) {
+    return ok('Cancelled.');
+  }
+
+  const base64 = message.dataUrl.slice(message.dataUrl.indexOf(',') + 1);
+  try {
+    await fs.writeFile(picked.filePath, Buffer.from(base64, 'base64'));
+  } catch (error) {
+    return fail(`Could not save: ${(error as Error).message}`);
+  }
+
+  return ok(`Saved as ${path.basename(picked.filePath)}.`);
+});
 
 ipcMain.handle('clipboard:read', () => readClipboardText());
 

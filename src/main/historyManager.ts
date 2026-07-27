@@ -50,32 +50,49 @@ export class HistoryManager {
     };
 
     this.clipboard.unshift(entry);
-    this.clipboard = trimPerRoom(this.clipboard, MAX_CLIPBOARD_PER_ROOM);
+    this.trimClipboard();
     this.scheduleFlush();
     return entry;
   }
 
-  addChatMessage(
-    type: ChatMessage['type'],
-    content: string,
-    deviceId: string,
-    deviceName: string,
-    roomId: string,
-    dataUrl?: string,
-    fileName?: string,
-    id: string = randomUUID(),
-    timestamp: number = Date.now()
-  ): ChatMessage {
+  /** Returns the new pinned state, or undefined when the entry is gone. */
+  togglePin(entryId: string): boolean | undefined {
+    const entry = this.clipboard.find((candidate) => candidate.id === entryId);
+    if (!entry) {
+      return undefined;
+    }
+
+    entry.pinned = !entry.pinned;
+    // Unpinning can push an old entry back over the cap.
+    this.trimClipboard();
+    this.scheduleFlush();
+    return entry.pinned;
+  }
+
+  addChatMessage(input: {
+    type: ChatMessage['type'];
+    content: string;
+    deviceId: string;
+    deviceName: string;
+    roomId: string;
+    dataUrl?: string;
+    fileName?: string;
+    fileSize?: number;
+    /** Supplied when relaying a message received from another device. */
+    id?: string;
+    timestamp?: number;
+  }): ChatMessage {
     const message: ChatMessage = {
-      id,
-      type,
-      content,
-      dataUrl,
-      fileName,
-      deviceId,
-      deviceName,
-      roomId,
-      timestamp
+      id: input.id ?? randomUUID(),
+      type: input.type,
+      content: input.content,
+      dataUrl: input.dataUrl,
+      fileName: input.fileName,
+      fileSize: input.fileSize,
+      deviceId: input.deviceId,
+      deviceName: input.deviceName,
+      roomId: input.roomId,
+      timestamp: input.timestamp ?? Date.now()
     };
 
     this.chat.unshift(message);
@@ -88,8 +105,14 @@ export class HistoryManager {
     return this.chat.some((message) => message.id === id);
   }
 
+  /** Newest first, with pinned entries lifted to the top of each room. */
   getClipboardHistory(roomId?: string): ClipboardHistoryEntry[] {
-    return roomId ? this.clipboard.filter((entry) => entry.roomId === roomId) : this.clipboard;
+    const entries = roomId
+      ? this.clipboard.filter((entry) => entry.roomId === roomId)
+      : this.clipboard;
+
+    // Array#sort is stable, so recency order survives within each group.
+    return [...entries].sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false));
   }
 
   getChatHistory(roomId?: string): ChatMessage[] {
@@ -117,6 +140,16 @@ export class HistoryManager {
     this.persistence.writeChat(this.chat.map(stripHeavyDataUrl));
   }
 
+  private trimClipboard(): void {
+    // Pinned entries are the point of pinning: they never count toward the cap
+    // and are never evicted by it.
+    this.clipboard = trimPerRoom(
+      this.clipboard,
+      MAX_CLIPBOARD_PER_ROOM,
+      (entry) => entry.pinned === true
+    );
+  }
+
   /** Writes are batched: the clipboard poller would otherwise hit disk every second. */
   private scheduleFlush(): void {
     if (this.flushTimer) {
@@ -130,9 +163,16 @@ export class HistoryManager {
   }
 }
 
-function trimPerRoom<T extends { roomId: string }>(items: T[], limit: number): T[] {
+function trimPerRoom<T extends { roomId: string }>(
+  items: T[],
+  limit: number,
+  exempt?: (item: T) => boolean
+): T[] {
   const counts = new Map<string, number>();
   return items.filter((item) => {
+    if (exempt?.(item)) {
+      return true;
+    }
     const next = (counts.get(item.roomId) ?? 0) + 1;
     counts.set(item.roomId, next);
     return next <= limit;

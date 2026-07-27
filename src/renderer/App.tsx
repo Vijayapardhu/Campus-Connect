@@ -85,6 +85,8 @@ export default function App() {
   const currentRoomIdRef = React.useRef<string | undefined>(undefined);
   currentRoomIdRef.current = state?.currentRoomId;
 
+  const searchRef = React.useRef<HTMLInputElement | null>(null);
+
   React.useEffect(() => {
     api.getState().then(setState);
 
@@ -152,6 +154,57 @@ export default function App() {
       root.style.removeProperty('--font-sans');
     }
   }, [fontScale, fontFamily]);
+
+  // Ctrl+1..9 switches rooms, Ctrl+F focuses the history search. Both are
+  // suppressed while a dialog is open or the caret is in a field, so they can
+  // never fire mid-password.
+  const roomIds = state?.rooms.map((candidate) => candidate.roomId).join(',') ?? '';
+  const modalOpen = modal !== null;
+  React.useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!event.ctrlKey && !event.metaKey) {
+        return;
+      }
+      if (modalOpen) {
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable === true;
+
+      if (event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        setTab('clipboard');
+        // Wait for the panel to mount if the tab just changed.
+        requestAnimationFrame(() => searchRef.current?.focus());
+        return;
+      }
+
+      if (typing) {
+        return;
+      }
+
+      const digit = Number(event.key);
+      if (!Number.isInteger(digit) || digit < 1 || digit > 9) {
+        return;
+      }
+
+      const ids = roomIds ? roomIds.split(',') : [];
+      const targetRoomId = ids[digit - 1];
+      if (!targetRoomId) {
+        return;
+      }
+
+      event.preventDefault();
+      api.roomSwitch(targetRoomId).then(() => setTab('clipboard'));
+    }
+
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [roomIds, modalOpen]);
 
   async function run(action: Promise<ActionResult>): Promise<boolean> {
     const result = await action;
@@ -352,6 +405,8 @@ export default function App() {
                   }
                 });
               }}
+              onSendFile={() => run(api.chatSendFile(room.roomId))}
+              onSaveFile={(messageId) => run(api.chatSaveFile(messageId))}
             />
           </div>
         ) : (
@@ -361,10 +416,21 @@ export default function App() {
                 room={room}
                 entries={clips}
                 deviceId={state.deviceId}
+                searchRef={searchRef}
                 onCopy={(entryId) => run(api.clipboardApply(entryId))}
                 onDelete={(entryId) => run(api.historyDeleteEntry(entryId))}
+                onTogglePin={(entryId) => run(api.historyTogglePin(entryId))}
                 onShareNow={() => run(api.clipboardShareNow())}
-                onClear={() => run(api.historyClearRoom(room.roomId))}
+                onClear={() =>
+                  setModal({
+                    kind: 'confirm',
+                    title: `Clear history for ${room.name}?`,
+                    description:
+                      'Every clipboard item and message in this room is deleted from this device, including pinned items. Other devices keep their own copies.',
+                    confirmLabel: 'Clear history',
+                    action: () => run(api.historyClearRoom(room.roomId))
+                  })
+                }
               />
             ) : (
               <MembersPanel
@@ -398,6 +464,7 @@ export default function App() {
                   navigator.clipboard.writeText(code);
                   push('Join code copied.', 'success');
                 }}
+                onRequestQr={(id) => api.roomQrCode(id)}
               />
             )}
           </div>

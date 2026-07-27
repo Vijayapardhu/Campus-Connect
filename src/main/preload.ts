@@ -26,14 +26,18 @@ const api: SharedClipboardApi = {
   roomApproveMember: (roomId, memberId) => ipcRenderer.invoke('room:approve-member', roomId, memberId),
   roomRejectMember: (roomId, memberId) => ipcRenderer.invoke('room:reject-member', roomId, memberId),
   roomRemoveMember: (roomId, memberId) => ipcRenderer.invoke('room:remove-member', roomId, memberId),
+  roomQrCode: (roomId) => ipcRenderer.invoke('room:qr-code', roomId),
 
   historyGetClipboard: (roomId) => ipcRenderer.invoke('history:get-clipboard', roomId),
   historyGetChat: (roomId) => ipcRenderer.invoke('history:get-chat', roomId),
   historyDeleteEntry: (entryId) => ipcRenderer.invoke('history:delete-entry', entryId),
+  historyTogglePin: (entryId) => ipcRenderer.invoke('history:toggle-pin', entryId),
   historyClearRoom: (roomId) => ipcRenderer.invoke('history:clear-room', roomId),
 
   chatSend: (type, content, roomId, dataUrl, fileName) =>
     ipcRenderer.invoke('chat:send', type, content, roomId, dataUrl, fileName),
+  chatSendFile: (roomId) => ipcRenderer.invoke('chat:send-file', roomId),
+  chatSaveFile: (messageId) => ipcRenderer.invoke('chat:save-file', messageId),
 
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   clipboardApply: (entryId) => ipcRenderer.invoke('clipboard:apply', entryId),

@@ -23,6 +23,7 @@ if (!fs.existsSync(path.join(ROOT, 'crypto.js'))) {
 const crypto = require(path.join(ROOT, 'crypto.js'));
 const { RoomManager } = require(path.join(ROOT, 'roomManager.js'));
 const { HistoryManager } = require(path.join(ROOT, 'historyManager.js'));
+const { ChunkAssembler, splitIntoChunks } = require(path.join(ROOT, 'transfer.js'));
 
 let passed = 0;
 let failed = 0;
@@ -301,9 +302,266 @@ test('clearing one room leaves the others intact', () => {
 
 test('chat messages are deduplicated by id on rebroadcast', () => {
   const h = makeHistory();
-  const m = h.addChatMessage('text', 'hi', 'A', 'A', 'r1');
+  const m = h.addChatMessage({ type: 'text', content: 'hi', deviceId: 'A', deviceName: 'A', roomId: 'r1' });
   assert.strictEqual(h.hasChatMessage(m.id), true);
   assert.strictEqual(h.hasChatMessage('nope'), false);
+});
+
+test('a file message keeps its name and size', () => {
+  const h = makeHistory();
+  const m = h.addChatMessage({
+    type: 'file', content: 'report.pdf', deviceId: 'A', deviceName: 'A', roomId: 'r1',
+    fileName: 'report.pdf', fileSize: 2048, dataUrl: 'data:application/pdf;base64,AAAA'
+  });
+  assert.strictEqual(m.fileName, 'report.pdf');
+  assert.strictEqual(m.fileSize, 2048);
+});
+
+console.log('\n-- pinned items --');
+
+test('a pinned item is not evicted by newer items', () => {
+  const h = makeHistory();
+  const first = h.addClipboardEntry('text', 'keep me', 'A', 'A', 'r1');
+  assert.strictEqual(h.togglePin(first.id), true);
+  for (let i = 0; i < 150; i++) h.addClipboardEntry('text', `noise-${i}`, 'A', 'A', 'r1');
+  const survivors = h.getClipboardHistory('r1');
+  assert.ok(survivors.some((e) => e.id === first.id), 'the pinned entry was evicted');
+});
+
+test('pinned items do not consume the cap', () => {
+  const h = makeHistory();
+  for (let i = 0; i < 5; i++) {
+    const e = h.addClipboardEntry('text', `pin-${i}`, 'A', 'A', 'r1');
+    h.togglePin(e.id);
+  }
+  for (let i = 0; i < 150; i++) h.addClipboardEntry('text', `noise-${i}`, 'A', 'A', 'r1');
+  const all = h.getClipboardHistory('r1');
+  assert.strictEqual(all.filter((e) => e.pinned).length, 5);
+  assert.strictEqual(all.filter((e) => !e.pinned).length, 100, 'unpinned entries should still be capped at 100');
+});
+
+test('pinned items sort above the rest', () => {
+  const h = makeHistory();
+  h.addClipboardEntry('text', 'old', 'A', 'A', 'r1');
+  const old = h.getClipboardHistory('r1')[0];
+  h.addClipboardEntry('text', 'newer', 'A', 'A', 'r1');
+  h.togglePin(old.id);
+  assert.strictEqual(h.getClipboardHistory('r1')[0].text, 'old');
+});
+
+test('unpinning re-exposes an item to the cap', () => {
+  const h = makeHistory();
+  const first = h.addClipboardEntry('text', 'temporary', 'A', 'A', 'r1');
+  h.togglePin(first.id);
+  for (let i = 0; i < 150; i++) h.addClipboardEntry('text', `noise-${i}`, 'A', 'A', 'r1');
+  assert.strictEqual(h.togglePin(first.id), false);
+  assert.ok(!h.getClipboardHistory('r1').some((e) => e.id === first.id), 'it should be trimmed once unpinned');
+});
+
+test('pinning survives a restart', () => {
+  let clipboard = [], chat = [];
+  const persistence = {
+    readClipboard: () => clipboard, writeClipboard: (n) => { clipboard = n; },
+    readChat: () => chat, writeChat: (n) => { chat = n; }
+  };
+  const first = new HistoryManager(persistence);
+  const entry = first.addClipboardEntry('text', 'important', 'A', 'A', 'r1');
+  first.togglePin(entry.id);
+  first.flush();
+
+  const second = new HistoryManager(persistence);
+  assert.strictEqual(second.getClipboardHistory('r1')[0].pinned, true);
+});
+
+test('pinning something that is gone reports failure', () => {
+  const h = makeHistory();
+  assert.strictEqual(h.togglePin('does-not-exist'), undefined);
+});
+
+console.log('\n-- chunked transfer --');
+
+const CHUNK = 100;
+
+function chunksFor(message, transferId = 't1') {
+  const parts = splitIntoChunks(message, CHUNK);
+  return parts.map((data, index) => ({ transferId, index, total: parts.length, data }));
+}
+
+test('splitting then joining is lossless', () => {
+  const message = 'x'.repeat(1000) + 'tail';
+  assert.strictEqual(splitIntoChunks(message, CHUNK).join(''), message);
+});
+
+test('an exact multiple does not produce an empty trailing chunk', () => {
+  assert.strictEqual(splitIntoChunks('y'.repeat(300), CHUNK).length, 3);
+});
+
+test('an empty message still produces one chunk', () => {
+  assert.deepStrictEqual(splitIntoChunks('', CHUNK), ['']);
+});
+
+test('chunks arriving in order reassemble', () => {
+  const a = new ChunkAssembler();
+  const message = JSON.stringify({ type: 'clipboard', text: 'z'.repeat(500) });
+  const parts = chunksFor(message);
+  let result = null;
+  for (const part of parts) result = a.accept('A', part);
+  assert.strictEqual(result, message);
+});
+
+test('chunks arriving out of order reassemble', () => {
+  const a = new ChunkAssembler();
+  const message = 'q'.repeat(750) + 'END';
+  const parts = chunksFor(message).reverse();
+  let result = null;
+  for (const part of parts) result = a.accept('A', part);
+  assert.strictEqual(result, message);
+});
+
+test('duplicate chunks do not corrupt or double-complete', () => {
+  const a = new ChunkAssembler();
+  const message = 'd'.repeat(250);
+  const parts = chunksFor(message);
+  let completions = 0;
+  for (const part of [...parts, ...parts]) {
+    if (a.accept('A', part) !== null) completions++;
+  }
+  assert.strictEqual(completions, 1, 'must complete exactly once');
+});
+
+test('an incomplete transfer reports exactly what is missing', () => {
+  const a = new ChunkAssembler();
+  const parts = chunksFor('m'.repeat(500));
+  a.accept('A', parts[0]);
+  a.accept('A', parts[2]);
+  a.accept('A', parts[4]);
+  assert.deepStrictEqual(a.missing('A', 't1'), [1, 3]);
+});
+
+test('a transfer completes after the missing chunks are resent', () => {
+  const a = new ChunkAssembler();
+  const message = 'r'.repeat(500);
+  const parts = chunksFor(message);
+  parts.forEach((p, i) => { if (i !== 2) a.accept('A', p); });
+  assert.strictEqual(a.accept('A', parts[2]), message, 'the retransmit should finish it');
+});
+
+test('two senders reusing the same transferId do not collide', () => {
+  const a = new ChunkAssembler();
+  const one = 'a'.repeat(150);
+  const two = 'b'.repeat(150);
+  const pa = chunksFor(one), pb = chunksFor(two);
+  a.accept('A', pa[0]);
+  a.accept('B', pb[0]);
+  assert.strictEqual(a.accept('B', pb[1]), two);
+  assert.strictEqual(a.accept('A', pa[1]), one);
+});
+
+test('a sender changing total mid-transfer is dropped', () => {
+  const a = new ChunkAssembler();
+  a.accept('A', { transferId: 't1', index: 0, total: 3, data: 'x' });
+  assert.strictEqual(a.accept('A', { transferId: 't1', index: 1, total: 9, data: 'y' }), null);
+  assert.strictEqual(a.inFlight, 0, 'the transfer must be abandoned, not silently merged');
+});
+
+test('an index beyond total is rejected', () => {
+  const a = new ChunkAssembler();
+  assert.strictEqual(a.accept('A', { transferId: 't1', index: 5, total: 3, data: 'x' }), null);
+  assert.strictEqual(a.inFlight, 0);
+});
+
+test('malformed chunks are rejected without allocating', () => {
+  const a = new ChunkAssembler();
+  for (const bad of [
+    { transferId: '', index: 0, total: 1, data: 'x' },
+    { transferId: 't', index: -1, total: 1, data: 'x' },
+    { transferId: 't', index: 0, total: 0, data: 'x' },
+    { transferId: 't', index: 0, total: 1.5, data: 'x' },
+    { transferId: 't', index: 0, total: 1, data: 42 },
+    { transferId: 't'.repeat(200), index: 0, total: 1, data: 'x' }
+  ]) {
+    assert.strictEqual(a.accept('A', bad), null);
+  }
+  assert.strictEqual(a.inFlight, 0);
+});
+
+test('total above the chunk ceiling is refused', () => {
+  const a = new ChunkAssembler({ maxMessageBytes: 1e9, maxTotalBytes: 1e9, maxConcurrentTransfers: 10, maxChunks: 8, ttlMs: 1000 });
+  assert.strictEqual(a.accept('A', { transferId: 't1', index: 0, total: 9, data: 'x' }), null);
+});
+
+test('a message beyond the size ceiling is dropped, not buffered', () => {
+  const a = new ChunkAssembler({ maxMessageBytes: 150, maxTotalBytes: 1e6, maxConcurrentTransfers: 10, maxChunks: 100, ttlMs: 1000 });
+  const parts = chunksFor('z'.repeat(400));
+  let result = null;
+  for (const part of parts) result = a.accept('A', part);
+  assert.strictEqual(result, null);
+  assert.strictEqual(a.inFlight, 0);
+  assert.strictEqual(a.buffered, 0, 'refusing a transfer must not leak its buffer');
+});
+
+test('the concurrent transfer cap holds', () => {
+  const a = new ChunkAssembler({ maxMessageBytes: 1e6, maxTotalBytes: 1e6, maxConcurrentTransfers: 2, maxChunks: 100, ttlMs: 1000 });
+  a.accept('A', { transferId: 't1', index: 0, total: 5, data: 'x' });
+  a.accept('A', { transferId: 't2', index: 0, total: 5, data: 'x' });
+  a.accept('A', { transferId: 't3', index: 0, total: 5, data: 'x' });
+  assert.strictEqual(a.inFlight, 2);
+});
+
+test('the total buffer ceiling holds across transfers', () => {
+  const a = new ChunkAssembler({ maxMessageBytes: 1e6, maxTotalBytes: 20, maxConcurrentTransfers: 10, maxChunks: 100, ttlMs: 1000 });
+  a.accept('A', { transferId: 't1', index: 0, total: 5, data: 'x'.repeat(15) });
+  a.accept('A', { transferId: 't2', index: 0, total: 5, data: 'y'.repeat(15) });
+  assert.ok(a.buffered <= 20, `buffered ${a.buffered} exceeded the ceiling`);
+});
+
+test('a stalled transfer is swept and its memory released', () => {
+  const a = new ChunkAssembler({ maxMessageBytes: 1e6, maxTotalBytes: 1e6, maxConcurrentTransfers: 10, maxChunks: 100, ttlMs: 1000 });
+  a.accept('A', { transferId: 't1', index: 0, total: 5, data: 'x'.repeat(50) }, 1000);
+  assert.strictEqual(a.sweep(1500).length, 0, 'must not sweep a transfer still within its ttl');
+  const expired = a.sweep(3000);
+  assert.strictEqual(expired.length, 1);
+  assert.strictEqual(expired[0].received, 1);
+  assert.strictEqual(expired[0].total, 5);
+  assert.strictEqual(a.inFlight, 0);
+  assert.strictEqual(a.buffered, 0);
+});
+
+test('progress refreshes the sweep deadline', () => {
+  const a = new ChunkAssembler({ maxMessageBytes: 1e6, maxTotalBytes: 1e6, maxConcurrentTransfers: 10, maxChunks: 100, ttlMs: 1000 });
+  a.accept('A', { transferId: 't1', index: 0, total: 3, data: 'x' }, 1000);
+  a.accept('A', { transferId: 't1', index: 1, total: 3, data: 'y' }, 1800);
+  assert.strictEqual(a.sweep(2500).length, 0, 'the later chunk should have reset the timer');
+});
+
+test('forgetting a sender releases only that sender', () => {
+  const a = new ChunkAssembler();
+  a.accept('A', { transferId: 't1', index: 0, total: 5, data: 'x' });
+  a.accept('B', { transferId: 't1', index: 0, total: 5, data: 'y' });
+  a.forgetSender('A');
+  assert.strictEqual(a.inFlight, 1);
+  assert.deepStrictEqual(a.missing('A', 't1'), []);
+  assert.strictEqual(a.missing('B', 't1').length, 4);
+});
+
+test('a realistic screenshot-sized payload survives loss and reordering', () => {
+  const a = new ChunkAssembler();
+  // ~600 KB of base64, the shape of a real screenshot data URL.
+  const message = JSON.stringify({ type: 'clipboard', dataUrl: 'data:image/png;base64,' + 'A'.repeat(600 * 1024) });
+  const parts = splitIntoChunks(message, 40000).map((data, index, all) => ({ transferId: 'big', index, total: all.length, data }));
+
+  const shuffled = [...parts].sort((x, y) => ((x.index * 7919) % 13) - ((y.index * 7919) % 13));
+  const dropped = shuffled.filter((p) => p.index % 5 !== 3);
+
+  let result = null;
+  for (const part of dropped) result = a.accept('A', part);
+  assert.strictEqual(result, null, 'must not complete while chunks are missing');
+
+  const gaps = a.missing('A', 'big');
+  assert.ok(gaps.length > 0);
+  for (const index of gaps) result = a.accept('A', parts[index]);
+
+  assert.strictEqual(result, message, 'retransmitting the gaps must reproduce the payload exactly');
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

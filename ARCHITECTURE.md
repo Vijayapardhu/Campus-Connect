@@ -48,6 +48,7 @@ shared-clipboard-desktop/
 │   │   ├── main.ts               # App lifecycle, UDP protocol, IPC handlers
 │   │   ├── preload.ts            # contextBridge — the only renderer↔main channel
 │   │   ├── crypto.ts             # scrypt derivation, AES-256-GCM, join codes, proofs
+│   │   ├── transfer.ts           # Chunk splitting and reassembly for large payloads
 │   │   ├── roomManager.ts        # Rooms, keys, membership, adverts, persistence
 │   │   ├── historyManager.ts     # Clipboard/chat history with per-room caps
 │   │   ├── clipboardStore.ts     # Electron clipboard read/write
@@ -225,6 +226,8 @@ broadcast still works). Every datagram is JSON and carries `v: 2`; mismatched ve
 | `room-closed` | owner → members | Room deleted |
 | `clipboard` | member → room | Clipboard payload |
 | `chat` | member → room | Chat message |
+| `chunk` | sender → room | One piece of a message too large for a datagram |
+| `chunk-nack` | receiver → sender | The pieces that never arrived, please resend |
 
 ### 6.2 The advert is deliberately thin
 
@@ -269,11 +272,34 @@ Device B                                   Device A (owner)
 A public encrypted room is the same flow minus the join code and minus the approval step — the
 owner accepts immediately once the proof verifies.
 
-### 6.4 Datagram size
+### 6.4 Chunked transfer
 
-UDP tops out at 64 KB. `sendUdpMessage` refuses anything over 60 KB and reports it to the UI
-("Item is too large to send over the network…") rather than failing silently. Large images are
-therefore kept in local history but not transmitted. Chunked transfer is the natural next step.
+A UDP datagram tops out at 64 KB, so anything larger is serialised, split into 8 KB pieces, and sent
+as individual `chunk` messages. `ChunkAssembler` (`src/main/transfer.ts`) rebuilds the original JSON
+and feeds it back through `handleWireMessage`, so **a reassembled message goes through exactly the
+same membership and decryption checks as a single-datagram one**. Reassembly happens before
+decryption, so the GCM auth tag still covers the whole payload.
+
+Beyond 16 MB the transfer is refused outright and reported to the user.
+
+**Reliability.** UDP guarantees neither ordering nor delivery. The receiver runs a 300 ms sweep; a
+transfer that has been quiet for 500 ms triggers a `chunk-nack` listing the missing indices, and the
+sender re-sends just those. A transfer making no progress for 20 seconds is abandoned and the user
+is told.
+
+**Why 8 KB, and why the socket buffers.** Both numbers were measured, not guessed. With the OS
+default socket buffers a 3 MB transfer lost roughly **half** its datagrams to buffer overflow before
+they ever reached the wire; raising `recvBufferSize`/`sendBufferSize` to 8 MB took that to zero.
+Chunk size then barely affected loss, but 40 KB datagrams IP-fragment into ~28 pieces each, so one
+lost fragment costs the whole 40 KB — 8 KB keeps that amplification small. Measured end to end, an
+8.9 MB encrypted payload now arrives in 1.8 s with no retransmissions at all, against 5.9 s and 228
+resent chunks before tuning.
+
+**Memory safety.** A hostile device could otherwise use chunking to exhaust memory, so the assembler
+caps single messages (20 MB), total buffered bytes across all transfers (64 MB), concurrent
+transfers (24), and chunk count (4096). A transfer that would breach a limit is dropped rather than
+evicting someone else's. Completed transfer ids are remembered briefly, because chunks are broadcast
+*and* unicast — without that, the duplicate set would reassemble and deliver the same message twice.
 
 ---
 
@@ -409,15 +435,24 @@ immediately.
 
 | Screen | Behaviour |
 |--------|-----------|
-| Clipboard | Newest first, author + relative time, copy-back and delete per item |
-| Chat | Own messages right-aligned; `column-reverse` keeps new messages at the bottom |
+| Clipboard | Newest first with pinned items on top, live search, copy-back, pin and delete per item |
+| Chat | Own messages right-aligned; `column-reverse` keeps new messages at the bottom. Files and images render inline with a Save action |
 | Members | Approval queue (owner), roster with Remove (owner), security summary, join code, leave/close |
 | Locked room | Shown instead of the tabs when the key is missing — unlock, or leave |
 | No room | Guides toward creating or joining a room |
 | Modals | Create, Join, Unlock, Settings, and a confirm dialog for destructive actions |
 
 Status messages arrive as toasts tinted by tone (`info` / `success` / `warning` / `error`).
-Destructive actions — removing a member, closing or leaving a room — go through a confirm dialog.
+Destructive actions — removing a member, closing or leaving a room, clearing history — go through a
+confirm dialog.
+
+**Keyboard.** `Ctrl+1` … `Ctrl+9` select a room; `Ctrl+F` focuses the history search. Both are
+suppressed while a dialog is open or the caret is in a text field, so they can never fire in the
+middle of typing a password.
+
+**Files.** Picking and saving both go through the main process (`dialog.showOpenDialog` /
+`showSaveDialog`), so a filesystem path never crosses the IPC boundary as untrusted renderer data.
+Received files are never opened automatically — saving them is the user's decision.
 
 The default Electron menu bar is removed (`Menu.setApplicationMenu(null)`); DevTools remain on
 `F12` / `Ctrl+Shift+I`.
@@ -496,7 +531,15 @@ restart; a room whose key is absent reports as locked; a room you are in never a
 discoverable.
 
 **History** — history is scoped per room; repeated polls do not duplicate; per-room caps are
-independent; clearing one room leaves others intact; chat messages dedupe by id on rebroadcast.
+independent; clearing one room leaves others intact; chat messages dedupe by id on rebroadcast;
+pinned items survive the cap, do not consume it, sort to the top, persist across restart, and become
+evictable again when unpinned.
+
+**Chunking** — split/join is lossless; chunks reassemble in any order; duplicates never
+double-deliver; gaps are reported accurately and complete after retransmission; two senders reusing
+a transfer id do not collide; a sender changing `total` mid-transfer is abandoned; malformed chunks
+allocate nothing; the message, total-buffer, concurrency and chunk-count ceilings all hold; stalled
+transfers are swept and their memory released; progress resets the deadline.
 
 ### Manual two-device test
 

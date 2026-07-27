@@ -67,6 +67,11 @@ and re-copy something from an hour ago.
 | Stop sharing for a moment (about to copy a password) | Tray icon → uncheck **Share my clipboard**, or Settings |
 | Collect items without them overwriting my clipboard | Settings → turn off **Paste automatically** |
 | Re-copy something from earlier | Clipboard tab → hover an item → copy button |
+| Find something in a long history | `Ctrl+F`, or the search box in the Clipboard tab |
+| Keep an item forever | Hover it → pin. Pinned items are never cleared out by newer ones |
+| Switch rooms without the mouse | `Ctrl+1` … `Ctrl+9` |
+| Send a file | Chat tab → paperclip. Up to 5 MB |
+| Let someone scan the join code | Members tab → **QR code** |
 | Remove someone from a room | Members tab → **Remove** |
 | Leave, or shut a room down | Members tab → **Leave room** / **Close this room** |
 | Make the text bigger, or change the font | Settings → **Text size** and **Font** |
@@ -188,9 +193,13 @@ Work through these in order:
 <details>
 <summary><strong>Large screenshots do not arrive</strong></summary>
 
-A UDP datagram maxes out at 64 KB. Larger items stay in local history but are
-not transmitted, and the app tells you so. Chunked transfer is on the roadmap
-and would be a good first contribution.
+Items up to 16 MB are split into chunks and reassembled automatically, and
+anything the network drops is requested again — so this normally just works.
+
+If a big item still does not arrive, it is usually a very lossy network. Check
+the log for "Abandoned incomplete transfer". Moving closer to the access point,
+or adding the other device by IP so chunks are unicast rather than broadcast,
+both help. Past 16 MB the item is refused outright and the app says so.
 </details>
 
 <details>

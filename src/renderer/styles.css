@@ -1119,8 +1119,52 @@ select {
 }
 
 .clip:hover .clip__actions,
-.clip:focus-within .clip__actions {
+.clip:focus-within .clip__actions,
+.clip__actions.is-visible {
   opacity: 1;
+}
+
+/* Pinned entries stay obvious once the actions fade back out. */
+.clip.is-pinned {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg-elevated);
+}
+
+/* Search box in the clipboard toolbar */
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  max-width: 420px;
+  height: 32px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-tertiary);
+  transition: border-color var(--duration) var(--ease), box-shadow var(--duration) var(--ease);
+}
+
+.search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  outline: none;
+}
+
+.search__input::placeholder {
+  color: var(--text-tertiary);
 }
 
 .clip__text {
@@ -1219,6 +1263,112 @@ select {
 
 .composer .input {
   flex: 1;
+}
+
+/* Attachments inside a chat bubble */
+
+.attach {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.attach--file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-sunken);
+}
+
+.msg.is-mine .attach--file {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.attach__icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.msg.is-mine .attach__icon {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--text-inverse);
+}
+
+.attach__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.attach__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.attach__name {
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.attach__size {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.msg.is-mine .attach__size {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.attach__row .attach__name {
+  flex: 1;
+  min-width: 0;
+}
+
+.attach__image {
+  max-width: 100%;
+  max-height: 260px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  object-fit: contain;
+}
+
+/* QR code panel */
+
+.qr {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-sunken);
+}
+
+/* Always light: scanners expect dark modules on a light field. */
+.qr__image {
+  width: 190px;
+  height: 190px;
+  border-radius: var(--radius-md);
+  background: #fff;
+  padding: var(--space-2);
+}
+
+.qr__note {
+  max-width: 44ch;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  text-align: center;
 }
 
 /* ------------------------------------------------------------- members --- */

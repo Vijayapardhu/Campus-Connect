@@ -43,10 +43,13 @@ on the other. Nothing leaves the network you are already on.
 - **Rooms** decide who sees what. You are only ever sharing into one room at a time
 - **End-to-end encryption** with AES-256-GCM, keyed by a password you choose
 - **Approval-based private rooms** — the owner decides who gets in
-- **Built-in chat**, per room
-- **Clipboard history** that survives restarts, with one-click copy back
+- **Built-in chat**, per room, with **file transfer** up to 5 MB
+- **Large transfers** — multi-megabyte images are chunked and reassembled, with
+  automatic retransmission of anything the network drops
+- **Clipboard history** that survives restarts, with search, pinning, and one-click copy back
+- **QR codes** for join codes, so a phone can scan instead of typing
 - **No account, no server, no internet connection required**
-- **Adjustable text size and font**, light and dark themes
+- **Adjustable text size and font**, light and dark themes, keyboard shortcuts
 
 ---
 
@@ -110,7 +113,11 @@ mistypes it.
 <table>
 <tr>
 <td width="50%"><img src="docs/screenshots/clipboard-dark.png" alt="Clipboard history in dark mode"><br><em>Clipboard history, dark mode</em></td>
-<td width="50%"><img src="docs/screenshots/chat-dark.png" alt="Room chat"><br><em>Per-room chat</em></td>
+<td width="50%"><img src="docs/screenshots/chat-files.png" alt="Room chat with a shared file"><br><em>Per-room chat with file transfer</em></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/qr-code.png" alt="QR code for a room join code"><br><em>Scannable join codes</em></td>
+<td><img src="docs/screenshots/clipboard-light.png" alt="Searching clipboard history with a pinned item"><br><em>Search and pinned items</em></td>
 </tr>
 <tr>
 <td><img src="docs/screenshots/members-light.png" alt="Members panel with an approval queue"><br><em>Approval queue and member management</em></td>
@@ -309,17 +316,20 @@ $ npm test
 
 ## Roadmap
 
-Rough order, and every one of these is open to whoever wants it:
+Shipped:
 
-- [ ] **Chunked transfer** so large screenshots sync (UDP caps at 64 KB today)
-- [ ] **File transfer** in chat — the message type exists, the transfer does not
-- [ ] **QR codes** for join codes so phones can scan them
-- [ ] **Pinned clipboard items** that survive the history cap
-- [ ] **Search** across clipboard history
-- [ ] **Keyboard shortcuts** for switching rooms
-- [ ] **Translations**
-- [ ] **A mobile companion** — the protocol is documented and simple enough
-- [ ] **TCP fallback** for networks that block UDP broadcast
+- [x] **Chunked transfer** so large screenshots sync, with NACK-based retransmission
+- [x] **File transfer** in chat, up to 5 MB
+- [x] **QR codes** for join codes so phones can scan them
+- [x] **Pinned clipboard items** that survive the history cap
+- [x] **Search** across clipboard history
+- [x] **Keyboard shortcuts** — `Ctrl+1..9` for rooms, `Ctrl+F` for search
+
+Open, and every one of these is yours if you want it:
+
+- [ ] **Translations** — [#7](https://github.com/Vijayapardhu/Clipboard/issues/7)
+- [ ] **A mobile companion** — the protocol is documented and simple enough — [#8](https://github.com/Vijayapardhu/Clipboard/issues/8)
+- [ ] **TCP fallback** for networks that block UDP broadcast — [#9](https://github.com/Vijayapardhu/Clipboard/issues/9)
 
 ---
 
@@ -395,11 +405,15 @@ properly from the tray icon.
 </details>
 
 <details>
-<summary><strong>Why is my big screenshot not syncing?</strong></summary>
+<summary><strong>How big can a shared item be?</strong></summary>
 
-A UDP datagram maxes out at 64 KB, so anything larger is kept in local history
-but not transmitted. The app tells you when this happens. Chunked transfer is on
-the roadmap and would be a great first contribution.
+Up to 16 MB for clipboard items and 5 MB for chat files. A UDP datagram only
+holds 64 KB, so anything larger is split into 8 KB chunks and reassembled on the
+far side, with anything the network drops requested again automatically. An
+8.9 MB payload takes under two seconds on a quiet network.
+
+Beyond 16 MB the item stays in local history and the app says so rather than
+failing silently.
 </details>
 
 <details>

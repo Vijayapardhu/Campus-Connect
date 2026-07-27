@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export type RoomType = 'public' | 'private';
 export type MemberStatus = 'pending' | 'accepted';
@@ -69,6 +69,8 @@ export type ClipboardHistoryEntry = {
   deviceName: string;
   roomId: string;
   timestamp: number;
+  /** Pinned entries sort to the top and are exempt from the per-room cap. */
+  pinned?: boolean;
 };
 
 export type ChatMessage = {
@@ -77,6 +79,8 @@ export type ChatMessage = {
   content: string;
   dataUrl?: string;
   fileName?: string;
+  /** Original size in bytes, for files and images. */
+  fileSize?: number;
   deviceId: string;
   deviceName: string;
   roomId: string;
@@ -118,7 +122,9 @@ export type WireMessageType =
   | 'room-leave'
   | 'room-closed'
   | 'clipboard'
-  | 'chat';
+  | 'chat'
+  | 'chunk'
+  | 'chunk-nack';
 
 /**
  * Every datagram on the wire. Bodies that belong to an encrypted room travel in
@@ -146,6 +152,19 @@ export type WireMessage = {
   payload?: ClipboardPayload;
   chatMessage?: ChatMessage;
   sealed?: Envelope;
+
+  /*
+   * Chunking. A message too large for one datagram is serialised and split;
+   * each piece travels as its own `chunk`. The receiver reassembles the
+   * original JSON and feeds it back through the normal handler, so nothing
+   * bypasses the membership and decryption checks.
+   */
+  transferId?: string;
+  index?: number;
+  total?: number;
+  data?: string;
+  /** On `chunk-nack`: the indices the receiver is still missing. */
+  missing?: number[];
 };
 
 export type AppSettings = {
