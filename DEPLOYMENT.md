@@ -186,22 +186,91 @@ suppress the warning locally, not a way to earn the publisher name.
 |--------|------|--------|
 | **OV certificate** | Paid, annual | Publisher name appears. SmartScreen still warns until the binary builds download reputation |
 | **EV certificate** | Paid, annual, higher | Publisher name appears and SmartScreen trusts it immediately |
-| **[SignPath Foundation](https://signpath.org/)** | Free for open source | Same as OV. This project is a plausible fit — worth applying |
+| **[SignPath Foundation](https://signpath.org/)** | Free for open source | Same effect as OV, but a different integration — see below |
 | **[Azure Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/)** | Low monthly | Cheapest paid route, but individuals need verifiable identity history |
 | Build from source | Free | No warning, because the user compiled it themselves |
 
-Signing is wired up already. `.github/workflows/release.yml` reads these from
-repository secrets, so the next release after you add them is signed with no
-workflow change:
+### If you buy a certificate
+
+`.github/workflows/release.yml` already reads these from repository secrets, so
+the next release after you add them is signed with no workflow change:
 
 | Secret | Platform |
 |--------|----------|
-| `CSC_LINK` | Base64 or path of the `.pfx` / `.p12` |
+| `CSC_LINK` | Base64 of the `.pfx` / `.p12` |
 | `CSC_KEY_PASSWORD` | Its password |
 | `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | macOS notarisation |
 
-The workflow prints a warning annotation on every unsigned release so it is
-never a silent surprise.
+To produce `CSC_LINK` from a `.pfx`:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("certificate.pfx")) | Set-Clipboard
+```
+
+Paste that as the secret value. The workflow prints a warning annotation on
+every unsigned release, so an unsigned build is never a silent surprise.
+
+> The signing variables must be **absent** rather than empty when no certificate
+> is configured. Declaring `CSC_LINK: ${{ secrets.CSC_LINK }}` when the secret
+> does not exist defines it as an empty string, and electron-builder then treats
+> it as a path and fails the macOS build with `<workspace> not a file`. The
+> workflow exports them from a preceding step only when they hold something.
+
+### SignPath Foundation works differently
+
+**SignPath does not give you a certificate file.** There is no `.pfx` to put in
+`CSC_LINK`. They hold the key and sign your artifacts through their service, so
+the integration is a build step, not an environment variable:
+
+1. Build the installers unsigned and upload them as a workflow artifact.
+2. Hand the artifact id to `signpath/github-action-submit-signing-request`.
+3. SignPath fetches it, signs it, and returns the signed files.
+4. Publish the signed files instead of the originals.
+
+Concretely, in the `build` job, after the existing upload step:
+
+```yaml
+- name: Upload unsigned installer
+  id: unsigned
+  uses: actions/upload-artifact@v4
+  with:
+    name: installer-${{ matrix.label }}
+    path: ${{ matrix.artifacts }}
+
+- name: Sign with SignPath
+  uses: signpath/github-action-submit-signing-request@v1
+  with:
+    api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+    organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+    project-slug: clipboard
+    signing-policy-slug: release-signing
+    github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+    wait-for-completion: true
+    output-artifact-directory: signed
+```
+
+This is deliberately **not** in the workflow yet. It cannot be tested without an
+approved SignPath account, and untested signing code in a release pipeline is a
+good way to break releases. Apply first; wire it up once you are approved.
+
+### Applying to SignPath Foundation
+
+Their bar is that the project is genuinely open source and genuinely used. Be
+aware that **a brand-new repository with no users is usually declined** — they
+prioritise established projects. Realistically: publish releases, get the
+project used, then apply.
+
+What they will check, and where this project already stands:
+
+| Requirement | Status |
+|-------------|--------|
+| OSI-approved licence | MIT |
+| Public source repository | Yes |
+| Built in public CI from public sources | GitHub Actions, `release.yml` |
+| Reproducible, auditable build | Yes — no local build steps |
+| No bundled proprietary components | Yes — no external crypto or network libraries |
+| Identifiable maintainer | Vijaya Pardhu |
+| Real usage | **This is the weak point today** |
 
 ### A self-signed certificate
 
