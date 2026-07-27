@@ -59,7 +59,7 @@ on the other. Nothing leaves the network you are already on.
 <tr>
 <td width="50%" valign="top">
 
-### 🎓 College students
+### Students
 
 You have a laptop, the lab has a desktop, and your project needs both. Move
 error messages, Stack Overflow links, API keys and code snippets between them
@@ -72,7 +72,7 @@ and it is gone.
 </td>
 <td width="50%" valign="top">
 
-### 💼 Office and remote teams
+### Office and remote teams
 
 Pair programming, shared debugging, moving a config value from a laptop to a
 test machine. A private room with a password keeps it inside the room even
@@ -87,7 +87,7 @@ local network is the entire point.
 <tr>
 <td width="50%" valign="top">
 
-### 🖥️ Anyone with more than one machine
+### Anyone with more than one machine
 
 Desktop and laptop. Work machine and personal machine. A Windows box and a Linux
 box under the same desk. One public room, no password, and your clipboard
@@ -96,7 +96,7 @@ follows you between them.
 </td>
 <td width="50%" valign="top">
 
-### 🏫 Classrooms and workshops
+### Classrooms and workshops
 
 An instructor can put a command or a link into a public room and thirty people
 have it instantly, without reading it out character by character while everyone
@@ -140,13 +140,14 @@ Grab the latest build for your platform from the
 
 | Platform | File |
 |----------|------|
-| Windows | `Shared Clipboard-x.y.z-win-x64.exe` |
-| macOS | `Shared Clipboard-x.y.z-mac-x64.dmg` |
-| Linux | `Shared Clipboard-x.y.z-linux-x86_64.AppImage` |
+| Windows 10/11 | `SharedClipboard-x.y.z-win-x64.exe` |
+| macOS (Intel and Apple silicon) | `SharedClipboard-x.y.z-mac-universal.dmg` |
+| Ubuntu / Linux | `SharedClipboard-x.y.z-linux-x86_64.AppImage` |
 
-> Windows SmartScreen will warn you, because the installer is not code-signed —
-> a certificate costs more than this project has. Choose **More info → Run
-> anyway**, or build it yourself from source below.
+> The installers are not code-signed. Windows SmartScreen will warn you — choose
+> **More info → Run anyway**. On macOS, right-click the app and choose **Open**
+> the first time. On Ubuntu, `chmod +x` the AppImage before running it. Or build
+> it yourself from source below.
 
 ### From source
 
@@ -171,9 +172,9 @@ selected.
 
 | Room type | Who can join | Encrypted |
 |-----------|-------------|-----------|
-| **Public**, no password | Anyone on the network, instantly | ❌ No — plain text |
-| **Public**, with password | Anyone who knows the password | ✅ AES-256-GCM |
-| **Private** | Join code **and** password **and** owner approval | ✅ AES-256-GCM |
+| **Public**, no password | Anyone on the network, instantly | No — plain text |
+| **Public**, with password | Anyone who knows the password | AES-256-GCM |
+| **Private** | Join code **and** password **and** owner approval | AES-256-GCM |
 
 For anything you would not shout across the room, use a private room.
 
@@ -209,7 +210,7 @@ This is worth understanding, because "encrypted" gets claimed a lot.
        │                                      │
        │  never leaves this device            │
        ▼                                      ▼
-  ✗ never transmitted            AES-256-GCM(key, payload)
+  never transmitted            AES-256-GCM(key, payload)
                                               │
                                               ▼
                               { iv, ciphertext, auth tag }  ──▶ network
@@ -341,25 +342,25 @@ there is a lot of obvious room to grow — which is a good place to join.
 You do not need to be an expert. If you know some TypeScript, or React, or you
 just want to fix a wording mistake, there is something here for you.
 
-- 📖 [**CONTRIBUTING.md**](CONTRIBUTING.md) — setup, project rules, and a list
+- [**CONTRIBUTING.md**](CONTRIBUTING.md) — setup, project rules, and a list
   of good first tasks with difficulty ratings
-- 🐛 [**Open an issue**](https://github.com/Vijayapardhu/Clipboard/issues/new/choose)
+- [**Open an issue**](https://github.com/Vijayapardhu/Clipboard/issues/new/choose)
   — bugs and ideas both welcome
-- 💬 [**Discussions**](https://github.com/Vijayapardhu/Clipboard/discussions) —
+- [**Discussions**](https://github.com/Vijayapardhu/Clipboard/discussions) —
   ask anything, including "how does this bit work?"
-- ⭐ **Star the repo** if you would use this. It genuinely helps other people
+- **Star the repo** if you would use this. It genuinely helps other people
   find it.
 
 Areas where help would make the most difference right now:
 
 | Area | What is needed |
 |------|---------------|
-| 🍎 **macOS & Linux** | Development has been on Windows. Real testing on other platforms would be valuable |
-| 🔐 **Security review** | The model is documented in SECURITY.md. Try to break it |
-| 🎨 **Design & accessibility** | Screen reader support, keyboard navigation, colour contrast |
-| 🌍 **Translations** | Every user-facing string lives in `panels.tsx` and `modals.tsx` |
-| 📱 **Mobile** | The protocol is documented — an Android or iOS client is wide open |
-| 📝 **Documentation** | Tutorials, videos, or just fixing something that confused you |
+| **macOS & Linux** | Development has been on Windows. Real testing on other platforms would be valuable |
+| **Security review** | The model is documented in SECURITY.md. Try to break it |
+| **Design & accessibility** | Screen reader support, keyboard navigation, colour contrast |
+| **Translations** | Every user-facing string lives in `panels.tsx` and `modals.tsx` |
+| **Mobile** | The protocol is documented — an Android or iOS client is wide open |
+| **Documentation** | Tutorials, videos, or just fixing something that confused you |
 
 ---
 
@@ -441,8 +442,8 @@ interface and the documentation.
 
 [![GitHub](https://img.shields.io/badge/GitHub-Vijayapardhu-181717?logo=github)](https://github.com/Vijayapardhu)
 
-**[⭐ Star this repo](https://github.com/Vijayapardhu/Clipboard)** ·
-**[🤝 Contribute](CONTRIBUTING.md)** ·
-**[🌐 Website](https://vijayapardhu.github.io/Clipboard/)**
+**[Star this repo](https://github.com/Vijayapardhu/Clipboard)** ·
+**[Contribute](CONTRIBUTING.md)** ·
+**[Website](https://vijayapardhu.github.io/Clipboard/)**
 
 </div>
