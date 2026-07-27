@@ -1,5 +1,12 @@
 import React from 'react';
-import type { AppSettings, AppState, DiscoveredRoom, RoomInfo, RoomType } from '../shared/types';
+import type {
+  AppSettings,
+  AppState,
+  DiscoveredRoom,
+  RoomInfo,
+  RoomInvite,
+  RoomType
+} from '../shared/types';
 import { APP_INFO, FONT_SCALES, MAX_FONT_SCALE, MIN_FONT_SCALE } from '../shared/types';
 import { Button, Field, Modal, SwitchRow } from './ui';
 import { passwordStrength } from './format';
@@ -270,6 +277,72 @@ export function JoinRoomModal({
       )}
 
       {error ? <p className="field__error" style={{ marginTop: 'var(--space-3)' }}>{error}</p> : null}
+    </Modal>
+  );
+}
+
+// -------------------------------------------------------- answer an invite
+
+export function InviteModal({
+  invite,
+  onClose,
+  onRespond
+}: {
+  invite: RoomInvite;
+  onClose: () => void;
+  onRespond: (roomId: string, accept: boolean) => Promise<boolean>;
+}) {
+  const [busy, setBusy] = React.useState(false);
+
+  async function respond(accept: boolean) {
+    setBusy(true);
+    await onRespond(invite.roomId, accept);
+    setBusy(false);
+    onClose();
+  }
+
+  return (
+    <Modal
+      title={`${invite.ownerName} invited you`}
+      description={`They would like you to join ${invite.roomName}.`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={() => respond(false)} disabled={busy}>
+            Decline
+          </Button>
+          <Button variant="primary" onClick={() => respond(true)} disabled={busy}>
+            {busy ? 'Sending…' : 'Accept'}
+          </Button>
+        </>
+      }
+    >
+      <div className="stack">
+        <div className="row" style={{ gap: 'var(--space-2)' }}>
+          <span className={`badge badge--${invite.type === 'private' ? 'accent' : 'neutral'}`}>
+            {invite.type === 'private' ? <LockIcon size={11} /> : <GlobeIcon size={11} />}
+            {invite.type === 'private' ? 'Private' : 'Public'}
+          </span>
+          {invite.encrypted ? (
+            <span className="badge badge--success">Encrypted</span>
+          ) : (
+            <span className="badge badge--warning">Not encrypted</span>
+          )}
+        </div>
+
+        <p className="field__hint">
+          Accepting does not put you in the room straight away — {invite.ownerName} still
+          has to approve you.
+          {invite.encrypted
+            ? ' And because this room is encrypted, you will also need its password before you can read anything in it.'
+            : ''}
+        </p>
+
+        <p className="field__hint">
+          Nothing is shared with them by accepting, and your clipboard is only sent to a
+          room once you select it.
+        </p>
+      </div>
     </Modal>
   );
 }

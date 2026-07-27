@@ -382,6 +382,16 @@ select {
   color: var(--text-primary);
 }
 
+.room-item.is-invite {
+  border: 1px dashed color-mix(in srgb, var(--warning) 45%, var(--border));
+  background: var(--warning-soft);
+}
+
+.room-item.is-invite .room-item__icon {
+  background: transparent;
+  color: var(--warning);
+}
+
 .room-item.is-active {
   background: var(--accent-soft);
   color: var(--accent-text);

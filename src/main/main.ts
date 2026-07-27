@@ -52,6 +52,7 @@ import {
   type JoinRequest,
   type PeerInfo,
   type RoomInfo,
+  type RoomInvite,
   type RoomType,
   type WireMessage
 } from '../shared/types';
@@ -223,6 +224,8 @@ function getAppState(): AppState {
       .getRooms()
       .filter((room) => roomManager.isLocked(room.roomId))
       .map((room) => room.roomId),
+    invites: listReceivedInvites(),
+    invitedDeviceIds: pendingInviteIds(),
     settings: getSettings()
   };
 }
@@ -345,6 +348,66 @@ type OutboundTransfer = {
 
 const outboundTransfers = new Map<string, OutboundTransfer>();
 const assembler = new ChunkAssembler();
+
+// --- invitations -------------------------------------------------------------
+
+/**
+ * Invitations this device has sent, as roomId -> deviceId -> when.
+ *
+ * An acceptance is only honoured against a live record here, so nobody can put
+ * themselves in an owner's approval queue by claiming to have been invited.
+ * Deliberately in memory: an invitation does not need to survive a restart, and
+ * the owner can always send another.
+ */
+const sentInvites = new Map<string, Map<string, number>>();
+/** Invitations waiting on this device, keyed by room. */
+const receivedInvites = new Map<string, RoomInvite>();
+const INVITE_TTL_MS = 30 * 60 * 1000;
+
+function recordSentInvite(roomId: string, deviceId: string): void {
+  const forRoom = sentInvites.get(roomId) ?? new Map<string, number>();
+  forRoom.set(deviceId, Date.now());
+  sentInvites.set(roomId, forRoom);
+}
+
+function takeSentInvite(roomId: string, deviceId: string): boolean {
+  const forRoom = sentInvites.get(roomId);
+  const sentAt = forRoom?.get(deviceId);
+  if (!forRoom || sentAt === undefined) {
+    return false;
+  }
+
+  forRoom.delete(deviceId);
+  return Date.now() - sentAt <= INVITE_TTL_MS;
+}
+
+function pendingInviteIds(): Record<string, string[]> {
+  const now = Date.now();
+  const out: Record<string, string[]> = {};
+
+  for (const [roomId, forRoom] of sentInvites) {
+    for (const [deviceId, sentAt] of forRoom) {
+      if (now - sentAt > INVITE_TTL_MS) {
+        forRoom.delete(deviceId);
+      }
+    }
+    if (forRoom.size > 0) {
+      out[roomId] = Array.from(forRoom.keys());
+    }
+  }
+
+  return out;
+}
+
+function listReceivedInvites(): RoomInvite[] {
+  const now = Date.now();
+  for (const [roomId, invite] of receivedInvites) {
+    if (now - invite.invitedAt > INVITE_TTL_MS) {
+      receivedInvites.delete(roomId);
+    }
+  }
+  return Array.from(receivedInvites.values()).sort((a, b) => b.invitedAt - a.invitedAt);
+}
 
 function chunkDatagram(transferId: string, index: number, total: number, data: string): WireMessage {
   const message = baseMessage('chunk');
@@ -989,6 +1052,80 @@ function handleChatMessage(message: WireMessage) {
   mainWindow?.webContents.send('chat:message', stored);
 }
 
+/** An invitation addressed to this device. Carries no credentials. */
+function handleRoomInvite(message: WireMessage, host: string) {
+  if (message.targetDeviceId !== deviceId() || !message.advert) {
+    return;
+  }
+
+  const advert = message.advert;
+  if (advert.ownerId !== message.deviceId) {
+    return; // Only a room's owner may invite to it.
+  }
+  if (roomManager.isAcceptedMember(advert.roomId, deviceId())) {
+    return; // Already in.
+  }
+
+  const invite: RoomInvite = {
+    roomId: advert.roomId,
+    roomName: advert.name,
+    ownerId: advert.ownerId,
+    ownerName: advert.ownerName,
+    type: advert.type,
+    encrypted: advert.encrypted,
+    invitedAt: Date.now()
+  };
+
+  receivedInvites.set(advert.roomId, invite);
+  roomManager.recordAdvert(advert, host);
+  mainWindow?.webContents.send('room:invite', invite);
+  sendStateToRenderer();
+  sendStatus(`${advert.ownerName} invited you to ${advert.name}`, 'warning');
+}
+
+/**
+ * The invited device said yes. It still only becomes *pending* — the owner
+ * approves as they would for any other request, which is what the invitation
+ * flow is for.
+ */
+function handleInviteAccept(message: WireMessage) {
+  const room = message.roomId ? roomManager.getRoom(message.roomId) : undefined;
+  if (!room || room.ownerId !== deviceId()) {
+    return;
+  }
+
+  if (!takeSentInvite(room.roomId, message.deviceId)) {
+    log.warn(`Ignored an invitation acceptance from ${message.deviceName}: no invitation outstanding`);
+    return;
+  }
+
+  const updated = roomManager.addPendingMember(room.roomId, message.deviceId, message.deviceName);
+  if (updated) {
+    mainWindow?.webContents.send('room:join-request', {
+      roomId: room.roomId,
+      roomName: room.name,
+      deviceId: message.deviceId,
+      deviceName: message.deviceName,
+      requestedAt: Date.now()
+    } satisfies JoinRequest);
+    sendStatus(`${message.deviceName} accepted your invitation to ${room.name}`, 'warning');
+  }
+
+  sendStateToRenderer();
+}
+
+function handleInviteDecline(message: WireMessage) {
+  const room = message.roomId ? roomManager.getRoom(message.roomId) : undefined;
+  if (!room || room.ownerId !== deviceId()) {
+    return;
+  }
+
+  if (takeSentInvite(room.roomId, message.deviceId)) {
+    sendStatus(`${message.deviceName} declined the invitation to ${room.name}`, 'info');
+    sendStateToRenderer();
+  }
+}
+
 function handleWireMessage(message: WireMessage, host: string) {
   if (message.deviceId === deviceId()) {
     return; // Our own broadcast, looped back.
@@ -1025,6 +1162,12 @@ function handleWireMessage(message: WireMessage, host: string) {
       return handleChunk(message, host);
     case 'chunk-nack':
       return handleChunkNack(message);
+    case 'room-invite':
+      return handleRoomInvite(message, host);
+    case 'room-invite-accept':
+      return handleInviteAccept(message);
+    case 'room-invite-decline':
+      return handleInviteDecline(message);
     default:
       return;
   }
@@ -1503,6 +1646,69 @@ ipcMain.handle('room:qr-code', async (_event, roomId: string): Promise<string | 
     log.warn(`Could not render a QR code: ${(error as Error).message}`);
     return null;
   }
+});
+
+/**
+ * Invite a device seen on the network. The invitation carries only what the
+ * room advert already publishes — never the join code, never the password —
+ * so it is safe even though it travels the same broadcast as everything else.
+ */
+ipcMain.handle('room:invite', (_event, roomId: string, targetDeviceId: string): ActionResult => {
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return fail('Room not found.');
+  }
+  if (room.ownerId !== deviceId()) {
+    return fail('Only the room owner can invite devices.');
+  }
+  if (roomManager.isAcceptedMember(roomId, targetDeviceId)) {
+    return fail('That device is already in this room.');
+  }
+
+  const peer = store.get('peers').find((candidate) => candidate.id === targetDeviceId);
+  if (!peer) {
+    return fail('That device is no longer on the network.');
+  }
+
+  const message = baseMessage('room-invite');
+  message.roomId = roomId;
+  message.targetDeviceId = targetDeviceId;
+  message.advert = roomManager.toAdvert(room);
+
+  // Unicast, not broadcast: the room advert is public anyway, but there is no
+  // reason to tell the whole network who is being invited to what.
+  recordSentInvite(roomId, targetDeviceId);
+  sendUdpMessage(message, peer.host);
+  sendStateToRenderer();
+
+  return ok(`Invited ${peer.name} to ${room.name}.`);
+});
+
+/** Answer an invitation. Accepting only puts you in the owner's queue. */
+ipcMain.handle('room:respond-invite', (_event, roomId: string, accept: boolean): ActionResult => {
+  const invite = receivedInvites.get(roomId);
+  if (!invite) {
+    return fail('That invitation has expired.');
+  }
+
+  receivedInvites.delete(roomId);
+
+  const message = baseMessage(accept ? 'room-invite-accept' : 'room-invite-decline');
+  message.roomId = roomId;
+  const host = getPeerHost(invite.ownerId);
+  fanOut(message, host ? [host] : []);
+
+  sendStateToRenderer();
+
+  if (!accept) {
+    return ok(`Declined the invitation to ${invite.roomName}.`);
+  }
+
+  return ok(
+    invite.encrypted
+      ? `Accepted. ${invite.ownerName} still has to approve you, and you will need the room password to read it.`
+      : `Accepted. Waiting for ${invite.ownerName} to approve you.`
+  );
 });
 
 ipcMain.handle('room:switch', (_event, roomId: string): ActionResult => {

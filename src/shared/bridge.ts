@@ -5,6 +5,7 @@ import type {
   ChatMessage,
   ClipboardHistoryEntry,
   JoinRequest,
+  RoomInvite,
   RoomType
 } from './types';
 
@@ -41,6 +42,10 @@ export type SharedClipboardApi = {
   roomRemoveMember: (roomId: string, memberId: string) => Promise<ActionResult>;
   /** PNG data URL of the room's join code, or null if it has none. */
   roomQrCode: (roomId: string) => Promise<string | null>;
+  /** Owner only. Invites a device seen on the network; sends no credentials. */
+  roomInvite: (roomId: string, targetDeviceId: string) => Promise<ActionResult>;
+  /** Answer an invitation. Accepting only joins the owner's approval queue. */
+  roomRespondInvite: (roomId: string, accept: boolean) => Promise<ActionResult>;
 
   historyGetClipboard: (roomId?: string) => Promise<ClipboardHistoryEntry[]>;
   historyGetChat: (roomId?: string) => Promise<ChatMessage[]>;
@@ -69,5 +74,6 @@ export type SharedClipboardApi = {
   onChatMessage: (handler: (message: ChatMessage) => void) => () => void;
   onHistoryChanged: (handler: (roomId: string) => void) => () => void;
   onJoinRequest: (handler: (request: JoinRequest) => void) => () => void;
+  onInvite: (handler: (invite: RoomInvite) => void) => () => void;
   onJoinResult: (handler: (result: JoinResultEvent) => void) => () => void;
 };

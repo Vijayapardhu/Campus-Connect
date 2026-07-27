@@ -28,6 +28,8 @@ const api: SharedClipboardApi = {
   roomRejectMember: (roomId, memberId) => ipcRenderer.invoke('room:reject-member', roomId, memberId),
   roomRemoveMember: (roomId, memberId) => ipcRenderer.invoke('room:remove-member', roomId, memberId),
   roomQrCode: (roomId) => ipcRenderer.invoke('room:qr-code', roomId),
+  roomInvite: (roomId, targetDeviceId) => ipcRenderer.invoke('room:invite', roomId, targetDeviceId),
+  roomRespondInvite: (roomId, accept) => ipcRenderer.invoke('room:respond-invite', roomId, accept),
 
   historyGetClipboard: (roomId) => ipcRenderer.invoke('history:get-clipboard', roomId),
   historyGetChat: (roomId) => ipcRenderer.invoke('history:get-chat', roomId),
@@ -49,6 +51,7 @@ const api: SharedClipboardApi = {
   onChatMessage: (handler) => subscribe('chat:message', handler),
   onHistoryChanged: (handler) => subscribe('history:changed', handler),
   onJoinRequest: (handler) => subscribe('room:join-request', handler),
+  onInvite: (handler) => subscribe('room:invite', handler),
   onJoinResult: (handler) => subscribe('room:join-result', handler)
 };
 

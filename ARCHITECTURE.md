@@ -241,6 +241,9 @@ broadcast still works). Every datagram is JSON and carries `v: 2`; mismatched ve
 | `chat` | member → room | Chat message |
 | `chunk` | sender → room | One piece of a message too large for a datagram |
 | `chunk-nack` | receiver → sender | The pieces that never arrived, please resend |
+| `room-invite` | owner → one device | An invitation. Unicast, and carries no credentials |
+| `room-invite-accept` | invitee → owner | Accepted; the owner still has to approve |
+| `room-invite-decline` | invitee → owner | Declined |
 
 ### 6.2 The advert is deliberately thin
 
@@ -286,7 +289,38 @@ Device B                                   Device A (owner)
 A public encrypted room is the same flow minus the join code and minus the approval step — the
 owner accepts immediately once the proof verifies.
 
-### 6.4 Chunked transfer
+### 6.4 Invitations
+
+An owner can invite a device it can see on the network rather than passing on a
+code. The invitation carries the room advert and nothing else — **no join code,
+no password** — so it grants nothing by itself, and it is unicast rather than
+broadcast so the network is not told who was invited to what.
+
+```
+Owner                                            Invited device
+  │  sees the device in `peers`
+  ├──── room-invite { advert, targetDeviceId } ────▶│
+  │                                                 │  user accepts or declines
+  │◀─── room-invite-accept ─────────────────────────┤
+  │  invitation outstanding?  ── no ──▶ ignored
+  │  yes → member added as 'pending'
+  │
+  │  owner approves, exactly as for any other request
+  ├──── room-accept ───────────────────────────────▶│
+```
+
+An acceptance is only honoured against a live record of an invitation the owner
+actually sent, so nobody can put themselves in an approval queue by claiming to
+have been invited. Those records are in memory with a 30-minute expiry: an
+invitation does not need to survive a restart, and the owner can always send
+another.
+
+Accepting is not joining. The device becomes *pending* and the owner approves it
+like any other request — which is the point, since the acceptance arrives over
+the same network as everything else. And for an encrypted room the invitee still
+needs the password before it can read anything.
+
+### 6.5 Chunked transfer
 
 A UDP datagram tops out at 64 KB, so anything larger is serialised, split into 8 KB pieces, and sent
 as individual `chunk` messages. `ChunkAssembler` (`src/main/transfer.ts`) rebuilds the original JSON

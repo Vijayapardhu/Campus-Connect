@@ -6,12 +6,13 @@ import type {
   ChatMessage,
   ClipboardHistoryEntry,
   DiscoveredRoom,
+  RoomInvite,
   RoomType
 } from '../shared/types';
 import type { StatusTone } from '../shared/bridge';
 import { Sidebar } from './sidebar';
 import { ChatPanel, ClipboardPanel, MembersPanel } from './panels';
-import { CreateRoomModal, JoinRoomModal, SettingsModal, UnlockRoomModal } from './modals';
+import { CreateRoomModal, InviteModal, JoinRoomModal, SettingsModal, UnlockRoomModal } from './modals';
 import { Badge, Button, ConfirmModal, EmptyState } from './ui';
 import { toFontStack } from './fonts';
 import {
@@ -43,6 +44,7 @@ type ModalState =
   | { kind: 'join'; target: DiscoveredRoom | null }
   | { kind: 'unlock'; roomId: string }
   | { kind: 'settings' }
+  | { kind: 'invite'; invite: RoomInvite }
   | { kind: 'confirm'; title: string; description: string; confirmLabel: string; action: () => void }
   | null;
 
@@ -107,6 +109,10 @@ export default function App() {
       }),
       api.onJoinRequest((request) => {
         push(`${request.deviceName} wants to join ${request.roomName}`, 'warning');
+      }),
+      api.onInvite((invite) => {
+        // Only interrupt if nothing else is open; otherwise it waits in the rail.
+        setModal((current) => current ?? { kind: 'invite', invite });
       }),
       api.onJoinResult((result) => {
         push(result.message, result.ok ? 'success' : 'error');
@@ -247,6 +253,7 @@ export default function App() {
         onCreateRoom={() => setModal({ kind: 'create' })}
         onJoinByCode={() => setModal({ kind: 'join', target: null })}
         onJoinDiscovered={(target) => setModal({ kind: 'join', target })}
+        onOpenInvite={(invite) => setModal({ kind: 'invite', invite })}
         onOpenSettings={() => setModal({ kind: 'settings' })}
       />
 
@@ -465,6 +472,9 @@ export default function App() {
                   push('Join code copied.', 'success');
                 }}
                 onRequestQr={(id) => api.roomQrCode(id)}
+                peers={state.peers}
+                invitedIds={state.invitedDeviceIds[room.roomId] ?? []}
+                onInvite={(targetDeviceId) => run(api.roomInvite(room.roomId, targetDeviceId))}
               />
             )}
           </div>
@@ -509,6 +519,14 @@ export default function App() {
               }
             });
           }}
+        />
+      )}
+
+      {modal?.kind === 'invite' && (
+        <InviteModal
+          invite={modal.invite}
+          onClose={() => setModal(null)}
+          onRespond={(roomId, accept) => run(api.roomRespondInvite(roomId, accept))}
         />
       )}
 

@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export type RoomType = 'public' | 'private';
 export type MemberStatus = 'pending' | 'accepted';
@@ -104,6 +104,20 @@ export type PeerInfo = {
   lastSeen: number;
 };
 
+/**
+ * An invitation this device has received. Carries only what a room advert
+ * already makes public — never the join code and never the password.
+ */
+export type RoomInvite = {
+  roomId: string;
+  roomName: string;
+  ownerId: string;
+  ownerName: string;
+  type: RoomType;
+  encrypted: boolean;
+  invitedAt: number;
+};
+
 export type JoinRequest = {
   roomId: string;
   roomName: string;
@@ -124,7 +138,10 @@ export type WireMessageType =
   | 'clipboard'
   | 'chat'
   | 'chunk'
-  | 'chunk-nack';
+  | 'chunk-nack'
+  | 'room-invite'
+  | 'room-invite-accept'
+  | 'room-invite-decline';
 
 /**
  * Every datagram on the wire. Bodies that belong to an encrypted room travel in
@@ -203,6 +220,10 @@ export type AppState = {
   discovered: DiscoveredRoom[];
   /** Encrypted rooms this device holds no key for — readable only after unlock. */
   lockedRoomIds: string[];
+  /** Invitations waiting on this device. */
+  invites: RoomInvite[];
+  /** roomId -> device ids this device has invited and not yet heard back from. */
+  invitedDeviceIds: Record<string, string[]>;
   settings: AppSettings;
 };
 

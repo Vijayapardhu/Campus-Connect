@@ -51,6 +51,8 @@ type ActionResult = { ok: boolean; message: string };
 | `roomRejectMember(roomId, memberId)` | `ActionResult` | Owner only |
 | `roomRemoveMember(roomId, memberId)` | `ActionResult` | Owner only. Cannot remove the owner |
 | `roomQrCode(roomId)` | `string \| null` | PNG data URL of the join code. Contains the code only, never the password |
+| `roomInvite(roomId, targetDeviceId)` | `ActionResult` | Owner only. Invites a device from `peers`. Sends no credentials, and unicasts |
+| `roomRespondInvite(roomId, accept)` | `ActionResult` | Answer an invitation. Accepting only puts you in the owner's approval queue |
 
 **Joining is asynchronous.** `roomRequestJoin` resolving with `ok: true` means
 the request left this device. Whether it was accepted arrives later on
@@ -99,7 +101,8 @@ React.useEffect(() => {
 | `onStatus` | `{ message, tone }` | Anything worth telling the user. `tone` is `info \| success \| warning \| error` |
 | `onChatMessage` | `ChatMessage` | A message arrives or is sent |
 | `onHistoryChanged` | `roomId: string` | Clipboard history changed — refetch rather than poll |
-| `onJoinRequest` | `JoinRequest` | Someone asks to join a room you own |
+| `onJoinRequest` | `JoinRequest` | Someone asks to join a room you own, or accepts your invitation |
+| `onInvite` | `RoomInvite` | Someone invited this device to a room |
 | `onJoinResult` | `{ roomId, ok, message }` | Your own join request was accepted or refused |
 
 ---

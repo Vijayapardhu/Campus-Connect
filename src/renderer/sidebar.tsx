@@ -1,8 +1,8 @@
 import React from 'react';
-import type { AppState, DiscoveredRoom, RoomInfo } from '../shared/types';
+import type { AppState, DiscoveredRoom, RoomInfo, RoomInvite } from '../shared/types';
 import { Button } from './ui';
 import { initials } from './format';
-import { ClipboardIcon, GlobeIcon, KeyIcon, LockIcon, PlusIcon, SettingsIcon } from './icons';
+import { ClipboardIcon, GlobeIcon, KeyIcon, LockIcon, MailIcon, PlusIcon, SettingsIcon } from './icons';
 
 function roomMeta(room: RoomInfo, locked: boolean): string {
   if (locked) {
@@ -20,6 +20,7 @@ export function Sidebar({
   onCreateRoom,
   onJoinByCode,
   onJoinDiscovered,
+  onOpenInvite,
   onOpenSettings
 }: {
   state: AppState;
@@ -28,6 +29,7 @@ export function Sidebar({
   onCreateRoom: () => void;
   onJoinByCode: () => void;
   onJoinDiscovered: (room: DiscoveredRoom) => void;
+  onOpenInvite: (invite: RoomInvite) => void;
   onOpenSettings: () => void;
 }) {
   return (
@@ -40,6 +42,32 @@ export function Sidebar({
       </div>
 
       <div className="sidebar__scroll">
+        {state.invites.length > 0 && (
+          <section className="sidebar__section">
+            <div className="sidebar__label">
+              <span>Invitations</span>
+              <span className="room-item__badge">{state.invites.length}</span>
+            </div>
+
+            {state.invites.map((invite) => (
+              <button
+                key={invite.roomId}
+                className="room-item is-invite"
+                onClick={() => onOpenInvite(invite)}
+                title={`Respond to ${invite.ownerName}'s invitation`}
+              >
+                <span className="room-item__icon">
+                  <MailIcon size={13} />
+                </span>
+                <span className="room-item__body">
+                  <span className="room-item__name">{invite.roomName}</span>
+                  <span className="room-item__meta">from {invite.ownerName}</span>
+                </span>
+              </button>
+            ))}
+          </section>
+        )}
+
         <section className="sidebar__section">
           <div className="sidebar__label">
             <span>Your rooms</span>

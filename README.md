@@ -43,6 +43,8 @@ on the other. Nothing leaves the network you are already on.
 - **Rooms** decide who sees what. You are only ever sharing into one room at a time
 - **End-to-end encryption** with AES-256-GCM, keyed by a password you choose
 - **Approval-based private rooms** — the owner decides who gets in
+- **Invite devices directly** — see who is on the network and invite them, instead
+  of reading a code out loud
 - **Built-in chat**, per room, with **file transfer** up to 5 MB
 - **Large transfers** — multi-megabyte images are chunked and reassembled, with
   automatic retransmission of anything the network drops

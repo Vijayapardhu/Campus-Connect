@@ -1,5 +1,5 @@
 import React from 'react';
-import type { ChatMessage, ClipboardHistoryEntry, RoomInfo } from '../shared/types';
+import type { ChatMessage, ClipboardHistoryEntry, PeerInfo, RoomInfo } from '../shared/types';
 import { Badge, Button, Callout, EmptyState } from './ui';
 import { clockTime, formatBytes, initials, relativeTime, truncate } from './format';
 import {
@@ -328,10 +328,17 @@ export function MembersPanel({
   onRemove,
   onLeave,
   onCopyCode,
-  onRequestQr
+  onRequestQr,
+  peers,
+  invitedIds,
+  onInvite
 }: {
   room: RoomInfo;
   deviceId: string;
+  peers: PeerInfo[];
+  /** Devices already invited to this room and not yet heard back from. */
+  invitedIds: string[];
+  onInvite: (targetDeviceId: string) => void;
   onApprove: (memberId: string) => void;
   onReject: (memberId: string) => void;
   onRemove: (memberId: string) => void;
@@ -340,6 +347,10 @@ export function MembersPanel({
   onRequestQr: (roomId: string) => Promise<string | null>;
 }) {
   const isOwner = room.ownerId === deviceId;
+  // Anyone on the network who is not already in the room, invited or not.
+  const invitable = peers.filter(
+    (peer) => !room.members.some((member) => member.deviceId === peer.id)
+  );
   const [qr, setQr] = React.useState<string | null>(null);
   const [showQr, setShowQr] = React.useState(false);
 
@@ -395,6 +406,63 @@ export function MembersPanel({
               </div>
             </div>
           ))}
+        </section>
+      )}
+
+      {isOwner && (
+        <section className="card">
+          <div className="card__header">
+            <div style={{ flex: 1 }}>
+              <h3 className="card__title">Devices on this network</h3>
+              <p className="card__desc">
+                Invite someone directly instead of passing on a code. They still have to
+                accept, and you still have to approve them.
+              </p>
+            </div>
+            <Badge>{invitable.length}</Badge>
+          </div>
+
+          {invitable.length === 0 ? (
+            <p className="text-sm text-tertiary" style={{ paddingTop: 'var(--space-2)' }}>
+              No other devices are visible right now. They appear here once the app is
+              running on them and they are on the same network.
+            </p>
+          ) : (
+            invitable.map((peer) => {
+              const invited = invitedIds.includes(peer.id);
+              return (
+                <div key={peer.id} className="member">
+                  <span className="member__avatar">{initials(peer.name)}</span>
+                  <div className="member__body">
+                    <div className="member__name">{peer.name}</div>
+                    <div className="member__meta">
+                      {invited ? 'Invited — waiting for them to accept' : peer.host}
+                    </div>
+                  </div>
+                  <div className="member__actions">
+                    <Button
+                      size="sm"
+                      variant={invited ? 'ghost' : 'default'}
+                      onClick={() => onInvite(peer.id)}
+                      disabled={invited}
+                    >
+                      {invited ? (
+                        <>
+                          <CheckIcon size={14} />
+                          Invited
+                        </>
+                      ) : (
+                        <>
+                          <SendIcon size={14} />
+                          Invite
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </section>
       )}
 

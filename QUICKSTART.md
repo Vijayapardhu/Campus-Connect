@@ -56,6 +56,14 @@ Back on the first machine, the **Members** tab shows the request. Click
 > Not seeing the room? Use **Join a room** instead, or see
 > [Troubleshooting](#troubleshooting).
 
+**Or skip the credentials entirely.** On the first machine, open the **Members**
+tab and look under **Devices on this network** — anything running the app nearby
+is listed. Press **Invite**, and the other machine gets a prompt. Accepting puts
+them in your approval queue, and you approve as usual.
+
+An invitation carries no join code and no password, so it grants nothing on its
+own. For an encrypted room they will still need the password to read anything.
+
 ### 4. Copy and paste
 
 That is it. Copy something on one machine and press `Ctrl+V` on the other.
@@ -77,6 +85,7 @@ and re-copy something from an hour ago.
 | Switch rooms without the mouse | `Ctrl+1` … `Ctrl+9` |
 | Send a file | Chat tab → paperclip. Up to 5 MB |
 | Let someone scan the join code | Members tab → **QR code** |
+| Invite someone without sharing a code | Members tab → **Devices on this network** → **Invite** |
 | Remove someone from a room | Members tab → **Remove** |
 | Leave, or shut a room down | Members tab → **Leave room** / **Close this room** |
 | Make the text bigger, or change the font | Settings → **Text size** and **Font** |
