@@ -1,6 +1,6 @@
 {
   "name": "shared-clipboard-desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Copy on one laptop, paste on another. An encrypted, room-based clipboard and chat for devices on the same network.",
   "main": "dist/main/main.js",
@@ -67,6 +67,7 @@
     "appId": "com.vijayapardhu.sharedclipboard",
     "productName": "Shared Clipboard",
     "artifactName": "SharedClipboard-${version}-${os}-${arch}.${ext}",
+    "copyright": "Copyright © 2026 Vijaya Pardhu",
     "files": [
       "dist/**/*",
       "package.json"
@@ -77,7 +78,12 @@
     },
     "win": {
       "target": "nsis",
-      "signAndEditExecutable": false
+      "icon": "build/icon.ico",
+      "legalTrademarks": "Shared Clipboard",
+      "signAndEditExecutable": true,
+      "signtoolOptions": {
+        "publisherName": "Vijaya Pardhu"
+      }
     },
     "mac": {
       "target": [
@@ -85,10 +91,16 @@
           "target": "dmg",
           "arch": ["universal"]
         }
-      ]
+      ],
+      "icon": "build/icon.png",
+      "category": "public.app-category.productivity"
     },
     "linux": {
-      "target": "AppImage"
+      "target": "AppImage",
+      "icon": "build/icon.png",
+      "category": "Utility",
+      "synopsis": "Encrypted clipboard sharing across your local network",
+      "maintainer": "Vijaya Pardhu"
     },
     "nsis": {
       "oneClick": false,
@@ -96,7 +108,11 @@
       "allowElevation": true,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "shortcutName": "Shared Clipboard",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
     }
   }
 }

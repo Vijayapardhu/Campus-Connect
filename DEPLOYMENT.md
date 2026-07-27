@@ -157,28 +157,83 @@ see devices on this one — update every machine together.
 
 ---
 
-## Code signing
+## Code signing and "Unknown publisher"
 
-The installers are **not signed**, because a certificate costs more than this
-project has.
+The builds are **not code-signed**, so Windows shows:
 
-**What users see:** Windows SmartScreen shows "Windows protected your PC", and
-they have to click *More info → Run anyway*. macOS refuses to open the app until
-the user right-clicks it and chooses *Open*. This is worth saying plainly in the
-release notes rather than letting people assume the download is broken.
+> Microsoft Defender SmartScreen prevented an unrecognized app from starting.
+> **Publisher: Unknown publisher**
 
-**If you have certificates**, electron-builder picks them up from the
-environment — nothing in the config needs to change:
+### Why, and what does not fix it
 
-| Variable | Platform |
-|----------|----------|
-| `CSC_LINK` | Path or base64 of the `.pfx` / `.p12` |
+Windows reads the publisher name **out of the digital signature**. There is no
+manifest entry, registry key, or build setting that populates it. The following
+are all already set and none of them change that dialog:
+
+| Set | Where it does show |
+|-----|--------------------|
+| `CompanyName: Vijaya Pardhu` | Right-click the file → Properties → **Details** |
+| `LegalCopyright`, `ProductName`, `LegalTrademarks` | Same place |
+| The application icon | Explorer, taskbar, Start menu, installer |
+
+So the file is fully attributed once it is on disk — but the pre-execution
+warning needs a certificate. Anyone telling you otherwise is describing a way to
+suppress the warning locally, not a way to earn the publisher name.
+
+### What actually fixes it
+
+| Option | Cost | Effect |
+|--------|------|--------|
+| **OV certificate** | Paid, annual | Publisher name appears. SmartScreen still warns until the binary builds download reputation |
+| **EV certificate** | Paid, annual, higher | Publisher name appears and SmartScreen trusts it immediately |
+| **[SignPath Foundation](https://signpath.org/)** | Free for open source | Same as OV. This project is a plausible fit — worth applying |
+| **[Azure Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/)** | Low monthly | Cheapest paid route, but individuals need verifiable identity history |
+| Build from source | Free | No warning, because the user compiled it themselves |
+
+Signing is wired up already. `.github/workflows/release.yml` reads these from
+repository secrets, so the next release after you add them is signed with no
+workflow change:
+
+| Secret | Platform |
+|--------|----------|
+| `CSC_LINK` | Base64 or path of the `.pfx` / `.p12` |
 | `CSC_KEY_PASSWORD` | Its password |
 | `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | macOS notarisation |
 
-Store them as repository secrets, never in the repo. Note that
-`signAndEditExecutable: false` is currently set for Windows — remove it once you
-actually have a certificate.
+The workflow prints a warning annotation on every unsigned release so it is
+never a silent surprise.
+
+### A self-signed certificate
+
+Useful when you control the machines — a lab, a demo, your own devices. It
+makes the publisher name appear **only on machines that trust your certificate**,
+so it is not a distribution solution, but it removes the warning where it
+matters to you.
+
+```powershell
+# Create it once, on the machine that will do the signing
+$cert = New-SelfSignedCertificate -Type CodeSigningCert `
+  -Subject "CN=Vijaya Pardhu" -CertStoreLocation Cert:\CurrentUser\My
+$pw = ConvertTo-SecureString -String "choose-a-password" -Force -AsPlainText
+Export-PfxCertificate -Cert $cert -FilePath signing.pfx -Password $pw
+
+# Build with it
+$env:CSC_LINK = "signing.pfx"; $env:CSC_KEY_PASSWORD = "choose-a-password"
+npm run package:win
+```
+
+Then install `signing.pfx` into **Trusted Root Certification Authorities** on
+each machine that should trust it. Do not ship this certificate or commit it.
+
+### Icons
+
+`build/icon.ico` is a 7-resolution icon (16 → 256) and `build/icon.png` is
+512×512 for macOS and Linux. Regenerate them from the vector rather than
+resizing a PNG by hand — a 16px icon downscaled from 1024 turns to mush.
+
+> `signAndEditExecutable` must stay `true`. Setting it to `false` skips rcedit,
+> which is what writes the icon *and* the version resource into the exe — that
+> is why earlier builds had neither.
 
 ---
 

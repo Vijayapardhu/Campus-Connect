@@ -77,8 +77,27 @@ jobs:
       # --publish never, and no GH_TOKEN: otherwise electron-builder uploads its
       # own copy of every artifact on a tag, and the release ends up with each
       # installer listed twice alongside blockmaps and latest*.yml.
+      #
+      # The signing variables are read straight from repository secrets. While
+      # they are unset the build is simply unsigned; add the secrets and the
+      # very next release is signed with no workflow change.
       - name: Build installer
         run: ${{ matrix.command }} -- --publish never
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Report signing status
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.CSC_LINK }}" ]; then
+            echo "Signed with the configured certificate."
+          else
+            echo "::warning::Unsigned build. Windows will show SmartScreen and macOS Gatekeeper will block first launch. Add CSC_LINK and CSC_KEY_PASSWORD to sign."
+          fi
 
       - uses: actions/upload-artifact@v4
         with:

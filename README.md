@@ -144,10 +144,33 @@ Grab the latest build for your platform from the
 | macOS (Intel and Apple silicon) | `SharedClipboard-x.y.z-mac-universal.dmg` |
 | Ubuntu / Linux | `SharedClipboard-x.y.z-linux-x86_64.AppImage` |
 
-> The installers are not code-signed. Windows SmartScreen will warn you — choose
-> **More info → Run anyway**. On macOS, right-click the app and choose **Open**
-> the first time. On Ubuntu, `chmod +x` the AppImage before running it. Or build
-> it yourself from source below.
+### "Unknown publisher" — is it safe?
+
+Windows will show **"Microsoft Defender SmartScreen prevented an unrecognized
+app from starting — Publisher: Unknown publisher"**, and macOS will refuse the
+first launch. This is expected and it is not a claim that anything is wrong with
+the file.
+
+Windows reads the publisher name out of a **code-signing certificate**. This
+project does not have one yet, so the field is blank — that is all the warning
+means. The file itself is fully attributed: right-click it, choose
+**Properties → Details**, and it says `Vijaya Pardhu`.
+
+To run it anyway:
+
+| Platform | What to do |
+|----------|-----------|
+| Windows | **More info → Run anyway** |
+| macOS | Right-click the app → **Open** → **Open** |
+| Ubuntu | `chmod +x SharedClipboard-*.AppImage` then run it |
+
+If you would rather not take that on trust, **[build it from
+source](#from-source)** — it takes a minute, and then the binary is one you
+compiled yourself. That is the honest answer, and it is why the whole thing is
+readable in an afternoon.
+
+Signing is already wired into the release workflow, so this goes away as soon as
+a certificate is in place.
 
 ### From source
 

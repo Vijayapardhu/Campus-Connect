@@ -1032,12 +1032,22 @@ function stopUdpService() {
   udpSocket = null;
 }
 
+/**
+ * The tray mark, matching the app icon but simplified: at 16px the content
+ * lines and the drop shadow turn to mush, so only the clipboard silhouette and
+ * the tick survive.
+ */
 function createTrayIcon() {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+<rect width="64" height="64" rx="15" fill="#4f46e5"/>
+<rect x="19" y="18" width="26" height="31" rx="5" fill="#ffffff"/>
+<rect x="26" y="14" width="12" height="8" rx="4" fill="#ffffff"/>
+<path d="M25 34.5 30 39.5 41 28" fill="none" stroke="#4f46e5" stroke-width="5"
+  stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`;
+
   const icon = nativeImage.createFromDataURL(
-    'data:image/svg+xml;base64,' +
-      Buffer.from(
-        `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#111827"/><path d="M20 18h24a4 4 0 0 1 4 4v10H16V22a4 4 0 0 1 4-4Zm-4 18h32v8a4 4 0 0 1-4 4H20a4 4 0 0 1-4-4v-8Zm8-8h16v4H24v-4Z" fill="#818cf8"/></svg>`
-      ).toString('base64')
+    'data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64')
   );
   return icon.resize({ width: 16, height: 16 });
 }
