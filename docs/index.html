@@ -150,7 +150,7 @@ section[id],[id]{scroll-margin-top:86px}
   transition:transform .3s var(--ease);
 }
 .brand:hover .brand__mark{transform:rotate(-8deg) scale(1.06)}
-.brand span{color:var(--text)}
+.brand span{color:var(--text);white-space:nowrap}
 .topnav__links{display:flex;align-items:center;gap:var(--space-5);margin-left:auto}
 .topnav__links a:not(.btn){
   position:relative;color:var(--text-2);font-size:14px;font-weight:500;
@@ -226,12 +226,16 @@ section[id],[id]{scroll-margin-top:86px}
 @keyframes underline{to{transform:scaleX(1)}}
 .hero .lede{font-size:clamp(17px,2vw,20px);margin-top:var(--space-5)}
 .pill{
-  display:inline-flex;align-items:center;gap:var(--space-2);
-  height:30px;padding:0 var(--space-4);margin-bottom:var(--space-5);
-  border-radius:var(--radius-full);border:1px solid var(--border);
-  background:var(--bg-elevated);font-size:13px;font-weight:550;color:var(--text-2);
-  box-shadow:var(--shadow-sm);
+  /* Height is not fixed: on a narrow screen the text wraps, and a fixed
+     height would let it spill outside the rounded shape. */
+  display:inline-flex;align-items:center;justify-content:center;flex-wrap:wrap;
+  gap:var(--space-2);max-width:100%;
+  padding:5px var(--space-4);margin-bottom:var(--space-5);
+  border-radius:var(--radius-xl);border:1px solid var(--border);
+  background:var(--bg-elevated);font-size:13px;font-weight:550;line-height:1.5;
+  color:var(--text-2);box-shadow:var(--shadow-sm);
 }
+@media (min-width:520px){.pill{border-radius:var(--radius-full);flex-wrap:nowrap;white-space:nowrap}}
 .pill b{color:var(--text)}
 .pill__dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 3px var(--success-soft)}
 .hero__note{margin-top:var(--space-4);font-size:13.5px;color:var(--text-3)}
@@ -518,7 +522,7 @@ section[id],[id]{scroll-margin-top:86px}
 
 /* ========================================================== author ===== */
 .author{
-  display:grid;grid-template-columns:auto minmax(0,1fr);gap:var(--space-6);align-items:center;
+  display:grid;grid-template-columns:auto minmax(0,1fr);gap:var(--space-6);align-items:start;
   padding:var(--space-8);border-radius:var(--radius-2xl);
   border:1px solid var(--border);background:var(--bg-elevated);box-shadow:var(--shadow-md);
 }
