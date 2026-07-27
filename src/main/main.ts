@@ -91,8 +91,16 @@ const CHUNK_CHARS = 8000;
  * ever reached the wire; at 8 MB the same transfer loses none.
  */
 const SOCKET_BUFFER_BYTES = 8 * 1024 * 1024;
-/** Refuse to even start a transfer beyond this. */
-const MAX_TRANSFER_BYTES = 16 * 1024 * 1024;
+/**
+ * Refuse to even start a transfer beyond this — measured, not chosen.
+ *
+ * A file is base64-encoded, sealed, base64-encoded again and JSON-stringified,
+ * so it becomes roughly 1.78x its own size as a single string. V8 will not
+ * create a string past ~512 MB, and JSON.parse gives out well before that: a
+ * 150 MB file killed an 8 GB heap outright. 50 MB peaks at ~560 MB RSS, which
+ * is the most a background utility has any business using.
+ */
+const MAX_TRANSFER_BYTES = 128 * 1024 * 1024;
 /** How long the sender keeps chunks around to answer retransmit requests. */
 const OUTBOUND_TRANSFER_TTL_MS = 20000;
 /** Quiet period before the receiver asks for the pieces it is missing. */
@@ -102,12 +110,16 @@ const TRANSFER_SWEEP_MS = 300;
 const CHUNK_BATCH = 8;
 const CHUNK_PACING_MS = 2;
 /** Cap on how many gaps one retransmit request advertises. */
-const MAX_NACK_INDICES = 256;
+const MAX_NACK_INDICES = 512;
 /**
- * Files are base64-encoded and then sealed, which inflates them by roughly
- * 1.9x in total, so this sits well below MAX_TRANSFER_BYTES.
+ * Files inflate to roughly 1.78x their size by the time they are on the wire,
+ * so a 50 MB file is ~89 MB of datagrams and ~11,700 chunks.
+ *
+ * Anything much larger cannot work through this path at all — see the note on
+ * MAX_TRANSFER_BYTES. Streaming the file from disk instead of holding it in
+ * memory is what would lift this properly.
  */
-const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
 /** Enough to make common files preview and open correctly on the far side. */
 const MIME_BY_EXTENSION: Record<string, string> = {

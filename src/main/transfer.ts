@@ -41,11 +41,16 @@ export type AssemblerLimits = {
 export const DEFAULT_LIMITS: AssemblerLimits = {
   // Comfortably above the sender's own ceiling, so a legitimate transfer is
   // never refused at the far end for being a few bytes over.
-  maxMessageBytes: 20 * 1024 * 1024,
-  maxTotalBytes: 64 * 1024 * 1024,
-  maxConcurrentTransfers: 24,
-  // 16 MB at 8 KB per chunk needs ~2050, so this leaves comfortable headroom.
-  maxChunks: 4096,
+  maxMessageBytes: 160 * 1024 * 1024,
+  /*
+   * Every in-flight transfer is buffered in memory, so this is also the ceiling
+   * on what a hostile sender can make this process hold. Two concurrent
+   * maximum-size transfers, and no more.
+   */
+  maxTotalBytes: 320 * 1024 * 1024,
+  maxConcurrentTransfers: 8,
+  // A 50 MB file is ~11,700 chunks at 8 KB; this allows about four times that.
+  maxChunks: 49152,
   ttlMs: 20000
 };
 

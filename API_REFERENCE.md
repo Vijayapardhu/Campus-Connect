@@ -76,7 +76,7 @@ lifted to the top.
 | Call | Returns | Notes |
 |------|---------|-------|
 | `chatSend(type, content, roomId, dataUrl?, fileName?)` | `ActionResult` | Fails if you are not an accepted member |
-| `chatSendFile(roomId)` | `ActionResult` | Opens a native picker. 5 MB cap. Images are sent as `image` so they preview inline |
+| `chatSendFile(roomId)` | `ActionResult` | Opens a native picker. 50 MB cap. Images are sent as `image` so they preview inline |
 | `chatSaveFile(messageId)` | `ActionResult` | Opens a native save dialog. Never opens the file |
 | `readClipboard()` | `string` | This machine's clipboard text |
 | `clipboardApply(entryId)` | `ActionResult` | Puts a history entry back on this machine's clipboard |
@@ -206,9 +206,9 @@ before decryption so the GCM auth tag still covers the whole payload.
 |-------|-------|
 | Single datagram | 60 KB |
 | Chunk payload | 8 KB |
-| One transfer | 16 MB (sender) / 20 MB (receiver) |
-| All in-flight transfers | 64 MB, 24 concurrent |
-| Chat file | 5 MB |
+| One transfer | 128 MB (sender) / 160 MB (receiver) |
+| All in-flight transfers | 320 MB, 8 concurrent |
+| Chat file | 50 MB |
 
 Lost chunks are requested again with `chunk-nack` after 500 ms of silence; a
 transfer with no progress for 20 s is abandoned and the user is told.

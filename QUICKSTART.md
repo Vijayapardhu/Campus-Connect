@@ -83,7 +83,7 @@ and re-copy something from an hour ago.
 | Find something in a long history | `Ctrl+F`, or the search box in the Clipboard tab |
 | Keep an item forever | Hover it → pin. Pinned items are never cleared out by newer ones |
 | Switch rooms without the mouse | `Ctrl+1` … `Ctrl+9` |
-| Send a file | Chat tab → paperclip. Up to 5 MB |
+| Send a file | Chat tab → paperclip. Up to 50 MB |
 | Let someone scan the join code | Members tab → **QR code** |
 | Invite someone without sharing a code | Members tab → **Devices on this network** → **Invite** |
 | Remove someone from a room | Members tab → **Remove** |

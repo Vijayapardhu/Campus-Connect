@@ -45,7 +45,7 @@ on the other. Nothing leaves the network you are already on.
 - **Approval-based private rooms** — the owner decides who gets in
 - **Invite devices directly** — see who is on the network and invite them, instead
   of reading a code out loud
-- **Built-in chat**, per room, with **file transfer** up to 5 MB
+- **Built-in chat**, per room, with **file transfer** up to 50 MB
 - **Large transfers** — multi-megabyte images are chunked and reassembled, with
   automatic retransmission of anything the network drops
 - **Clipboard history** that survives restarts, with search, pinning, and one-click copy back
@@ -352,7 +352,7 @@ $ npm test
 Shipped:
 
 - [x] **Chunked transfer** so large screenshots sync, with NACK-based retransmission
-- [x] **File transfer** in chat, up to 5 MB
+- [x] **File transfer** in chat, up to 50 MB
 - [x] **QR codes** for join codes so phones can scan them
 - [x] **Pinned clipboard items** that survive the history cap
 - [x] **Search** across clipboard history
@@ -440,13 +440,25 @@ properly from the tray icon.
 <details>
 <summary><strong>How big can a shared item be?</strong></summary>
 
-Up to 16 MB for clipboard items and 5 MB for chat files. A UDP datagram only
-holds 64 KB, so anything larger is split into 8 KB chunks and reassembled on the
-far side, with anything the network drops requested again automatically. An
-8.9 MB payload takes under two seconds on a quiet network.
+**50 MB for chat files, 128 MB for clipboard items.** A UDP datagram only holds
+64 KB, so anything larger is split into 8 KB chunks and reassembled on the far
+side, with anything the network drops requested again automatically. A 50 MB
+file is about 11,700 chunks and takes roughly 18 seconds on a quiet network.
 
-Beyond 16 MB the item stays in local history and the app says so rather than
+Beyond the limit the item stays in local history and the app says so rather than
 failing silently.
+
+Those numbers are measured, not chosen. A file is base64-encoded, encrypted,
+base64-encoded again and JSON-stringified, so it becomes about 1.78x its own
+size as a single string in memory. V8 refuses to build a string past ~512 MB,
+and it gives out well before that — a 150 MB file exhausts an 8 GB heap. A
+50 MB transfer peaks at around 560 MB of memory, which is already as much as a
+background utility should be asking for.
+
+Lifting this much higher means streaming the file from disk and encrypting it
+chunk by chunk, rather than holding the whole thing in memory. That is
+[a tracked issue](https://github.com/Vijayapardhu/Clipboard/issues), not a
+setting.
 </details>
 
 <details>
