@@ -74,10 +74,11 @@ jobs:
 
       - run: npm ci
 
+      # --publish never, and no GH_TOKEN: otherwise electron-builder uploads its
+      # own copy of every artifact on a tag, and the release ends up with each
+      # installer listed twice alongside blockmaps and latest*.yml.
       - name: Build installer
-        run: ${{ matrix.command }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ${{ matrix.command }} -- --publish never
 
       - uses: actions/upload-artifact@v4
         with:

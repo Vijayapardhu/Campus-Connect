@@ -1,6 +1,6 @@
 {
   "name": "shared-clipboard-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Copy on one laptop, paste on another. An encrypted, room-based clipboard and chat for devices on the same network.",
   "main": "dist/main/main.js",
@@ -66,7 +66,7 @@
   "build": {
     "appId": "com.vijayapardhu.sharedclipboard",
     "productName": "Shared Clipboard",
-    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "artifactName": "SharedClipboard-${version}-${os}-${arch}.${ext}",
     "files": [
       "dist/**/*",
       "package.json"
@@ -80,7 +80,12 @@
       "signAndEditExecutable": false
     },
     "mac": {
-      "target": "dmg"
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["universal"]
+        }
+      ]
     },
     "linux": {
       "target": "AppImage"
