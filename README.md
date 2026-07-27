@@ -197,7 +197,14 @@ selected.
 |-----------|-------------|-----------|
 | **Public**, no password | Anyone on the network, instantly | No — plain text |
 | **Public**, with password | Anyone who knows the password | AES-256-GCM |
-| **Private** | Join code **and** password **and** owner approval | AES-256-GCM |
+| **Private** | Join code **or** password, then owner approval | AES-256-GCM |
+
+You do not need both credentials for a private room — whichever one you were
+given works. That matters when the code is awkward to pass on.
+
+One caveat worth knowing: the password is what decrypts the room. Joining with
+only the join code gets you in, but the room shows as **Locked** until you enter
+the password. The app tells you this before you submit.
 
 For anything you would not shout across the room, use a private room.
 

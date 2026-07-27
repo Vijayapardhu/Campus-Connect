@@ -149,16 +149,29 @@ export function JoinRoomModal({
   const [error, setError] = React.useState('');
   const [busy, setBusy] = React.useState(false);
 
-  const needsCode = target ? target.type === 'private' : true;
-  const needsPassword = target ? target.encrypted : true;
+  // Either credential admits you, so neither field is mandatory on its own.
+  const showCode = target ? target.type === 'private' : true;
+  const showPassword = target ? target.encrypted : true;
+  const openRoom = Boolean(target) && !showCode && !showPassword;
+
+  const hasCode = code.trim().length > 0;
+  const hasPassword = password.length > 0;
+  // A join code alone admits you, but the password is the decryption key.
+  const willBeLocked = showPassword && hasCode && !hasPassword;
 
   async function submit() {
-    if (needsCode && code.trim().length < 6) {
-      setError('Enter the 6-character join code.');
+    if (!openRoom && !hasCode && !hasPassword) {
+      setError(
+        showCode && showPassword
+          ? 'Enter the join code, or the room password. Either one works.'
+          : showCode
+            ? 'Enter the join code.'
+            : 'Enter the room password.'
+      );
       return;
     }
-    if (needsPassword && !password) {
-      setError('This room needs its password.');
+    if (hasCode && code.trim().length < 6) {
+      setError('A join code is six characters.');
       return;
     }
 
@@ -174,13 +187,13 @@ export function JoinRoomModal({
 
   return (
     <Modal
-      title={target ? `Join ${target.name}` : 'Join with a code'}
+      title={target ? `Join ${target.name}` : 'Join a room'}
       description={
         target
           ? target.type === 'private'
             ? `${target.ownerName} has to approve your request.`
             : `Hosted by ${target.ownerName}.`
-          : 'Ask the room owner for the code, and the password if the room is encrypted.'
+          : 'A join code or a room password will do — you do not need both.'
       }
       onClose={onClose}
       footer={
@@ -192,8 +205,14 @@ export function JoinRoomModal({
         </>
       }
     >
-      {needsCode && (
-        <Field label="Join code" hint="Six characters, letters and numbers.">
+      {showCode && showPassword && (
+        <p className="field__hint" style={{ marginBottom: 'var(--space-4)' }}>
+          Give either one — whichever you were sent.
+        </p>
+      )}
+
+      {showCode && (
+        <Field label={showPassword ? 'Join code' : 'Join code'} hint="Six characters, letters and numbers.">
           <input
             className="input input--code"
             value={code}
@@ -210,11 +229,12 @@ export function JoinRoomModal({
         </Field>
       )}
 
-      {needsPassword && (
+      {showCode && showPassword && <div className="or-divider">or</div>}
+
+      {showPassword && (
         <Field
           label="Room password"
           hint="Checked by the room owner without ever leaving this device."
-          error={error}
         >
           <input
             className="input"
@@ -231,11 +251,25 @@ export function JoinRoomModal({
         </Field>
       )}
 
-      {!needsPassword && !needsCode && (
-        <p className="field__hint">This is an open room. Nothing else is needed.</p>
+      {openRoom && <p className="field__hint">This is an open room. Nothing else is needed.</p>}
+
+      {willBeLocked && (
+        <div className="callout callout--warning" style={{ marginTop: 'var(--space-4)' }}>
+          <span className="callout__icon">
+            <LockIcon size={17} />
+          </span>
+          <div className="callout__body">
+            <div className="callout__title">You will join, but the room stays locked</div>
+            <div className="callout__text">
+              The password is what decrypts this room, so the code alone gets you in
+              without letting you read it. You can enter the password any time
+              afterwards to unlock it.
+            </div>
+          </div>
+        </div>
       )}
 
-      {error && !needsPassword ? <p className="field__error">{error}</p> : null}
+      {error ? <p className="field__error" style={{ marginTop: 'var(--space-3)' }}>{error}</p> : null}
     </Modal>
   );
 }

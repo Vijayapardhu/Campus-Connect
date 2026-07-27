@@ -114,7 +114,7 @@ export function Sidebar({
             </Button>
             <Button block variant="ghost" onClick={onJoinByCode}>
               <KeyIcon size={15} />
-              Join with a code
+              Join a room
             </Button>
           </div>
         </section>

@@ -31,7 +31,7 @@ selected.
    |------|-------------|-----------|
    | **Public**, no password | Anyone on the network, instantly | ❌ Plain text |
    | **Public**, with password | Anyone with the password | ✅ AES-256-GCM |
-   | **Private** | Join code **+** password **+** your approval | ✅ AES-256-GCM |
+   | **Private** | Join code **or** password, then your approval | ✅ AES-256-GCM |
 
 4. For a private room, set a password (at least 4 characters). This becomes the
    encryption key, so pick something you would not mind typing on the other
@@ -42,13 +42,18 @@ Open the **Members** tab to see the six-character **join code**.
 
 ### 3. Join from the second machine
 
-The room appears in the left rail under **On this network**. Click it, enter the
-join code and the password, and press **Request access**.
+The room appears in the left rail under **On this network**. Click it, then give
+**either** the join code **or** the room password — whichever you were sent —
+and press **Request access**.
+
+If you supply only the join code, you will be admitted but the room stays
+**Locked** until you enter the password, because the password is what decrypts
+it. The dialog warns you before you submit.
 
 Back on the first machine, the **Members** tab shows the request. Click
 **Approve**.
 
-> Not seeing the room? Use **Join with a code** instead, or see
+> Not seeing the room? Use **Join a room** instead, or see
 > [Troubleshooting](#troubleshooting).
 
 ### 4. Copy and paste
@@ -132,10 +137,14 @@ Section 5 covers the security model the rest of the code relies on.
 ### The manual test that catches most regressions
 
 1. Create a private room on device A with a password. Note the join code.
-2. On device B, enter the code with the **wrong** password. It must be rejected.
-3. Enter the correct password. A shows a pending request; approve it.
+2. On device B, enter a **wrong code and a wrong password**. It must be rejected.
+3. Enter **only the correct password**, leaving the code blank. A shows a pending
+   request; approve it. B can read the room.
 4. Copy text on A, paste on B. Copy an image on B, paste on A.
-5. Remove B from the room on A. Copy again on A — B must not receive it.
+5. From another device, join with **only the correct join code**. It is admitted,
+   but the room shows as **Locked** until the password is entered — the code
+   grants membership, the password grants readability.
+6. Remove a device from the room on A. Copy again on A — it must not receive it.
 
 ---
 

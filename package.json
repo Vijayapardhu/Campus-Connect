@@ -1,6 +1,6 @@
 {
   "name": "shared-clipboard-desktop",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Copy on one laptop, paste on another. An encrypted, room-based clipboard and chat for devices on the same network.",
   "main": "dist/main/main.js",

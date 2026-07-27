@@ -42,8 +42,8 @@ type ActionResult = { ok: boolean; message: string };
 | Call | Returns | Notes |
 |------|---------|-------|
 | `roomCreate(name, type, password)` | `ActionResult` | `type` is `'public' \| 'private'`. Private rooms **require** a password of 4+ characters |
-| `roomRequestJoin(roomId, password, joinCode)` | `ActionResult` | Sends the request. Success means *sent*, not *joined* — the outcome arrives via `onJoinResult` |
-| `roomJoinByCode(joinCode, password)` | `ActionResult` | For a room not visible in discovery. Asks every advertised room's owner; the wrong ones reject it |
+| `roomRequestJoin(roomId, password, joinCode)` | `ActionResult` | Either credential is enough; pass `''` for the one you do not have. Success means *sent*, not *joined* — the outcome arrives via `onJoinResult` |
+| `roomJoinByCode(joinCode, password)` | `ActionResult` | Join with a code, a password, or both. Asks every advertised room's owner; the wrong ones reject it. This is what lets someone join on the password alone without knowing which room it belongs to |
 | `roomUnlock(roomId, password)` | `ActionResult` | Re-derives the key for an encrypted room this device has no key for |
 | `roomSwitch(roomId)` | `ActionResult` | Changes which room this device shares into |
 | `roomLeave(roomId)` | `ActionResult` | The owner closing a room removes it for everyone |
@@ -108,7 +108,7 @@ React.useEffect(() => {
 
 UDP on port **37777**. Broadcast, plus unicast to known member hosts so a
 network that blocks broadcast still works. Every datagram is JSON carrying
-`v: 2` — mismatched versions are ignored, which stops a half-upgraded pair of
+`v: 3` — mismatched versions are ignored, which stops a half-upgraded pair of
 machines corrupting each other.
 
 ### Message types
@@ -118,7 +118,7 @@ machines corrupting each other.
 | `announce` | broadcast, every 3s | Presence, so peers learn each other's host and port |
 | `room-advert` | owner → broadcast, every 3s | Public room metadata for discovery |
 | `room-request` | joiner → owner | Ask to join; carries the join code and/or proof |
-| `room-accept` | owner → joiner | Admitted; carries the full roster |
+| `room-accept` | owner → joiner | Admitted. Carries the roster sealed, plus a cut-down plaintext copy so a device admitted on the join code alone can read it |
 | `room-reject` | owner → joiner | Refused; carries a human-readable reason |
 | `room-roster` | owner → members | Authoritative roster after any change |
 | `room-leave` | member → owner | Voluntary departure |
@@ -160,13 +160,13 @@ cannot appear anywhere in a serialised advert; keep it that way.
 ```
 Device B                                   Device A (owner)
    │  sees room-advert (name, keySalt, encrypted)
-   │  user enters join code + password
+   │  user enters the join code, the password, or both
    │  key = scrypt(password, keySalt)
    │  proof = seal(key, "shared-clipboard:proof:<roomId>")
    │
-   ├──── room-request { joinCode, proof } ───────▶│
-   │                                              │  joinCode matches?  ── no ──▶ room-reject
-   │                                              │  proof opens?       ── no ──▶ room-reject
+   ├──── room-request { joinCode?, proof? } ─────▶│
+   │                                              │  joinCode matches OR proof opens?
+   │                                              │      neither ──────────────▶ room-reject
    │                                              │  yes → member added as 'pending'
    │                                              │
    │                                              │  owner clicks Approve

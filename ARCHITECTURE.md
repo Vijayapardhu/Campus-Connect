@@ -15,7 +15,7 @@ without the password cannot read it even though they receive the same broadcast 
 | Area | Capability |
 |------|-----------|
 | Clipboard | Real-time text and image sync, scoped to one room at a time |
-| Rooms | Public (open) and private (join code + password + owner approval) |
+| Rooms | Public (open) and private (join code **or** password, plus owner approval) |
 | Security | AES-256-GCM per room, key derived from the password with scrypt |
 | Membership | Owner-authoritative roster, approval queue, remove member, leave/close room |
 | History | Per-room clipboard history and chat, persisted across restarts |
@@ -119,8 +119,21 @@ something if these four rules hold.
 | Type | Password | Discoverable | To join | Traffic |
 |------|----------|--------------|---------|---------|
 | Public, no password | — | Yes | One click | Plain text |
-| Public, with password | Optional | Yes | Password | AES-256-GCM |
-| Private | **Required** (≥ 4 chars) | Yes (name only) | Join code + password + **owner approval** | AES-256-GCM |
+| Public, with password | Optional | Yes | **Password only** | AES-256-GCM |
+| Private | **Required** (≥ 4 chars) | Yes (name only) | Join code **or** password, plus **owner approval** | AES-256-GCM |
+
+**Either credential admits you to a private room.** The join code cannot always
+be passed along — read out over a call, or typed on a machine you are not
+sitting at — so knowing the password is sufficient on its own, and vice versa.
+
+They are not equivalent in what they unlock. The password *is* the room key, so
+a device admitted on the join code alone is a member of a room it cannot yet
+read; `isLocked` is true and the interface shows the unlock screen until the
+password is supplied. The join dialog says so before you submit.
+
+A **public** encrypted room admits on the password alone and never on the code:
+public rooms auto-accept, so the password is the only gate there is. A private
+room can afford to be looser because owner approval is still in the way.
 
 Private rooms require a password by design: "approval required" is meaningless if anyone who
 receives the broadcast can decrypt it anyway.
@@ -251,13 +264,14 @@ Device B                                   Device A (owner)
    │                                              │
    │  sees room-advert (name, keySalt, encrypted) │
    │                                              │
-   │  user enters join code + password            │
+   │  user enters the join code, the password,    │
+   │  or both                                     │
    │  key = scrypt(password, keySalt)             │
    │  proof = seal(key, "proof:<roomId>")         │
    │                                              │
-   ├──── room-request { joinCode, proof } ───────▶│
-   │                                              │  joinCode matches?  ─── no ──▶ room-reject
-   │                                              │  proof opens?       ─── no ──▶ room-reject
+   ├──── room-request { joinCode?, proof? } ─────▶│
+   │                                              │  joinCode matches OR proof opens?
+   │                                              │      neither ────────▶ room-reject
    │                                              │  yes → add member as 'pending'
    │                                              │        notify the UI
    │                                              │

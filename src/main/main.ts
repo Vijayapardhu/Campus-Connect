@@ -573,6 +573,41 @@ function readRoomBody(message: WireMessage, room: RoomInfo): Partial<WireMessage
   return openJson<Partial<WireMessage>>(key, message.sealed);
 }
 
+/**
+ * The acceptance a new member receives.
+ *
+ * Key holders get the full roster, sealed. A device admitted on the join code
+ * alone has no key yet, so it also carries a cut-down roster in the clear —
+ * the owner plus the joiner, with the join code stripped. That exposes nothing
+ * the room advert had not already made public, and the full roster reaches them
+ * over `room-roster` once they unlock.
+ */
+function buildAcceptMessage(room: RoomInfo, targetDeviceId: string): WireMessage {
+  const accept = baseMessage('room-accept');
+  accept.roomId = room.roomId;
+  accept.targetDeviceId = targetDeviceId;
+
+  if (!room.encrypted) {
+    accept.room = room;
+    return accept;
+  }
+
+  const key = roomManager.getKey(room.roomId);
+  if (key) {
+    accept.sealed = sealJson(key, { room });
+  }
+
+  const { joinCode: _withheld, ...publicFields } = room;
+  accept.room = {
+    ...publicFields,
+    members: room.members.filter(
+      (member) => member.deviceId === room.ownerId || member.deviceId === targetDeviceId
+    )
+  };
+
+  return accept;
+}
+
 function advertiseOwnedRooms() {
   for (const room of roomManager.getRooms()) {
     if (room.ownerId !== deviceId()) {
@@ -699,27 +734,55 @@ function handleRoomRequest(message: WireMessage) {
     log.info(`Rejected ${message.deviceName} for ${room.name}: ${reason}`);
   };
 
-  if (room.type === 'private' && normalizeJoinCode(message.joinCode ?? '') !== room.joinCode) {
-    reject('That join code is not valid for this room.');
+  /*
+   * Either credential admits a device. The join code cannot always be passed
+   * along — read out over a call, typed on a machine you are not sitting at —
+   * so knowing the password is enough on its own, and vice versa.
+   *
+   * They are not equivalent in what they unlock, though. The password is the
+   * room's encryption key, so a device admitted on the join code alone is a
+   * member of a room it cannot yet read; the interface shows it as locked
+   * until the password is supplied.
+   */
+  const supplied = normalizeJoinCode(message.joinCode ?? '');
+  const codeMatches = supplied.length > 0 && supplied === room.joinCode;
+
+  let passwordMatches = false;
+  if (room.encrypted) {
+    const key = roomManager.getKey(room.roomId);
+    passwordMatches = Boolean(key && verifyProof(key, room.roomId, message.proof));
+  }
+
+  if (room.type === 'private' && !codeMatches && !passwordMatches) {
+    reject(
+      room.encrypted
+        ? 'That join code and password did not match this room.'
+        : 'That join code is not valid for this room.'
+    );
     return;
   }
 
-  if (room.encrypted) {
-    const key = roomManager.getKey(room.roomId);
-    if (!key || !verifyProof(key, room.roomId, message.proof)) {
-      reject('Incorrect room password.');
-      return;
-    }
+  /*
+   * A public room admits on the password alone, never on the code. Public
+   * rooms auto-accept, so the password is the only gate there is; a private
+   * room can afford to be looser because the owner still has to approve.
+   */
+  if (room.type === 'public' && room.encrypted && !passwordMatches) {
+    reject('Incorrect room password.');
+    return;
+  }
+
+  // An existing member re-presenting its credentials is asking for the roster
+  // again — which is what a device does after unlocking a room it joined with
+  // only the join code, since its first copy was the cut-down one.
+  if (roomManager.isAcceptedMember(room.roomId, message.deviceId)) {
+    fanOut(buildAcceptMessage(room, message.deviceId), [message.host]);
+    return;
   }
 
   if (room.type === 'public') {
-    roomManager.addAcceptedMember(room.roomId, message.deviceId, message.deviceName);
-    const accept = baseMessage('room-accept');
-    accept.roomId = room.roomId;
-    accept.targetDeviceId = message.deviceId;
-    if (attachRoomBody(accept, room, { room })) {
-      fanOut(accept, [message.host]);
-    }
+    const updated = roomManager.addAcceptedMember(room.roomId, message.deviceId, message.deviceName);
+    fanOut(buildAcceptMessage(updated ?? room, message.deviceId), [message.host]);
     broadcastRoster(room);
     sendStateToRenderer();
     sendStatus(`${message.deviceName} joined ${room.name}`, 'success');
@@ -746,16 +809,12 @@ function handleRoomAccept(message: WireMessage) {
     return;
   }
 
-  // We may only have the advert at this point, so decrypt against the pending key.
-  const known = roomManager.getRoom(message.roomId);
-  const body = known
-    ? readRoomBody(message, known)
-    : (() => {
-        const key = roomManager.getKey(message.roomId!);
-        return key ? openJson<Partial<WireMessage>>(key, message.sealed) ?? message : message;
-      })();
+  // Prefer the sealed roster, but fall back to the plaintext one: a device
+  // admitted on the join code alone holds no key yet and cannot open it.
+  const key = roomManager.getKey(message.roomId);
+  const sealedRoom = key ? openJson<Partial<WireMessage>>(key, message.sealed)?.room : undefined;
+  const room = sealedRoom ?? message.room;
 
-  const room = body?.room;
   if (!room || room.roomId !== message.roomId) {
     return;
   }
@@ -1308,25 +1367,27 @@ ipcMain.handle(
       return fail('That room is no longer on this network.');
     }
 
-    if (target.encrypted && !password) {
-      return fail('This room is password protected.');
+    const code = normalizeJoinCode(joinCode);
+
+    // Either credential is enough. Only an open room needs neither.
+    if (target.encrypted && !password && !code) {
+      return fail('Enter the room password, or its join code.');
+    }
+    if (target.type === 'private' && !password && !code) {
+      return fail('Enter the join code, or the room password.');
     }
 
     const message = baseMessage('room-request');
     message.roomId = roomId;
 
-    if (target.encrypted) {
+    if (target.encrypted && password) {
       const key = deriveRoomKey(password, target.keySalt);
       // Held provisionally so we can open the owner's reply; cleared on rejection.
       roomManager.setKey(roomId, key);
       message.proof = createProof(key, roomId);
     }
 
-    if (target.type === 'private') {
-      const code = normalizeJoinCode(joinCode);
-      if (!code) {
-        return fail('Private rooms need a join code.');
-      }
+    if (code) {
       message.joinCode = code;
     }
 
@@ -1346,15 +1407,17 @@ ipcMain.handle(
   'room:join-by-code',
   (_event, joinCode: string, password: string): ActionResult => {
     const code = normalizeJoinCode(joinCode);
-    if (!code) {
-      return fail('Enter the 6-character join code.');
+    if (!code && !password) {
+      return fail('Enter a join code, a room password, or both.');
     }
 
-    const owned = roomManager.findRoomByCode(code);
-    if (owned) {
-      store.set('currentRoomId', owned.roomId);
-      sendStateToRenderer();
-      return ok(`Switched to ${owned.name}`);
+    if (code) {
+      const owned = roomManager.findRoomByCode(code);
+      if (owned) {
+        store.set('currentRoomId', owned.roomId);
+        sendStateToRenderer();
+        return ok(`Switched to ${owned.name}`);
+      }
     }
 
     const discovered = roomManager.getDiscoveredRooms();
@@ -1362,29 +1425,27 @@ ipcMain.handle(
       return fail('No rooms found on this network yet. Check that both devices are on the same WiFi.');
     }
 
-    // Only the owner can check a code, so the request goes to every advertised
-    // room; the ones it does not belong to simply reject it.
-    let asked = 0;
+    /*
+     * Only a room's owner can check its credentials, so the request goes to
+     * every advertised room and the ones it does not belong to reject it. This
+     * is what lets someone join on the password alone: they do not need to know
+     * which room it belongs to, only that it is on this network.
+     */
     for (const advert of discovered) {
       const message = baseMessage('room-request');
       message.roomId = advert.roomId;
-      message.joinCode = code;
 
-      if (advert.encrypted) {
-        if (!password) {
-          continue;
-        }
+      if (code) {
+        message.joinCode = code;
+      }
+
+      if (advert.encrypted && password) {
         const key = deriveRoomKey(password, advert.keySalt);
         roomManager.setKey(advert.roomId, key);
         message.proof = createProof(key, advert.roomId);
       }
 
       sendUdpMessage(message, advert.host);
-      asked += 1;
-    }
-
-    if (asked === 0) {
-      return fail('The rooms on this network are password protected. Enter the password too.');
     }
 
     return ok('Request sent. Waiting for the room owner.');
@@ -1403,6 +1464,17 @@ ipcMain.handle('room:unlock', (_event, roomId: string, password: string): Action
 
   const key = deriveRoomKey(password, room.keySalt);
   roomManager.setKey(roomId, key);
+
+  // Ask the owner for the full roster. A device that joined on the join code
+  // alone only holds the cut-down one it could read at the time.
+  if (room.ownerId !== deviceId()) {
+    const request = baseMessage('room-request');
+    request.roomId = roomId;
+    request.proof = createProof(key, roomId);
+    const host = getPeerHost(room.ownerId);
+    fanOut(request, host ? [host] : []);
+  }
+
   sendStateToRenderer();
   return ok(`${room.name} unlocked.`);
 });
@@ -1455,13 +1527,7 @@ ipcMain.handle('room:approve-member', (_event, roomId: string, memberId: string)
   }
 
   const member = room.members.find((candidate) => candidate.deviceId === memberId);
-  const accept = baseMessage('room-accept');
-  accept.roomId = roomId;
-  accept.targetDeviceId = memberId;
-  if (attachRoomBody(accept, room, { room })) {
-    fanOut(accept, memberHosts(roomId));
-  }
-
+  fanOut(buildAcceptMessage(room, memberId), memberHosts(roomId));
   broadcastRoster(room);
   sendStateToRenderer();
   return ok(`${member?.deviceName ?? 'Device'} can now use ${room.name}.`);

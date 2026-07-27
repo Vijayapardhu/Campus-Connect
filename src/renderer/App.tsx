@@ -355,7 +355,7 @@ export default function App() {
                     </Button>
                     <Button onClick={() => setModal({ kind: 'join', target: null })}>
                       <KeyIcon size={15} />
-                      Join with a code
+                      Join a room
                     </Button>
                   </>
                 ) : undefined
