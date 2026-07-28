@@ -24,6 +24,7 @@ const crypto = require(path.join(ROOT, 'crypto.js'));
 const { RoomManager } = require(path.join(ROOT, 'roomManager.js'));
 const { HistoryManager } = require(path.join(ROOT, 'historyManager.js'));
 const { ChunkAssembler, splitIntoChunks } = require(path.join(ROOT, 'transfer.js'));
+const net = require(path.join(ROOT, 'network.js'));
 
 let passed = 0;
 let failed = 0;
@@ -562,6 +563,93 @@ test('a realistic screenshot-sized payload survives loss and reordering', () => 
   for (const index of gaps) result = a.accept('A', parts[index]);
 
   assert.strictEqual(result, message, 'retransmitting the gaps must reproduce the payload exactly');
+});
+
+console.log('\n-- network discovery --');
+
+// Exactly what a Windows machine with WSL or VirtualBox installed looks like.
+// This layout is why two devices on the same WiFi could not see each other.
+const WINDOWS_DEV = [
+  { name: 'vEthernet (WSL (Hyper-V firewall))', address: '172.29.128.1', netmask: '255.255.240.0', family: 'IPv4', internal: false },
+  { name: 'VirtualBox Host-Only Network', address: '192.168.56.1', netmask: '255.255.255.0', family: 'IPv4', internal: false },
+  { name: 'Wi-Fi', address: '192.168.1.7', netmask: '255.255.255.0', family: 'IPv4', internal: false },
+  { name: 'Loopback Pseudo-Interface 1', address: '127.0.0.1', netmask: '255.0.0.0', family: 'IPv4', internal: true }
+];
+
+test('a subnet broadcast address is computed correctly', () => {
+  assert.strictEqual(net.subnetBroadcast('192.168.1.7', '255.255.255.0'), '192.168.1.255');
+  assert.strictEqual(net.subnetBroadcast('10.0.5.23', '255.255.0.0'), '10.0.255.255');
+  assert.strictEqual(net.subnetBroadcast('172.29.128.1', '255.255.240.0'), '172.29.143.255');
+  assert.strictEqual(net.subnetBroadcast('10.1.2.3', '255.0.0.0'), '10.255.255.255');
+});
+
+test('nonsense addresses do not produce a broadcast', () => {
+  assert.strictEqual(net.subnetBroadcast('not.an.address', '255.255.255.0'), null);
+  assert.strictEqual(net.subnetBroadcast('192.168.1.7', ''), null);
+  assert.strictEqual(net.subnetBroadcast('192.168.1.7', '255.255.255.255'), null);
+  assert.strictEqual(net.subnetBroadcast('999.1.1.1', '255.255.255.0'), null);
+});
+
+test('the WiFi subnet is broadcast to, not only 255.255.255.255', () => {
+  const targets = net.listBroadcastTargets(WINDOWS_DEV);
+  assert.ok(targets.includes('192.168.1.255'), 'missing the real WiFi subnet: ' + targets.join(', '));
+  assert.ok(targets.includes(net.LIMITED_BROADCAST), 'limited broadcast should remain as a fallback');
+});
+
+test('virtual adapters are broadcast to as well, since the guess can be wrong', () => {
+  const targets = net.listBroadcastTargets(WINDOWS_DEV);
+  assert.ok(targets.includes('172.29.143.255'));
+  assert.ok(targets.includes('192.168.56.255'));
+});
+
+test('the reply address is the WiFi adapter, not WSL or VirtualBox', () => {
+  assert.strictEqual(net.pickLocalAddress(WINDOWS_DEV), '192.168.1.7');
+});
+
+test('enumeration order does not decide the reply address', () => {
+  const shuffled = [WINDOWS_DEV[2], WINDOWS_DEV[0], WINDOWS_DEV[1], WINDOWS_DEV[3]];
+  assert.strictEqual(net.pickLocalAddress(shuffled), '192.168.1.7');
+});
+
+test('loopback and link-local are never broadcast to or chosen', () => {
+  const nics = [
+    { name: 'Loopback', address: '127.0.0.1', netmask: '255.0.0.0', family: 'IPv4', internal: true },
+    { name: 'Ethernet', address: '169.254.10.5', netmask: '255.255.0.0', family: 'IPv4', internal: false }
+  ];
+  assert.deepStrictEqual(net.listBroadcastTargets(nics), [net.LIMITED_BROADCAST]);
+  assert.strictEqual(net.pickLocalAddress(nics), '127.0.0.1');
+});
+
+test('IPv6 addresses are ignored', () => {
+  const nics = [
+    { name: 'Wi-Fi', address: 'fe80::1', netmask: 'ffff::', family: 'IPv6', internal: false },
+    { name: 'Wi-Fi', address: '192.168.1.7', netmask: '255.255.255.0', family: 'IPv4', internal: false }
+  ];
+  assert.deepStrictEqual(net.listBroadcastTargets(nics), ['192.168.1.255', net.LIMITED_BROADCAST]);
+});
+
+test('virtual adapters are recognised by name', () => {
+  for (const name of ['vEthernet (WSL)', 'VirtualBox Host-Only Network', 'VMware Network Adapter VMnet8', 'Docker0', 'Tailscale']) {
+    assert.strictEqual(net.isVirtualInterface(name), true, name + ' should be virtual');
+  }
+  for (const name of ['Wi-Fi', 'Ethernet', 'wlan0', 'en0']) {
+    assert.strictEqual(net.isVirtualInterface(name), false, name + ' should be real');
+  }
+});
+
+test('a machine with a single real adapter still works', () => {
+  const nics = [{ name: 'Ethernet', address: '10.0.0.42', netmask: '255.255.255.0', family: 'IPv4', internal: false }];
+  assert.deepStrictEqual(net.listBroadcastTargets(nics), ['10.0.0.255', net.LIMITED_BROADCAST]);
+  assert.strictEqual(net.pickLocalAddress(nics), '10.0.0.42');
+});
+
+test('diagnostics mark which interface was chosen', () => {
+  const report = net.describeInterfaces(WINDOWS_DEV);
+  const wifi = report.find((r) => r.name === 'Wi-Fi');
+  assert.ok(wifi.chosen);
+  assert.strictEqual(wifi.broadcast, '192.168.1.255');
+  assert.strictEqual(report.find((r) => r.name.indexOf('WSL') >= 0).virtual, true);
+  assert.strictEqual(report.some((r) => r.address === '127.0.0.1'), false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

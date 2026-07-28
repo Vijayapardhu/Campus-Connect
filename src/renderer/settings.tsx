@@ -2,15 +2,17 @@ import React from 'react';
 import type { AppSettings, AppState } from '../shared/types';
 import { APP_INFO, FONT_SCALES, MAX_FONT_SCALE, MIN_FONT_SCALE, RETENTION_CHOICES, STORAGE_CHOICES } from '../shared/types';
 import { Button, Field, SwitchRow } from './ui';
-import { formatBytes } from './format';
+import { formatBytes, relativeTime } from './format';
 import { listSystemFonts } from './fonts';
 import {
+  AlertIcon,
   BellIcon,
   ClipboardIcon,
   DatabaseIcon,
   GithubIcon,
   MonitorIcon,
   MoonIcon,
+  ShieldIcon,
   SignalIcon,
   SunIcon,
   TypeIcon,
@@ -66,6 +68,45 @@ export function SettingsPage({
       active = false;
     };
   }, []);
+
+  const net = state.diagnostics;
+
+  /*
+   * Turns the counters into the one sentence that actually helps. The failure
+   * modes look identical from the outside — nothing appears — but they need
+   * completely different fixes.
+   */
+  const diagnosis = React.useMemo(() => {
+    if (net.otherVersions.length > 0) {
+      return {
+        tone: 'warning' as const,
+        title: 'Another device is running a different version',
+        detail: `Something on this network speaks protocol v${net.otherVersions.join(', v')} while this app speaks v${net.protocolVersion}. Different versions cannot talk to each other. Install the same version on both machines.`
+      };
+    }
+
+    if (state.peers.length > 0) {
+      return {
+        tone: 'accent' as const,
+        title: `${state.peers.length} device${state.peers.length === 1 ? '' : 's'} reachable`,
+        detail: 'Discovery is working. If a room still will not accept you, check the join code or password, and that the owner has approved the request.'
+      };
+    }
+
+    if (net.packetsSent > 0 && net.packetsReceived === 0) {
+      return {
+        tone: 'warning' as const,
+        title: 'Sending, but nothing is coming back',
+        detail: 'Packets are leaving this device and none are arriving. Usually the firewall is blocking the app, or the network has client isolation turned on — common on university and public WiFi, where devices deliberately cannot see each other. Try a phone hotspot to confirm, or add the other device by IP below.'
+      };
+    }
+
+    return {
+      tone: 'accent' as const,
+      title: 'Waiting for other devices',
+      detail: 'Nothing has been seen yet. Make sure the app is running on the other machine and that both are on the same network.'
+    };
+  }, [net, state.peers.length]);
 
   const storage = state.storage;
   const usedPercent = Math.min(
@@ -355,37 +396,96 @@ export function SettingsPage({
           <section className="settings__section">
             <h2 className="settings__title">Network</h2>
             <p className="settings__lede">
-              Devices find each other automatically. This is only needed when a network blocks
-              that.
+              Devices find each other by broadcasting on the local network. When that does not
+              work, this is where you find out why.
             </p>
+
+            {diagnosis && (
+              <div className={`callout callout--${diagnosis.tone}`} style={{ marginBottom: 'var(--space-5)' }}>
+                <span className="callout__icon">
+                  {diagnosis.tone === 'warning' ? <AlertIcon size={17} /> : <ShieldIcon size={17} />}
+                </span>
+                <div className="callout__body">
+                  <div className="callout__title">{diagnosis.title}</div>
+                  <div className="callout__text">{diagnosis.detail}</div>
+                </div>
+              </div>
+            )}
 
             <div className="facts">
               <div>
-                <dt>Listening on</dt>
-                <dd className="mono">
-                  {state.localAddress}:{state.listenPort}
+                <dt>Sent</dt>
+                <dd>{net.packetsSent.toLocaleString()} packets</dd>
+              </div>
+              <div>
+                <dt>Received</dt>
+                <dd>
+                  {net.packetsReceived.toLocaleString()} packets
+                  {net.lastReceivedAt > 0 && (
+                    <span className="text-tertiary"> · last {relativeTime(net.lastReceivedAt)}</span>
+                  )}
                 </dd>
               </div>
               <div>
                 <dt>Devices seen</dt>
                 <dd>{state.peers.length}</dd>
               </div>
+              <div>
+                <dt>Protocol</dt>
+                <dd className="mono">v{net.protocolVersion}</dd>
+              </div>
+              {net.lastError && (
+                <div>
+                  <dt>Last error</dt>
+                  <dd style={{ color: 'var(--danger)' }}>{net.lastError}</dd>
+                </div>
+              )}
             </div>
 
+            <h3 className="h3" style={{ margin: 'var(--space-6) 0 var(--space-3)' }}>
+              Network adapters
+            </h3>
+            <div className="facts">
+              {net.interfaces.map((nic) => (
+                <div key={nic.name + nic.address}>
+                  <dt className="truncate" title={nic.name}>
+                    {nic.name}
+                  </dt>
+                  <dd>
+                    <span className="mono">{nic.address}</span>
+                    {nic.broadcast && (
+                      <span className="text-tertiary mono"> → {nic.broadcast}</span>
+                    )}
+                    {nic.chosen && <span className="badge badge--accent" style={{ marginLeft: 8 }}>Using</span>}
+                    {nic.virtual && <span className="badge" style={{ marginLeft: 6 }}>Virtual</span>}
+                  </dd>
+                </div>
+              ))}
+            </div>
+            <p className="field__hint" style={{ marginTop: 'var(--space-2)' }}>
+              Broadcasts go to every one of these, not just the default route — a virtual
+              adapter would otherwise swallow them.
+            </p>
+
             {state.peers.length > 0 && (
-              <div className="peer-list" style={{ marginTop: 'var(--space-4)' }}>
-                {state.peers.map((peer) => (
-                  <div key={peer.id} className="peer-item">
-                    <strong>{peer.name}</strong>
-                    <span className="mono">{peer.host}</span>
-                  </div>
-                ))}
-              </div>
+              <>
+                <h3 className="h3" style={{ margin: 'var(--space-6) 0 var(--space-3)' }}>
+                  Devices on this network
+                </h3>
+                <div className="peer-list">
+                  {state.peers.map((peer) => (
+                    <div key={peer.id} className="peer-item">
+                      <strong>{peer.name}</strong>
+                      <span className="mono">{peer.host}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
 
             <Field
               label="Add a device by IP"
-              hint="Use this when broadcast discovery is blocked — common on university and office WiFi."
+              hint="Works when broadcast is blocked but direct traffic is not. Find the other machine's address in its own Network settings."
             >
               <div className="row">
                 <input

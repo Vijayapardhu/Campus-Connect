@@ -32,6 +32,13 @@ import { RoomManager } from './roomManager';
 import { HistoryManager } from './historyManager';
 import { ChunkAssembler, splitIntoChunks } from './transfer';
 import {
+  LIMITED_BROADCAST,
+  describeInterfaces,
+  listBroadcastTargets,
+  pickLocalAddress,
+  type NetworkInterface
+} from './network';
+import {
   createProof,
   deriveRoomKey,
   normalizeJoinCode,
@@ -207,6 +214,15 @@ let announceTimer: NodeJS.Timeout | null = null;
 let clipboardPollTimer: NodeJS.Timeout | null = null;
 let transferSweepTimer: NodeJS.Timeout | null = null;
 let compactTimer: NodeJS.Timeout | null = null;
+
+/** Enough to tell a firewall problem from a version problem from a quiet network. */
+const diagnostics = {
+  packetsSent: 0,
+  packetsReceived: 0,
+  lastReceivedAt: 0,
+  lastError: '',
+  otherVersions: [] as number[]
+};
 let tray: Tray | null = null;
 let lastLocalClipboardHash = '';
 let lastRemoteClipboardHash = '';
@@ -214,15 +230,35 @@ let isQuiting = false;
 
 // --- helpers -----------------------------------------------------------------
 
-function getLocalIpAddress(): string {
-  for (const addresses of Object.values(os.networkInterfaces())) {
+/** Flattens Node's interface map into something the network helpers can read. */
+function currentInterfaces(): NetworkInterface[] {
+  const flat: NetworkInterface[] = [];
+
+  for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
     for (const address of addresses ?? []) {
-      if (address && address.family === 'IPv4' && !address.internal) {
-        return address.address;
+      if (address) {
+        flat.push({
+          name,
+          address: address.address,
+          netmask: address.netmask,
+          family: String(address.family),
+          internal: address.internal
+        });
       }
     }
   }
-  return '127.0.0.1';
+
+  return flat;
+}
+
+/**
+ * The address other devices should reply to. Deliberately not "the first
+ * non-internal IPv4" — on a machine with WSL or Hyper-V installed that is
+ * usually a virtual adapter, and the address then travels inside every message
+ * as somewhere unreachable.
+ */
+function getLocalIpAddress(): string {
+  return pickLocalAddress(currentInterfaces());
 }
 
 function getSettings(): AppSettings {
@@ -255,6 +291,16 @@ function getAppState(): AppState {
     invites: listReceivedInvites(),
     invitedDeviceIds: pendingInviteIds(),
     storage: historyManager.stats(),
+    diagnostics: {
+      protocolVersion: PROTOCOL_VERSION,
+      interfaces: describeInterfaces(currentInterfaces()),
+      broadcastTargets: listBroadcastTargets(currentInterfaces()),
+      packetsSent: diagnostics.packetsSent,
+      packetsReceived: diagnostics.packetsReceived,
+      lastReceivedAt: diagnostics.lastReceivedAt,
+      lastError: diagnostics.lastError,
+      otherVersions: [...diagnostics.otherVersions]
+    },
     settings: getSettings()
   };
 }
@@ -320,7 +366,7 @@ function baseMessage(type: WireMessage['type']): WireMessage {
 
 // --- transport ---------------------------------------------------------------
 
-const BROADCAST_ADDRESS = '255.255.255.255';
+const BROADCAST_ADDRESS = LIMITED_BROADCAST;
 
 /** Puts one datagram on the wire per target. Callers keep it under the size limit. */
 function sendDatagram(message: WireMessage, targets: string[]): void {
@@ -332,7 +378,10 @@ function sendDatagram(message: WireMessage, targets: string[]): void {
   for (const host of targets) {
     udpSocket.send(payload, BROADCAST_PORT, host, (error) => {
       if (error) {
+        diagnostics.lastError = `${error.message} (to ${host})`;
         sendStatus(`Network send failed: ${error.message}`, 'error');
+      } else {
+        diagnostics.packetsSent += 1;
       }
     });
   }
@@ -340,14 +389,26 @@ function sendDatagram(message: WireMessage, targets: string[]): void {
 
 function targetList(hosts: string[], broadcast: boolean): string[] {
   const targets = new Set<string>();
+
   if (broadcast) {
-    targets.add(BROADCAST_ADDRESS);
+    /*
+     * Every interface's own subnet broadcast, not just 255.255.255.255. The
+     * limited broadcast is only sent out one interface — whichever the routing
+     * table picks — which on a machine with virtual adapters is frequently not
+     * the WiFi one. That is the difference between discovery working and two
+     * machines on the same network never seeing each other.
+     */
+    for (const target of listBroadcastTargets(currentInterfaces())) {
+      targets.add(target);
+    }
   }
+
   for (const host of hosts) {
     if (host) {
       targets.add(host);
     }
   }
+
   return Array.from(targets);
 }
 
@@ -834,18 +895,23 @@ function pollLocalClipboard() {
 
 // --- inbound handlers --------------------------------------------------------
 
-function handleRoomRequest(message: WireMessage) {
+function handleRoomRequest(message: WireMessage, host: string) {
   const room = message.roomId ? roomManager.getRoom(message.roomId) : undefined;
   if (!room || room.ownerId !== deviceId()) {
     return; // Only the owner admits members.
   }
 
+  /*
+   * Replies go to the address the packet actually came from, not the one the
+   * sender put in the message. A device behind a virtual adapter can easily
+   * report an address nothing can reach.
+   */
   const reject = (reason: string) => {
     const rejection = baseMessage('room-reject');
     rejection.roomId = room.roomId;
     rejection.targetDeviceId = message.deviceId;
     rejection.reason = reason;
-    fanOut(rejection, [message.host]);
+    fanOut(rejection, [host]);
     log.info(`Rejected ${message.deviceName} for ${room.name}: ${reason}`);
   };
 
@@ -891,13 +957,13 @@ function handleRoomRequest(message: WireMessage) {
   // again — which is what a device does after unlocking a room it joined with
   // only the join code, since its first copy was the cut-down one.
   if (roomManager.isAcceptedMember(room.roomId, message.deviceId)) {
-    fanOut(buildAcceptMessage(room, message.deviceId), [message.host]);
+    fanOut(buildAcceptMessage(room, message.deviceId), [host]);
     return;
   }
 
   if (room.type === 'public') {
     const updated = roomManager.addAcceptedMember(room.roomId, message.deviceId, message.deviceName);
-    fanOut(buildAcceptMessage(updated ?? room, message.deviceId), [message.host]);
+    fanOut(buildAcceptMessage(updated ?? room, message.deviceId), [host]);
     broadcastRoster(room);
     sendStateToRenderer();
     sendStatus(`${message.deviceName} joined ${room.name}`, 'success');
@@ -1247,7 +1313,7 @@ function handleWireMessage(message: WireMessage, host: string) {
       }
       return;
     case 'room-request':
-      return handleRoomRequest(message);
+      return handleRoomRequest(message, host);
     case 'room-accept':
       return handleRoomAccept(message);
     case 'room-reject':
@@ -1292,15 +1358,38 @@ function startUdpService() {
   });
 
   udpSocket.on('error', (error) => {
+    diagnostics.lastError = error.message;
     sendStatus(`Network error: ${error.message}`, 'error');
   });
 
   udpSocket.on('message', (buffer, rinfo) => {
     try {
       const message = JSON.parse(buffer.toString('utf8')) as WireMessage;
-      if (!message?.type || !message.deviceId || message.v !== PROTOCOL_VERSION) {
+      if (!message?.type || !message.deviceId) {
         return;
       }
+
+      diagnostics.packetsReceived += 1;
+      diagnostics.lastReceivedAt = Date.now();
+
+      /*
+       * A version mismatch used to be discarded in silence, which is the worst
+       * possible failure: the devices can see each other perfectly, throw
+       * everything away, and show the user nothing at all. Say so instead.
+       */
+      if (message.v !== PROTOCOL_VERSION) {
+        if (!diagnostics.otherVersions.includes(message.v)) {
+          diagnostics.otherVersions.push(message.v);
+          log.warn(`Ignoring a device speaking protocol v${message.v}; this app speaks v${PROTOCOL_VERSION}`);
+          sendStatus(
+            `${message.deviceName || 'A device'} on this network is running a different version of Shared Clipboard, so the two cannot talk. Update both to the same version.`,
+            'error'
+          );
+          sendStateToRenderer();
+        }
+        return;
+      }
+
       handleWireMessage(message, rinfo.address);
     } catch {
       // Malformed packets on a shared port are expected; ignore quietly.
@@ -1309,6 +1398,12 @@ function startUdpService() {
 
   udpSocket.bind(BROADCAST_PORT, () => {
     udpSocket?.setBroadcast(true);
+    const targets = listBroadcastTargets(currentInterfaces());
+    log.info(`Listening on ${BROADCAST_PORT}. Local address ${getLocalIpAddress()}.`);
+    log.info(`Broadcasting to: ${targets.join(', ')}`);
+    for (const nic of describeInterfaces(currentInterfaces())) {
+      log.info(`  interface ${nic.name} ${nic.address} -> ${nic.broadcast ?? 'no broadcast'}${nic.virtual ? ' (virtual)' : ''}${nic.chosen ? ' [chosen]' : ''}`);
+    }
     sendStatus(`Listening on port ${BROADCAST_PORT}`, 'success');
     broadcastPresence();
     advertiseOwnedRooms();

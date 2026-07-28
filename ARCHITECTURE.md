@@ -223,7 +223,19 @@ State these honestly rather than overclaiming:
 ## 6. Network protocol
 
 UDP on port **37777**, broadcast plus unicast to known member hosts (so a network that blocks
-broadcast still works). Every datagram is JSON and carries `v: 2`; mismatched versions are ignored.
+broadcast still works). Every datagram is JSON and carries the protocol version.
+
+**Broadcast goes to every interface's own subnet broadcast address**, not just `255.255.255.255`.
+The limited broadcast is only emitted on one interface — whichever the routing table picks — and on
+a machine with WSL, Hyper-V, VirtualBox or Docker installed that is frequently a virtual adapter
+rather than the WiFi one. Discovery then fails completely and silently. `src/main/network.ts`
+computes the directed broadcast for each interface, and also picks this device's own address by
+preferring a real adapter over a virtual one, since that address travels in every message as the
+place to send replies.
+
+**A version mismatch is reported, not ignored.** Two devices running different releases can see
+each other's packets perfectly and discard every one; saying nothing is the worst possible
+behaviour, so the app now says so explicitly and Settings → Network explains it.
 
 ### 6.1 Message types
 

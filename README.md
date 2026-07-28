@@ -427,10 +427,17 @@ you can clear it from the app at any time.
 <details>
 <summary><strong>Why does it not find the other laptop?</strong></summary>
 
-Almost always because the network blocks UDP broadcast — common on university
-and corporate WiFi, and on any network with "client isolation" or "AP isolation"
-turned on. Use **Settings → Add a device by IP** to connect directly. A phone
-hotspot also works well for testing.
+Open **Settings → Network** — it diagnoses this rather than leaving you to
+guess, showing packets in and out, the adapters being used, and what is
+actually wrong.
+
+The two usual causes are a **version mismatch** (both machines must run the same
+release, since the protocol changes between versions) and **client isolation**
+on the network, which university and public WiFi commonly enable to stop devices
+seeing each other at all. A phone hotspot confirms which it is in a minute.
+
+**Settings → Network → Add a device by IP** connects directly when broadcast is
+filtered.
 </details>
 
 <details>

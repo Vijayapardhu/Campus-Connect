@@ -241,6 +241,27 @@ export const STORAGE_CHOICES = [
   { value: 1000, label: '1 GB' }
 ] as const;
 
+export type InterfaceReport = {
+  name: string;
+  address: string;
+  broadcast: string | null;
+  virtual: boolean;
+  chosen: boolean;
+};
+
+/** What the network panel needs to tell one failure mode from another. */
+export type NetworkDiagnostics = {
+  protocolVersion: number;
+  interfaces: InterfaceReport[];
+  broadcastTargets: string[];
+  packetsSent: number;
+  packetsReceived: number;
+  lastReceivedAt: number;
+  lastError: string;
+  /** Protocol versions seen from other devices that this app cannot talk to. */
+  otherVersions: number[];
+};
+
 export type StorageStats = {
   /** Bytes the stored history occupies on disk. */
   totalBytes: number;
@@ -279,6 +300,7 @@ export type AppState = {
   /** roomId -> device ids this device has invited and not yet heard back from. */
   invitedDeviceIds: Record<string, string[]>;
   storage: StorageStats;
+  diagnostics: NetworkDiagnostics;
   settings: AppSettings;
 };
 

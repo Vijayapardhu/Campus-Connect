@@ -167,16 +167,34 @@ Section 5 covers the security model the rest of the code relies on.
 <details>
 <summary><strong>The other device never appears</strong></summary>
 
-Almost always the network blocking UDP broadcast. University and corporate WiFi
-often have "client isolation" or "AP isolation" turned on, which stops devices
-talking to each other at all.
+**Open Settings → Network first.** It tells you which of these it is instead of
+leaving you guessing — it shows packets sent, packets received, the adapters
+being broadcast to, and a plain sentence about what is wrong.
 
-- **Settings → Add a device by IP** connects directly. Find the other machine's
-  address at the bottom of its own Settings dialog.
-- A phone hotspot works well for testing.
-- Check both machines are actually on the same network — not one on a guest SSID.
-- Allow the app through the firewall on both machines. On Windows the prompt
-  appears on first run and is easy to dismiss by accident.
+| What Network says | What it means |
+|-------------------|---------------|
+| "Another device is running a different version" | The two apps speak different protocol versions and ignore each other. **Install the same version on both.** |
+| "Sending, but nothing is coming back" | Packets leave but none arrive: a firewall, or the network blocks device-to-device traffic |
+| "Waiting for other devices" | Nothing has been heard yet — check the app is actually running on the other machine |
+| "N devices reachable" | Discovery works; the problem is the join code, the password, or an unapproved request |
+
+**Version mismatch is the most common cause** if you installed at different
+times. Both machines must run the same release.
+
+**Client isolation** is the next most common. University, hotel and public WiFi
+frequently stop devices from talking to each other at all, by design. No
+LAN application can work through it. To confirm, connect both machines to a
+phone hotspot — if it works there, the network was the problem.
+
+Also worth checking:
+
+- **Firewall.** On Windows the prompt appears on first run and is easy to
+  dismiss by accident. Allow the app on both machines, for private networks.
+- **Same network, really.** Not one on a guest SSID and one on the main one,
+  and not one on 5 GHz with band isolation.
+- **Settings → Network → Add a device by IP** connects directly, which
+  sometimes works even when broadcast is filtered. Each machine shows its own
+  address in that same panel.
 </details>
 
 <details>
