@@ -285,6 +285,8 @@ export type UpdateState =
   | 'current'
   | 'available'
   | 'downloading'
+  /** A download died mid-transfer and is being resumed. */
+  | 'retrying'
   | 'ready'
   /** Platform cannot install by itself — download it manually. */
   | 'manual'
@@ -299,6 +301,8 @@ export type UpdateStatus = {
   releaseNotes?: string;
   percent?: number;
   error?: string;
+  /** Which retry is in flight, when state is 'retrying'. */
+  attempt?: number;
 };
 
 export type ConnectivityResult = {

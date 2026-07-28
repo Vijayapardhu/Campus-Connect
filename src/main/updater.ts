@@ -20,6 +20,14 @@ import type { UpdateStatus } from '../shared/types';
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
+/** Retries for a download that dies mid-transfer. Delay grows with each try. */
+const DOWNLOAD_ATTEMPTS = 4;
+const RETRY_DELAY_MS = 5000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export type UpdaterEvents = {
   onStatus: (status: UpdateStatus) => void;
 };
@@ -124,12 +132,34 @@ export class Updater {
       return this.status;
     }
 
-    try {
-      this.set({ state: 'downloading', percent: 0 });
-      await autoUpdater.downloadUpdate();
-    } catch (error) {
-      this.set({ state: 'error', error: (error as Error).message });
+    // An installer is ~85 MB, and on a congested network that is several
+    // minutes with the connection open the whole time. A single reset partway
+    // through used to end the attempt outright, leaving the user on the old
+    // version until the next six-hourly check came round. Observed in practice:
+    // net::ERR_CONNECTION_RESET twelve minutes into a download.
+    //
+    // electron-updater keeps its partial file in the updater cache, so a retry
+    // resumes rather than starting over. Waiting a little longer between tries
+    // gives a network that is briefly overloaded time to recover.
+    let lastError = '';
+
+    for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
+      try {
+        this.set({ state: 'downloading', percent: 0, error: undefined });
+        await autoUpdater.downloadUpdate();
+        return this.status;
+      } catch (error) {
+        lastError = (error as Error).message;
+        log.warn(`Update download attempt ${attempt} of ${DOWNLOAD_ATTEMPTS} failed: ${lastError}`);
+
+        if (attempt < DOWNLOAD_ATTEMPTS) {
+          this.set({ state: 'retrying', attempt, error: lastError });
+          await delay(RETRY_DELAY_MS * attempt);
+        }
+      }
     }
+
+    this.set({ state: 'error', error: `${lastError} (after ${DOWNLOAD_ATTEMPTS} attempts)` });
     return this.status;
   }
 

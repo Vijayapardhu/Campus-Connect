@@ -99,6 +99,7 @@ export function SettingsPage({
     current: 'Up to date',
     available: `Version ${update.availableVersion} is available`,
     downloading: `Downloading… ${update.percent ?? 0}%`,
+    retrying: `Connection dropped — resuming (attempt ${(update.attempt ?? 1) + 1} of 4)`,
     ready: `Version ${update.availableVersion} is ready to install`,
     manual: 'Download it from the releases page',
     unsupported: 'Running from source — updates apply to installed builds',
@@ -663,7 +664,14 @@ export function SettingsPage({
             </div>
 
             <div className="row" style={{ gap: 'var(--space-2)' }}>
-              <Button onClick={onCheckUpdate} disabled={update.state === 'checking' || update.state === 'downloading'}>
+              <Button
+                onClick={onCheckUpdate}
+                disabled={
+                  update.state === 'checking' ||
+                  update.state === 'downloading' ||
+                  update.state === 'retrying'
+                }
+              >
                 {update.state === 'checking' ? 'Checking…' : 'Check now'}
               </Button>
 
