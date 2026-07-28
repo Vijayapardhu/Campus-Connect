@@ -110,6 +110,11 @@ export default function App() {
           api.historyGetClipboard(roomId).then(setClips);
         }
       }),
+      api.onUpdateStatus((status) => {
+        if (status.state === 'ready') {
+          push(`Version ${status.availableVersion} is ready — restart to finish updating.`, 'success');
+        }
+      }),
       api.onReceipts((roomId) => {
         if (roomId === currentRoomIdRef.current) {
           api.historyGetChat(roomId).then(setMessages);
@@ -404,6 +409,15 @@ export default function App() {
               }}
               onCompactStorage={() => run(api.storageCompact())}
               onTestConnection={(host) => api.networkTest(host)}
+              onCheckUpdate={() => {
+                api.updateCheck().then((status) => {
+                  if (status.state === 'current') push('You are on the latest version.', 'success');
+                  if (status.state === 'available') push(`Version ${status.availableVersion} is available.`, 'info');
+                  if (status.state === 'error') push(status.error ?? 'Could not check for updates.', 'error');
+                });
+              }}
+              onDownloadUpdate={() => api.updateDownload()}
+              onInstallUpdate={() => run(api.updateInstall())}
             />
           </div>
         ) : !room ? (

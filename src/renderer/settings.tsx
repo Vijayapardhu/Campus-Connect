@@ -7,6 +7,7 @@ import { listSystemFonts } from './fonts';
 import {
   AlertIcon,
   BellIcon,
+  DownloadIcon,
   ClipboardIcon,
   DatabaseIcon,
   GithubIcon,
@@ -19,7 +20,15 @@ import {
   UserIcon
 } from './icons';
 
-type SectionId = 'device' | 'appearance' | 'sync' | 'notifications' | 'storage' | 'network' | 'about';
+type SectionId =
+  | 'device'
+  | 'appearance'
+  | 'sync'
+  | 'notifications'
+  | 'storage'
+  | 'network'
+  | 'updates'
+  | 'about';
 
 const SECTIONS: Array<{ id: SectionId; label: string; icon: React.ReactNode }> = [
   { id: 'device', label: 'This device', icon: <UserIcon size={15} /> },
@@ -28,6 +37,7 @@ const SECTIONS: Array<{ id: SectionId; label: string; icon: React.ReactNode }> =
   { id: 'notifications', label: 'Notifications', icon: <BellIcon size={15} /> },
   { id: 'storage', label: 'Storage', icon: <DatabaseIcon size={15} /> },
   { id: 'network', label: 'Network', icon: <SignalIcon size={15} /> },
+  { id: 'updates', label: 'Updates', icon: <DownloadIcon size={15} /> },
   { id: 'about', label: 'About', icon: <GithubIcon size={15} /> }
 ];
 
@@ -44,7 +54,10 @@ export function SettingsPage({
   onConnectPeer,
   onOpenExternal,
   onCompactStorage,
-  onTestConnection
+  onTestConnection,
+  onCheckUpdate,
+  onDownloadUpdate,
+  onInstallUpdate
 }: {
   state: AppState;
   onRename: (name: string) => void;
@@ -53,6 +66,9 @@ export function SettingsPage({
   onOpenExternal: (url: string) => void;
   onCompactStorage: () => void;
   onTestConnection: (host: string) => Promise<ConnectivityResult>;
+  onCheckUpdate: () => void;
+  onDownloadUpdate: () => void;
+  onInstallUpdate: () => void;
 }) {
   const [section, setSection] = React.useState<SectionId>('device');
   const [name, setName] = React.useState(state.deviceName);
@@ -73,6 +89,21 @@ export function SettingsPage({
       active = false;
     };
   }, []);
+
+  const update = state.update;
+  const canSelfInstall = !navigator.userAgent.includes('Mac');
+
+  const updateHeadline = {
+    idle: 'Not checked yet',
+    checking: 'Checking for a new version…',
+    current: 'Up to date',
+    available: `Version ${update.availableVersion} is available`,
+    downloading: `Downloading… ${update.percent ?? 0}%`,
+    ready: `Version ${update.availableVersion} is ready to install`,
+    manual: 'Download it from the releases page',
+    unsupported: 'Running from source — updates apply to installed builds',
+    error: 'Could not check for updates'
+  }[update.state];
 
   const net = state.diagnostics;
 
@@ -603,6 +634,84 @@ export function SettingsPage({
                 </Button>
               </div>
             </Field>
+          </section>
+        )}
+
+        {section === 'updates' && (
+          <section className="settings__section">
+            <h2 className="settings__title">Updates</h2>
+            <p className="settings__lede">
+              Worth leaving on. Two devices running different versions cannot talk to each
+              other at all, so an out-of-date machine looks like a broken app.
+            </p>
+
+            <div className="meter" style={{ marginBottom: 'var(--space-5)' }}>
+              <div className="meter__head">
+                <span className="meter__value">v{update.currentVersion}</span>
+                <span className="meter__of">{updateHeadline}</span>
+              </div>
+              {update.state === 'downloading' && (
+                <div className="meter__track" style={{ marginBottom: 0 }}>
+                  <div className="meter__fill" style={{ width: `${Math.max(3, update.percent ?? 0)}%` }} />
+                </div>
+              )}
+              {update.error && update.state === 'error' && (
+                <div className="meter__legend" style={{ color: 'var(--danger)' }}>
+                  <span>{update.error}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="row" style={{ gap: 'var(--space-2)' }}>
+              <Button onClick={onCheckUpdate} disabled={update.state === 'checking' || update.state === 'downloading'}>
+                {update.state === 'checking' ? 'Checking…' : 'Check now'}
+              </Button>
+
+              {update.state === 'available' && (
+                <Button variant="primary" onClick={onDownloadUpdate}>
+                  <DownloadIcon size={15} />
+                  Download v{update.availableVersion}
+                </Button>
+              )}
+
+              {update.state === 'ready' && (
+                <Button variant="primary" onClick={onInstallUpdate}>
+                  Restart and install v{update.availableVersion}
+                </Button>
+              )}
+
+              {update.state === 'manual' && (
+                <Button variant="primary" onClick={onInstallUpdate}>
+                  Open the download page
+                </Button>
+              )}
+            </div>
+
+            <div style={{ marginTop: 'var(--space-5)' }}>
+              <SwitchRow
+                title="Check for updates automatically"
+                description="Looks for a new version every few hours and when the app starts. Nothing is downloaded or installed without you saying so."
+                checked={settings.autoUpdate}
+                onChange={(next) => onUpdateSettings({ autoUpdate: next })}
+              />
+            </div>
+
+            {!canSelfInstall && (
+              <div className="callout callout--warning" style={{ marginTop: 'var(--space-4)' }}>
+                <span className="callout__icon">
+                  <AlertIcon size={17} />
+                </span>
+                <div className="callout__body">
+                  <div className="callout__title">macOS installs updates by hand for now</div>
+                  <div className="callout__text">
+                    Applying an update automatically on macOS requires the app to be
+                    code-signed, and this project has no certificate yet. Checking still
+                    works and will tell you when a version is out — the download is a
+                    manual step until then.
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
         )}
 

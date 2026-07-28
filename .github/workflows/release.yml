@@ -49,18 +49,29 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The .yml files are the update feed electron-updater reads, and the
+          # blockmaps let it download only the changed parts. Without them the
+          # installers publish fine but auto-update never sees a new version.
           - os: windows-latest
             label: Windows
             command: npm run package:win
-            artifacts: release/*.exe
+            artifacts: |
+              release/*.exe
+              release/*.exe.blockmap
+              release/latest.yml
           - os: macos-latest
             label: macOS
             command: npm run package:mac
-            artifacts: release/*.dmg
+            artifacts: |
+              release/*.dmg
+              release/*.dmg.blockmap
+              release/latest-mac.yml
           - os: ubuntu-latest
             label: Linux
             command: npm run package:linux
-            artifacts: release/*.AppImage
+            artifacts: |
+              release/*.AppImage
+              release/latest-linux.yml
 
     steps:
       - uses: actions/checkout@v4

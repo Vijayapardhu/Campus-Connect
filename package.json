@@ -1,6 +1,6 @@
 {
   "name": "shared-clipboard-desktop",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Copy on one laptop, paste on another. An encrypted, room-based clipboard and chat for devices on the same network.",
   "main": "dist/main/main.js",
@@ -45,6 +45,7 @@
   "dependencies": {
     "electron-log": "^5.3.0",
     "electron-store": "^8.2.0",
+    "electron-updater": "^6.8.9",
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
@@ -67,9 +68,10 @@
     "appId": "com.vijayapardhu.sharedclipboard",
     "productName": "Shared Clipboard",
     "artifactName": "SharedClipboard-${version}-${os}-${arch}.${ext}",
-    "copyright": "Copyright © 2026 Vijaya Pardhu",
+    "copyright": "Copyright \u00a9 2026 Vijaya Pardhu",
     "files": [
-      "dist/**/*",
+      "dist/main/**/*",
+      "dist/renderer/**/*",
       "package.json"
     ],
     "directories": {
@@ -89,7 +91,9 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["universal"]
+          "arch": [
+            "universal"
+          ]
         }
       ],
       "icon": "build/icon.png",
@@ -113,6 +117,13 @@
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Vijayapardhu",
+        "repo": "Clipboard"
+      }
+    ]
   }
 }

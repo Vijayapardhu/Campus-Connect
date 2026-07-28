@@ -47,6 +47,10 @@ const api: SharedClipboardApi = {
   storageCompact: () => ipcRenderer.invoke('storage:compact'),
   networkTest: (host) => ipcRenderer.invoke('network:test', host),
 
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateDownload: () => ipcRenderer.invoke('update:download'),
+  updateInstall: () => ipcRenderer.invoke('update:install'),
+
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   clipboardApply: (entryId) => ipcRenderer.invoke('clipboard:apply', entryId),
   clipboardShareNow: () => ipcRenderer.invoke('clipboard:share-now'),
@@ -56,6 +60,7 @@ const api: SharedClipboardApi = {
   onChatMessage: (handler) => subscribe('chat:message', handler),
   onHistoryChanged: (handler) => subscribe('history:changed', handler),
   onReceipts: (handler) => subscribe('chat:receipts', handler),
+  onUpdateStatus: (handler) => subscribe('update:status', handler),
   onJoinRequest: (handler) => subscribe('room:join-request', handler),
   onInvite: (handler) => subscribe('room:invite', handler),
   onJoinResult: (handler) => subscribe('room:join-result', handler)

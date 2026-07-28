@@ -32,6 +32,7 @@ import { RoomManager } from './roomManager';
 import { HistoryManager } from './historyManager';
 import { ChunkAssembler, splitIntoChunks } from './transfer';
 import { TcpTransport, probeTcp } from './tcp';
+import { Updater } from './updater';
 import {
   LIMITED_BROADCAST,
   describeInterfaces,
@@ -65,6 +66,7 @@ import {
   type RoomInvite,
   type RoomType,
   type StorageStats,
+  type UpdateStatus,
   type WireMessage
 } from '../shared/types';
 
@@ -175,7 +177,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   notifications: true,
   sendReceipts: true,
   retainMediaDays: 7,
-  maxStorageMb: 100
+  maxStorageMb: 100,
+  autoUpdate: true
 };
 
 /** How often the stored history is swept for attachments to drop. */
@@ -217,6 +220,7 @@ let clipboardPollTimer: NodeJS.Timeout | null = null;
 let transferSweepTimer: NodeJS.Timeout | null = null;
 let compactTimer: NodeJS.Timeout | null = null;
 let tcp: TcpTransport | null = null;
+let updater: Updater | null = null;
 
 /** Enough to tell a firewall problem from a version problem from a quiet network. */
 const diagnostics = {
@@ -296,6 +300,7 @@ function getAppState(): AppState {
     invites: listReceivedInvites(),
     invitedDeviceIds: pendingInviteIds(),
     storage: historyManager.stats(),
+    update: updater?.getStatus() ?? { state: 'idle', currentVersion: app.getVersion() },
     diagnostics: {
       protocolVersion: PROTOCOL_VERSION,
       interfaces: describeInterfaces(currentInterfaces()),
@@ -1531,6 +1536,7 @@ function stopUdpService() {
     compactTimer = null;
   }
   outboundTransfers.clear();
+  updater?.stop();
   tcp?.stop();
   tcp = null;
   udpSocket?.close();
@@ -1678,6 +1684,21 @@ app.whenReady().then(() => {
   startUdpService();
   startTcpService();
 
+  updater = new Updater({
+    onStatus: (status) => {
+      mainWindow?.webContents.send('update:status', status);
+      sendStateToRenderer();
+
+      if (status.state === 'ready' && status.availableVersion) {
+        notify(
+          `Version ${status.availableVersion} is ready`,
+          'Restart Shared Clipboard to finish updating. Both machines need the same version to talk to each other.'
+        );
+      }
+    }
+  });
+  updater.start(getSettings().autoUpdate);
+
   nativeTheme.on('updated', () => sendStateToRenderer());
 
   app.on('activate', () => {
@@ -1709,6 +1730,10 @@ function updateSettings(patch: Partial<AppSettings>): AppState {
   // Clamp rather than reject, so a bad value can never make the UI unreadable.
   next.fontScale = Math.min(MAX_FONT_SCALE, Math.max(MIN_FONT_SCALE, Number(next.fontScale) || 1));
   store.set('settings', next);
+
+  if (patch.autoUpdate !== undefined) {
+    updater?.setEnabled(patch.autoUpdate);
+  }
   refreshTrayMenu();
   sendStateToRenderer();
   return getAppState();
@@ -2396,6 +2421,28 @@ ipcMain.handle('network:test', async (_event, host: string): Promise<Connectivit
     verdict: 'unreachable',
     detail: 'Nothing reached that device on either transport. Either the app is not running there, its firewall is blocking it, or the network separates its clients — which university and public WiFi commonly do, and which no application can work around. A phone hotspot will tell you which within a minute.'
   };
+});
+
+ipcMain.handle('update:check', async (): Promise<UpdateStatus> => {
+  const status = (await updater?.check(true)) ?? { state: 'idle' as const, currentVersion: app.getVersion() };
+  sendStateToRenderer();
+  return status;
+});
+
+ipcMain.handle('update:download', async (): Promise<UpdateStatus> => {
+  const status = (await updater?.download()) ?? { state: 'idle' as const, currentVersion: app.getVersion() };
+  sendStateToRenderer();
+  return status;
+});
+
+ipcMain.handle('update:install', (): ActionResult => {
+  if (!Updater.canSelfInstall) {
+    shell.openExternal(`${APP_INFO.repositoryUrl}/releases/latest`);
+    return ok('Opened the download page — macOS needs the update installed by hand.');
+  }
+
+  updater?.installNow();
+  return ok('Restarting to finish the update…');
 });
 
 ipcMain.handle('storage:stats', (): StorageStats => historyManager.stats());

@@ -231,6 +231,12 @@ export type AppSettings = {
   retainMediaDays: number;
   /** Ceiling on the stored history, in megabytes. */
   maxStorageMb: number;
+
+  /**
+   * Check for new versions in the background. Worth leaving on: two devices on
+   * different versions cannot talk to each other at all.
+   */
+  autoUpdate: boolean;
 };
 
 export const RETENTION_CHOICES = [
@@ -271,6 +277,28 @@ export type NetworkDiagnostics = {
   tcpFramesReceived: number;
   /** Hosts with a live direct connection right now. */
   directHosts: string[];
+};
+
+export type UpdateState =
+  | 'idle'
+  | 'checking'
+  | 'current'
+  | 'available'
+  | 'downloading'
+  | 'ready'
+  /** Platform cannot install by itself — download it manually. */
+  | 'manual'
+  /** Running from source, so there is nothing to update against. */
+  | 'unsupported'
+  | 'error';
+
+export type UpdateStatus = {
+  state: UpdateState;
+  currentVersion: string;
+  availableVersion?: string;
+  releaseNotes?: string;
+  percent?: number;
+  error?: string;
 };
 
 export type ConnectivityResult = {
@@ -320,6 +348,7 @@ export type AppState = {
   invitedDeviceIds: Record<string, string[]>;
   storage: StorageStats;
   diagnostics: NetworkDiagnostics;
+  update: UpdateStatus;
   settings: AppSettings;
 };
 

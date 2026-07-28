@@ -8,7 +8,8 @@ import type {
   JoinRequest,
   RoomInvite,
   RoomType,
-  StorageStats
+  StorageStats,
+  UpdateStatus
 } from './types';
 
 export type StatusTone = 'info' | 'success' | 'warning' | 'error';
@@ -76,6 +77,11 @@ export type SharedClipboardApi = {
   /** Tests which transports reach a specific address. */
   networkTest: (host: string) => Promise<ConnectivityResult>;
 
+  updateCheck: () => Promise<UpdateStatus>;
+  updateDownload: () => Promise<UpdateStatus>;
+  /** Restarts into the new version, or opens the download page on macOS. */
+  updateInstall: () => Promise<ActionResult>;
+
   readClipboard: () => Promise<string>;
   clipboardApply: (entryId: string) => Promise<ActionResult>;
   clipboardShareNow: () => Promise<ActionResult>;
@@ -86,6 +92,7 @@ export type SharedClipboardApi = {
   onHistoryChanged: (handler: (roomId: string) => void) => () => void;
   /** Receipts changed for a room; refetch its chat. */
   onReceipts: (handler: (roomId: string) => void) => () => void;
+  onUpdateStatus: (handler: (status: UpdateStatus) => void) => () => void;
   onJoinRequest: (handler: (request: JoinRequest) => void) => () => void;
   onInvite: (handler: (invite: RoomInvite) => void) => () => void;
   onJoinResult: (handler: (result: JoinResultEvent) => void) => () => void;
