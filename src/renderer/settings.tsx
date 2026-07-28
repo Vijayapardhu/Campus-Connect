@@ -97,7 +97,7 @@ export function SettingsPage({
       return {
         tone: 'warning' as const,
         title: 'Sending, but nothing is coming back',
-        detail: 'Packets are leaving this device and none are arriving. Usually the firewall is blocking the app, or the network has client isolation turned on — common on university and public WiFi, where devices deliberately cannot see each other. Try a phone hotspot to confirm, or add the other device by IP below.'
+        detail: 'Packets are leaving this device and none are arriving back. Two usual causes: the firewall is blocking the app — check that Windows still has this network marked Private, since a network switching to Public silently blocks inbound traffic — or the network has client isolation turned on, which university and public WiFi commonly do so that devices cannot see each other at all. A phone hotspot settles which it is in a minute.'
       };
     }
 
@@ -477,6 +477,12 @@ export function SettingsPage({
                     <div key={peer.id} className="peer-item">
                       <strong>{peer.name}</strong>
                       <span className="mono">{peer.host}</span>
+                      {peer.protocolVersion !== undefined &&
+                        peer.protocolVersion !== net.protocolVersion && (
+                          <span className="badge badge--danger">
+                            protocol v{peer.protocolVersion} — update needed
+                          </span>
+                        )}
                     </div>
                   ))}
                 </div>

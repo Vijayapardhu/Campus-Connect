@@ -382,6 +382,20 @@ select {
   color: var(--text-primary);
 }
 
+.room-item.is-warning {
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+  background: var(--danger-soft);
+}
+
+.room-item.is-warning .room-item__icon {
+  background: transparent;
+  color: var(--danger);
+}
+
+.room-item.is-warning .room-item__name {
+  color: var(--danger);
+}
+
 .room-item.is-invite {
   border: 1px dashed color-mix(in srgb, var(--warning) 45%, var(--border));
   background: var(--warning-soft);

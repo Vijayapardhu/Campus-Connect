@@ -2,7 +2,16 @@ import React from 'react';
 import type { AppState, DiscoveredRoom, RoomInfo, RoomInvite } from '../shared/types';
 import { Button } from './ui';
 import { initials } from './format';
-import { ClipboardIcon, GlobeIcon, KeyIcon, LockIcon, MailIcon, PlusIcon, SettingsIcon } from './icons';
+import {
+  AlertIcon,
+  ClipboardIcon,
+  GlobeIcon,
+  KeyIcon,
+  LockIcon,
+  MailIcon,
+  PlusIcon,
+  SettingsIcon
+} from './icons';
 
 function roomMeta(room: RoomInfo, locked: boolean): string {
   if (locked) {
@@ -34,6 +43,13 @@ export function Sidebar({
   onOpenSettings: () => void;
   settingsOpen: boolean;
 }) {
+  // Reachable, but speaking a protocol this build cannot talk to.
+  const outdated = state.peers.filter(
+    (peer) =>
+      peer.protocolVersion !== undefined &&
+      peer.protocolVersion !== state.diagnostics.protocolVersion
+  );
+
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
@@ -44,6 +60,24 @@ export function Sidebar({
       </div>
 
       <div className="sidebar__scroll">
+        {outdated.length > 0 && (
+          <section className="sidebar__section">
+            <button className="room-item is-warning" onClick={onOpenSettings} title="Open network settings">
+              <span className="room-item__icon">
+                <AlertIcon size={13} />
+              </span>
+              <span className="room-item__body">
+                <span className="room-item__name">Version mismatch</span>
+                <span className="room-item__meta">
+                  {outdated.length === 1
+                    ? `${outdated[0].name} runs another version`
+                    : `${outdated.length} devices run another version`}
+                </span>
+              </span>
+            </button>
+          </section>
+        )}
+
         {state.invites.length > 0 && (
           <section className="sidebar__section">
             <div className="sidebar__label">

@@ -674,6 +674,13 @@ function getPeerHost(targetDeviceId: string): string | undefined {
 }
 
 /** Hosts of every accepted member of a room that we currently know how to reach. */
+/** Peers we can actually talk to — same protocol version. */
+function compatiblePeers(): PeerInfo[] {
+  return store
+    .get('peers')
+    .filter((peer) => peer.protocolVersion === undefined || peer.protocolVersion === PROTOCOL_VERSION);
+}
+
 function memberHosts(roomId: string): string[] {
   const hosts: string[] = [];
   for (const member of roomManager.getMembers(roomId, 'accepted')) {
@@ -1374,19 +1381,39 @@ function startUdpService() {
 
       /*
        * A version mismatch used to be discarded in silence, which is the worst
-       * possible failure: the devices can see each other perfectly, throw
-       * everything away, and show the user nothing at all. Say so instead.
+       * possible failure: two devices can see each other perfectly, throw
+       * everything away, and show the user nothing at all.
+       *
+       * `announce` is now accepted from any version — its shape has never
+       * changed — purely so the device still appears, labelled with the version
+       * it speaks. Everything else is still refused, because the meaning of
+       * those messages does change between versions.
        */
       if (message.v !== PROTOCOL_VERSION) {
+        if (message.type === 'announce' && message.deviceName) {
+          updatePeer({
+            id: message.deviceId,
+            name: message.deviceName,
+            host: rinfo.address,
+            port: message.port ?? BROADCAST_PORT,
+            lastSeen: Date.now(),
+            protocolVersion: message.v
+          });
+        }
+
         if (!diagnostics.otherVersions.includes(message.v)) {
           diagnostics.otherVersions.push(message.v);
-          log.warn(`Ignoring a device speaking protocol v${message.v}; this app speaks v${PROTOCOL_VERSION}`);
+          log.warn(`${message.deviceName} speaks protocol v${message.v}; this app speaks v${PROTOCOL_VERSION}`);
           sendStatus(
-            `${message.deviceName || 'A device'} on this network is running a different version of Shared Clipboard, so the two cannot talk. Update both to the same version.`,
+            `${message.deviceName || 'A device'} is running a different version of Shared Clipboard (protocol v${message.v} against this app's v${PROTOCOL_VERSION}), so the two cannot talk to each other. Install the same version on both.`,
             'error'
           );
-          sendStateToRenderer();
+          notify(
+            'Different version detected',
+            `${message.deviceName || 'A device'} is running another version of Shared Clipboard. Install the same version on both machines.`
+          );
         }
+        sendStateToRenderer();
         return;
       }
 

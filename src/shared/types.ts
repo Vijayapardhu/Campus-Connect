@@ -113,6 +113,12 @@ export type PeerInfo = {
   host: string;
   port: number;
   lastSeen: number;
+  /**
+   * The protocol this device speaks. Present and different from ours means it
+   * is reachable but running another version, so nothing will work with it
+   * until one of the two is updated.
+   */
+  protocolVersion?: number;
 };
 
 /**
