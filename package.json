@@ -37,6 +37,7 @@
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
     "dist": "npm run build && electron-builder",
+    "verify:package": "node scripts/verify-package.js",
     "build:exe": "npm run dist -- --win",
     "package:win": "npm run dist -- --win",
     "package:mac": "npm run dist -- --mac",
@@ -68,10 +69,11 @@
     "appId": "com.vijayapardhu.sharedclipboard",
     "productName": "Shared Clipboard",
     "artifactName": "SharedClipboard-${version}-${os}-${arch}.${ext}",
-    "copyright": "Copyright \u00a9 2026 Vijaya Pardhu",
+    "copyright": "Copyright © 2026 Vijaya Pardhu",
     "files": [
       "dist/main/**/*",
       "dist/renderer/**/*",
+      "dist/shared/**/*",
       "package.json"
     ],
     "directories": {

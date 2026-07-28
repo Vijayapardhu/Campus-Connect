@@ -125,6 +125,14 @@ jobs:
       - name: Build installer
         run: ${{ matrix.command }} -- --publish never
 
+      # v0.3.1 shipped installers that could not start: the `files` glob had
+      # been narrowed and silently dropped dist/shared, which main.js requires
+      # before any logging exists. Typecheck and tests both passed, because the
+      # fault was in the packaging rather than the code. This reads the built
+      # asar and refuses to publish anything with a missing require.
+      - name: Verify the package can start
+        run: npm run verify:package
+
       - uses: actions/upload-artifact@v4
         with:
           name: installer-${{ matrix.label }}
