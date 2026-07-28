@@ -1,5 +1,5 @@
 import React from 'react';
-import type { AppSettings, AppState } from '../shared/types';
+import type { AppSettings, AppState, ConnectivityResult } from '../shared/types';
 import { APP_INFO, FONT_SCALES, MAX_FONT_SCALE, MIN_FONT_SCALE, RETENTION_CHOICES, STORAGE_CHOICES } from '../shared/types';
 import { Button, Field, SwitchRow } from './ui';
 import { formatBytes, relativeTime } from './format';
@@ -43,7 +43,8 @@ export function SettingsPage({
   onUpdateSettings,
   onConnectPeer,
   onOpenExternal,
-  onCompactStorage
+  onCompactStorage,
+  onTestConnection
 }: {
   state: AppState;
   onRename: (name: string) => void;
@@ -51,10 +52,14 @@ export function SettingsPage({
   onConnectPeer: (host: string) => void;
   onOpenExternal: (url: string) => void;
   onCompactStorage: () => void;
+  onTestConnection: (host: string) => Promise<ConnectivityResult>;
 }) {
   const [section, setSection] = React.useState<SectionId>('device');
   const [name, setName] = React.useState(state.deviceName);
   const [peerHost, setPeerHost] = React.useState('');
+  const [testHost, setTestHost] = React.useState('');
+  const [testing, setTesting] = React.useState(false);
+  const [result, setResult] = React.useState<ConnectivityResult | null>(null);
   const [fonts, setFonts] = React.useState<string[] | null>(null);
 
   const settings = state.settings;
@@ -70,6 +75,16 @@ export function SettingsPage({
   }, []);
 
   const net = state.diagnostics;
+
+  async function runTest() {
+    setTesting(true);
+    setResult(null);
+    try {
+      setResult(await onTestConnection(testHost.trim()));
+    } finally {
+      setTesting(false);
+    }
+  }
 
   /*
    * Turns the counters into the one sentence that actually helps. The failure
@@ -431,6 +446,23 @@ export function SettingsPage({
                 <dd>{state.peers.length}</dd>
               </div>
               <div>
+                <dt>Direct links</dt>
+                <dd>
+                  {net.directHosts.length === 0 ? (
+                    <span className="text-tertiary">none — using UDP only</span>
+                  ) : (
+                    <span className="mono">{net.directHosts.join(', ')}</span>
+                  )}
+                  {net.tcpFramesSent + net.tcpFramesReceived > 0 && (
+                    <span className="text-tertiary">
+                      {' '}
+                      · {net.tcpFramesSent.toLocaleString()} sent,{' '}
+                      {net.tcpFramesReceived.toLocaleString()} received over TCP
+                    </span>
+                  )}
+                </dd>
+              </div>
+              <div>
                 <dt>Protocol</dt>
                 <dd className="mono">v{net.protocolVersion}</dd>
               </div>
@@ -489,9 +521,60 @@ export function SettingsPage({
               </>
             )}
 
+            <h3 className="h3" style={{ margin: 'var(--space-6) 0 var(--space-3)' }}>
+              Test a connection
+            </h3>
+            <p className="field__hint" style={{ marginBottom: 'var(--space-3)' }}>
+              Enter the address the other machine shows here, and this checks which
+              transports actually survive your network.
+            </p>
+            <div className="row">
+              <input
+                className="input"
+                value={testHost}
+                onChange={(event) => setTestHost(event.target.value)}
+                onKeyDown={(event) => event.key === 'Enter' && runTest()}
+                placeholder="10.102.3.199"
+                spellCheck={false}
+              />
+              <Button onClick={runTest} disabled={testing || !testHost.trim()}>
+                {testing ? 'Testing…' : 'Test'}
+              </Button>
+            </div>
+
+            {result && (
+              <div
+                className={`callout callout--${result.verdict === 'unreachable' ? 'warning' : 'accent'}`}
+                style={{ marginTop: 'var(--space-4)' }}
+              >
+                <span className="callout__icon">
+                  {result.verdict === 'unreachable' ? <AlertIcon size={17} /> : <ShieldIcon size={17} />}
+                </span>
+                <div className="callout__body">
+                  <div className="callout__title">
+                    {result.verdict === 'direct' && 'Both transports reach it'}
+                    {result.verdict === 'tcp-only' && 'Reachable, but UDP is filtered'}
+                    {result.verdict === 'udp-only' && 'UDP works, direct connections do not'}
+                    {result.verdict === 'unreachable' && 'Nothing reaches that device'}
+                  </div>
+                  <div className="callout__text">{result.detail}</div>
+                  <div className="row" style={{ gap: 'var(--space-4)', marginTop: 'var(--space-3)' }}>
+                    <span className="text-sm">
+                      TCP {result.tcpReachable ? '✓ reachable' : '✗ blocked'}
+                    </span>
+                    <span className="text-sm">
+                      UDP {result.udpReplied ? '✓ replied' : '✗ no reply'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div style={{ marginTop: 'var(--space-6) ' }} />
+
             <Field
               label="Add a device by IP"
-              hint="Works when broadcast is blocked but direct traffic is not. Find the other machine's address in its own Network settings."
+              hint="Opens a direct connection as well as UDP, so it works even where UDP is filtered. Find the other machine's address above."
             >
               <div className="row">
                 <input

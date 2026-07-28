@@ -25,6 +25,7 @@ const { RoomManager } = require(path.join(ROOT, 'roomManager.js'));
 const { HistoryManager } = require(path.join(ROOT, 'historyManager.js'));
 const { ChunkAssembler, splitIntoChunks } = require(path.join(ROOT, 'transfer.js'));
 const net = require(path.join(ROOT, 'network.js'));
+const { FrameDecoder, encodeFrame, HEADER_BYTES } = require(path.join(ROOT, 'framing.js'));
 
 let passed = 0;
 let failed = 0;
@@ -650,6 +651,94 @@ test('diagnostics mark which interface was chosen', () => {
   assert.strictEqual(wifi.broadcast, '192.168.1.255');
   assert.strictEqual(report.find((r) => r.name.indexOf('WSL') >= 0).virtual, true);
   assert.strictEqual(report.some((r) => r.address === '127.0.0.1'), false);
+});
+
+console.log('\n-- TCP framing --');
+
+const MAX_FRAME = 1024 * 1024;
+const decode = () => new FrameDecoder(MAX_FRAME);
+
+test('a frame round-trips', () => {
+  const d = decode();
+  assert.deepStrictEqual(d.push(encodeFrame('{"a":1}', MAX_FRAME)), ['{"a":1}']);
+});
+
+test('two frames in one read both emerge', () => {
+  const d = decode();
+  const both = Buffer.concat([encodeFrame('one', MAX_FRAME), encodeFrame('two', MAX_FRAME)]);
+  assert.deepStrictEqual(d.push(both), ['one', 'two']);
+});
+
+test('a frame split across reads is reassembled', () => {
+  const d = decode();
+  const frame = encodeFrame('{"hello":"world"}', MAX_FRAME);
+  let out = [];
+  for (const byte of frame) out = out.concat(d.push(Buffer.from([byte])));
+  assert.deepStrictEqual(out, ['{"hello":"world"}'], 'byte-at-a-time delivery must still work');
+});
+
+test('a header split across reads is handled', () => {
+  const d = decode();
+  const frame = encodeFrame('payload', MAX_FRAME);
+  assert.deepStrictEqual(d.push(frame.subarray(0, 2)), [], 'half a header yields nothing');
+  assert.deepStrictEqual(d.push(frame.subarray(2)), ['payload']);
+});
+
+test('a frame plus part of the next holds the remainder back', () => {
+  const d = decode();
+  const a = encodeFrame('first', MAX_FRAME);
+  const b = encodeFrame('second', MAX_FRAME);
+  assert.deepStrictEqual(d.push(Buffer.concat([a, b.subarray(0, 3)])), ['first']);
+  assert.deepStrictEqual(d.push(b.subarray(3)), ['second']);
+});
+
+test('unicode survives a split in the middle of a character', () => {
+  const d = decode();
+  const text = JSON.stringify({ note: 'café — naïve 日本語' });
+  const frame = encodeFrame(text, MAX_FRAME);
+  const cut = Math.floor(frame.length / 2);
+  let out = d.push(frame.subarray(0, cut));
+  out = out.concat(d.push(frame.subarray(cut)));
+  assert.deepStrictEqual(out, [text]);
+});
+
+test('an oversized length is refused before anything is buffered', () => {
+  const d = new FrameDecoder(100);
+  const header = Buffer.alloc(HEADER_BYTES);
+  header.writeUInt32BE(500 * 1024 * 1024, 0);
+  assert.deepStrictEqual(d.push(header), []);
+  assert.strictEqual(d.isBroken, true, 'the connection should be marked for closing');
+  assert.strictEqual(d.buffered, 0, 'nothing may be retained');
+});
+
+test('a zero-length frame is refused', () => {
+  const d = decode();
+  const header = Buffer.alloc(HEADER_BYTES);
+  header.writeUInt32BE(0, 0);
+  d.push(header);
+  assert.strictEqual(d.isBroken, true);
+});
+
+test('a broken decoder ignores everything after', () => {
+  const d = new FrameDecoder(50);
+  const header = Buffer.alloc(HEADER_BYTES);
+  header.writeUInt32BE(999999, 0);
+  d.push(header);
+  assert.deepStrictEqual(d.push(encodeFrame('ok', 50)), [], 'must stay shut once broken');
+});
+
+test('encoding refuses to build an oversized frame', () => {
+  assert.throws(() => encodeFrame('x'.repeat(200), 100), /exceeds/);
+});
+
+test('a large frame survives fragmented delivery', () => {
+  const d = decode();
+  const text = JSON.stringify({ blob: 'A'.repeat(400 * 1024) });
+  const frame = encodeFrame(text, MAX_FRAME);
+  let out = [];
+  for (let i = 0; i < frame.length; i += 1300) out = out.concat(d.push(frame.subarray(i, i + 1300)));
+  assert.deepStrictEqual(out, [text]);
+  assert.strictEqual(d.buffered, 0);
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

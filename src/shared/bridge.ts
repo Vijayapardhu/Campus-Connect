@@ -4,6 +4,7 @@ import type {
   AppState,
   ChatMessage,
   ClipboardHistoryEntry,
+  ConnectivityResult,
   JoinRequest,
   RoomInvite,
   RoomType,
@@ -71,6 +72,9 @@ export type SharedClipboardApi = {
   storageStats: () => Promise<StorageStats>;
   /** Apply the retention window and size ceiling now. */
   storageCompact: () => Promise<ActionResult>;
+
+  /** Tests which transports reach a specific address. */
+  networkTest: (host: string) => Promise<ConnectivityResult>;
 
   readClipboard: () => Promise<string>;
   clipboardApply: (entryId: string) => Promise<ActionResult>;

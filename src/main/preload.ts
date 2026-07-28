@@ -45,6 +45,7 @@ const api: SharedClipboardApi = {
 
   storageStats: () => ipcRenderer.invoke('storage:stats'),
   storageCompact: () => ipcRenderer.invoke('storage:compact'),
+  networkTest: (host) => ipcRenderer.invoke('network:test', host),
 
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   clipboardApply: (entryId) => ipcRenderer.invoke('clipboard:apply', entryId),

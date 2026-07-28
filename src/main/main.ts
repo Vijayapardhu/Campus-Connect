@@ -31,6 +31,7 @@ import { getSystemDeviceName } from './systemInfo';
 import { RoomManager } from './roomManager';
 import { HistoryManager } from './historyManager';
 import { ChunkAssembler, splitIntoChunks } from './transfer';
+import { TcpTransport, probeTcp } from './tcp';
 import {
   LIMITED_BROADCAST,
   describeInterfaces,
@@ -57,6 +58,7 @@ import {
   type ChatMessage,
   type ClipboardHistoryEntry,
   type ClipboardPayload,
+  type ConnectivityResult,
   type JoinRequest,
   type PeerInfo,
   type RoomInfo,
@@ -214,6 +216,7 @@ let announceTimer: NodeJS.Timeout | null = null;
 let clipboardPollTimer: NodeJS.Timeout | null = null;
 let transferSweepTimer: NodeJS.Timeout | null = null;
 let compactTimer: NodeJS.Timeout | null = null;
+let tcp: TcpTransport | null = null;
 
 /** Enough to tell a firewall problem from a version problem from a quiet network. */
 const diagnostics = {
@@ -221,7 +224,9 @@ const diagnostics = {
   packetsReceived: 0,
   lastReceivedAt: 0,
   lastError: '',
-  otherVersions: [] as number[]
+  otherVersions: [] as number[],
+  tcpFramesSent: 0,
+  tcpFramesReceived: 0
 };
 let tray: Tray | null = null;
 let lastLocalClipboardHash = '';
@@ -299,7 +304,10 @@ function getAppState(): AppState {
       packetsReceived: diagnostics.packetsReceived,
       lastReceivedAt: diagnostics.lastReceivedAt,
       lastError: diagnostics.lastError,
-      otherVersions: [...diagnostics.otherVersions]
+      otherVersions: [...diagnostics.otherVersions],
+      tcpFramesSent: diagnostics.tcpFramesSent,
+      tcpFramesReceived: diagnostics.tcpFramesReceived,
+      directHosts: tcp?.connectedHosts ?? []
     },
     settings: getSettings()
   };
@@ -423,6 +431,26 @@ function deliver(message: WireMessage, targets: string[]): boolean {
 
   const json = JSON.stringify(message);
   const bytes = Buffer.byteLength(json);
+
+  /*
+   * A host with an open direct connection gets the whole message over TCP.
+   * That works on networks which filter UDP, and it needs no chunking or
+   * retransmission because TCP has already dealt with both.
+   */
+  const remaining: string[] = [];
+  for (const host of targets) {
+    if (host !== BROADCAST_ADDRESS && tcp?.isConnected(host) && tcp.send(host, json)) {
+      diagnostics.packetsSent += 1;
+      diagnostics.tcpFramesSent += 1;
+    } else {
+      remaining.push(host);
+    }
+  }
+
+  if (remaining.length === 0) {
+    return true;
+  }
+  targets = remaining;
 
   if (bytes <= MAX_DATAGRAM_BYTES) {
     sendDatagram(message, targets);
@@ -704,6 +732,10 @@ function updatePeer(peer: PeerInfo) {
     .filter((existing) => Date.now() - existing.lastSeen <= PEER_TTL_MS)
     .slice(0, 20);
   store.set('peers', active);
+
+  // Keep a direct link to everyone we know, so room traffic can use it.
+  tcp?.connect(nextPeer.host);
+
   sendStateToRenderer();
 }
 
@@ -1354,6 +1386,78 @@ function handleWireMessage(message: WireMessage, host: string) {
 
 // --- lifecycle ---------------------------------------------------------------
 
+/**
+ * A device that speaks another protocol version. `announce` is still accepted
+ * so the device appears at all, labelled with the version it speaks; anything
+ * else is refused, because those messages change meaning between versions.
+ */
+function reportVersionMismatch(message: WireMessage, host: string): void {
+  if (message.type === 'announce' && message.deviceName) {
+    updatePeer({
+      id: message.deviceId,
+      name: message.deviceName,
+      host,
+      port: message.port ?? BROADCAST_PORT,
+      lastSeen: Date.now(),
+      protocolVersion: message.v
+    });
+  }
+
+  if (!diagnostics.otherVersions.includes(message.v)) {
+    diagnostics.otherVersions.push(message.v);
+    log.warn(`${message.deviceName} speaks protocol v${message.v}; this app speaks v${PROTOCOL_VERSION}`);
+    sendStatus(
+      `${message.deviceName || 'A device'} is running a different version of Shared Clipboard (protocol v${message.v} against this app's v${PROTOCOL_VERSION}), so the two cannot talk to each other. Install the same version on both.`,
+      'error'
+    );
+    notify(
+      'Different version detected',
+      `${message.deviceName || 'A device'} is running another version of Shared Clipboard. Install the same version on both machines.`
+    );
+  }
+  sendStateToRenderer();
+}
+
+/** One place where an arriving message is validated, whatever carried it. */
+function receiveMessage(raw: string, host: string, viaTcp: boolean): void {
+  try {
+    const message = JSON.parse(raw) as WireMessage;
+    if (!message?.type || !message.deviceId) {
+      return;
+    }
+
+    diagnostics.packetsReceived += 1;
+    diagnostics.lastReceivedAt = Date.now();
+    if (viaTcp) {
+      diagnostics.tcpFramesReceived += 1;
+    }
+
+    if (message.v !== PROTOCOL_VERSION) {
+      reportVersionMismatch(message, host);
+      return;
+    }
+
+    handleWireMessage(message, host);
+  } catch {
+    // Malformed input on a shared port is expected; ignore quietly.
+  }
+}
+
+function startTcpService() {
+  tcp = new TcpTransport({
+    port: BROADCAST_PORT,
+    maxFrameBytes: MAX_TRANSFER_BYTES,
+    onMessage: (payload, host) => receiveMessage(payload, host, true),
+    onStatus: (message) => sendStatus(message, 'info')
+  });
+  tcp.start();
+
+  // Re-dial every peer we know about, so a direct link survives a restart.
+  for (const peer of store.get('peers')) {
+    tcp.connect(peer.host);
+  }
+}
+
 function startUdpService() {
   udpSocket = dgram.createSocket({
     type: 'udp4',
@@ -1370,57 +1474,7 @@ function startUdpService() {
   });
 
   udpSocket.on('message', (buffer, rinfo) => {
-    try {
-      const message = JSON.parse(buffer.toString('utf8')) as WireMessage;
-      if (!message?.type || !message.deviceId) {
-        return;
-      }
-
-      diagnostics.packetsReceived += 1;
-      diagnostics.lastReceivedAt = Date.now();
-
-      /*
-       * A version mismatch used to be discarded in silence, which is the worst
-       * possible failure: two devices can see each other perfectly, throw
-       * everything away, and show the user nothing at all.
-       *
-       * `announce` is now accepted from any version — its shape has never
-       * changed — purely so the device still appears, labelled with the version
-       * it speaks. Everything else is still refused, because the meaning of
-       * those messages does change between versions.
-       */
-      if (message.v !== PROTOCOL_VERSION) {
-        if (message.type === 'announce' && message.deviceName) {
-          updatePeer({
-            id: message.deviceId,
-            name: message.deviceName,
-            host: rinfo.address,
-            port: message.port ?? BROADCAST_PORT,
-            lastSeen: Date.now(),
-            protocolVersion: message.v
-          });
-        }
-
-        if (!diagnostics.otherVersions.includes(message.v)) {
-          diagnostics.otherVersions.push(message.v);
-          log.warn(`${message.deviceName} speaks protocol v${message.v}; this app speaks v${PROTOCOL_VERSION}`);
-          sendStatus(
-            `${message.deviceName || 'A device'} is running a different version of Shared Clipboard (protocol v${message.v} against this app's v${PROTOCOL_VERSION}), so the two cannot talk to each other. Install the same version on both.`,
-            'error'
-          );
-          notify(
-            'Different version detected',
-            `${message.deviceName || 'A device'} is running another version of Shared Clipboard. Install the same version on both machines.`
-          );
-        }
-        sendStateToRenderer();
-        return;
-      }
-
-      handleWireMessage(message, rinfo.address);
-    } catch {
-      // Malformed packets on a shared port are expected; ignore quietly.
-    }
+    receiveMessage(buffer.toString('utf8'), rinfo.address, false);
   });
 
   udpSocket.bind(BROADCAST_PORT, () => {
@@ -1477,6 +1531,8 @@ function stopUdpService() {
     compactTimer = null;
   }
   outboundTransfers.clear();
+  tcp?.stop();
+  tcp = null;
   udpSocket?.close();
   udpSocket = null;
 }
@@ -1620,6 +1676,7 @@ app.whenReady().then(() => {
   mainWindow = createWindow();
   setupTray();
   startUdpService();
+  startTcpService();
 
   nativeTheme.on('updated', () => sendStateToRenderer());
 
@@ -1706,6 +1763,8 @@ ipcMain.handle('app:connect-peer', (_event, host: string, port: number, name: st
     lastSeen: Date.now()
   };
   updatePeer(peer);
+  // Both transports: TCP for networks that filter UDP, UDP for the rest.
+  tcp?.connect(host);
   sendUdpMessage(baseMessage('announce'), host);
   sendStatus(`Reaching out to ${peer.name}`, 'info');
   return getAppState();
@@ -2264,6 +2323,79 @@ ipcMain.handle('chat:mark-seen', (_event, roomId: string): ActionResult => {
   }
 
   return ok('Marked as seen.');
+});
+
+/**
+ * Tests a specific address and reports which transports survive the network.
+ *
+ * The three failure modes look identical from inside the app — nothing arrives
+ * — but they need completely different answers, so this separates them:
+ * broadcast filtered but direct traffic fine, UDP filtered but TCP fine, or
+ * client isolation, where nothing gets through and no application can help.
+ */
+ipcMain.handle('network:test', async (_event, host: string): Promise<ConnectivityResult> => {
+  const target = host.trim();
+  if (!target) {
+    return {
+      host: target,
+      tcpReachable: false,
+      udpReplied: false,
+      verdict: 'unreachable',
+      detail: 'Enter the address shown on the other machine, in its Network settings.'
+    };
+  }
+
+  const tcpReachable = await probeTcp(target, BROADCAST_PORT);
+
+  // A UDP probe: announce directly, then see whether that device says anything
+  // back within a couple of announce intervals.
+  const before = diagnostics.packetsReceived;
+  const knownPeer = store.get('peers').find((peer) => peer.host === target);
+  sendUdpMessage(baseMessage('announce'), target);
+  await new Promise((resolve) => setTimeout(resolve, 3500));
+  const udpReplied =
+    diagnostics.packetsReceived > before ||
+    Boolean(
+      knownPeer && store.get('peers').some((peer) => peer.host === target && peer.lastSeen > Date.now() - 5000)
+    );
+
+  if (tcpReachable && udpReplied) {
+    return {
+      host: target,
+      tcpReachable,
+      udpReplied,
+      verdict: 'direct',
+      detail: 'Both transports reach that device. If rooms still do not work, the problem is the join credentials or an unapproved request, not the network.'
+    };
+  }
+
+  if (tcpReachable) {
+    return {
+      host: target,
+      tcpReachable,
+      udpReplied,
+      verdict: 'tcp-only',
+      detail: 'The device is reachable, but UDP is being filtered. Adding it by address is exactly the right move — everything will run over the direct connection instead.'
+    };
+  }
+
+  if (udpReplied) {
+    return {
+      host: target,
+      tcpReachable,
+      udpReplied,
+      verdict: 'udp-only',
+      detail: 'UDP gets through but TCP does not. Discovery and sync will work; only the direct-connection fallback is unavailable.'
+    };
+  }
+
+  return {
+    host: target,
+    tcpReachable,
+    udpReplied,
+    verdict: 'unreachable',
+    detail: 'Nothing reached that device on either transport. Either the app is not running there, its firewall is blocking it, or the network separates its clients — which university and public WiFi commonly do, and which no application can work around. A phone hotspot will tell you which within a minute.'
+  };
 });
 
 ipcMain.handle('storage:stats', (): StorageStats => historyManager.stats());

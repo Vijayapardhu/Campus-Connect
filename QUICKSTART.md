@@ -192,9 +192,19 @@ Also worth checking:
   dismiss by accident. Allow the app on both machines, for private networks.
 - **Same network, really.** Not one on a guest SSID and one on the main one,
   and not one on 5 GHz with band isolation.
-- **Settings → Network → Add a device by IP** connects directly, which
-  sometimes works even when broadcast is filtered. Each machine shows its own
-  address in that same panel.
+- **Settings → Network → Test a connection.** Enter the other machine's address
+  and it reports which transports survive your network:
+
+  | Result | What it means |
+  |--------|---------------|
+  | Both transports reach it | The network is fine — the problem is the credentials or an unapproved request |
+  | Reachable, but UDP is filtered | Add it by address; everything runs over the direct connection |
+  | UDP works, direct connections do not | Discovery and sync work normally |
+  | Nothing reaches that device | The app is not running there, a firewall is blocking it, or the network separates its clients |
+
+- **Add a device by IP** opens a direct TCP connection as well as UDP, so it
+  works even where UDP is filtered entirely. Each machine shows its own address
+  in that same panel.
 </details>
 
 <details>

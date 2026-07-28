@@ -403,6 +403,7 @@ export default function App() {
                 });
               }}
               onCompactStorage={() => run(api.storageCompact())}
+              onTestConnection={(host) => api.networkTest(host)}
             />
           </div>
         ) : !room ? (

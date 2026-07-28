@@ -53,6 +53,7 @@ on the other. Nothing leaves the network you are already on.
   automatic retransmission of anything the network drops
 - **Clipboard history** that survives restarts, with search, pinning, and one-click copy back
 - **QR codes** for join codes, so a phone can scan instead of typing
+- **Two transports** — UDP for discovery, direct TCP for networks that filter it
 - **No account, no server, no internet connection required**
 - **Adjustable text size and font**, light and dark themes, keyboard shortcuts
 

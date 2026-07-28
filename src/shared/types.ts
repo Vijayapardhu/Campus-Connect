@@ -266,6 +266,19 @@ export type NetworkDiagnostics = {
   lastError: string;
   /** Protocol versions seen from other devices that this app cannot talk to. */
   otherVersions: number[];
+  /** Frames carried over the direct TCP transport rather than UDP. */
+  tcpFramesSent: number;
+  tcpFramesReceived: number;
+  /** Hosts with a live direct connection right now. */
+  directHosts: string[];
+};
+
+export type ConnectivityResult = {
+  host: string;
+  tcpReachable: boolean;
+  udpReplied: boolean;
+  verdict: 'direct' | 'udp-only' | 'tcp-only' | 'unreachable';
+  detail: string;
 };
 
 export type StorageStats = {

@@ -19,7 +19,7 @@ without the password cannot read it even though they receive the same broadcast 
 | Security | AES-256-GCM per room, key derived from the password with scrypt |
 | Membership | Owner-authoritative roster, approval queue, remove member, leave/close room |
 | History | Per-room clipboard history and chat, persisted across restarts |
-| Discovery | UDP broadcast on the LAN, plus manual connection by IP |
+| Discovery | UDP broadcast on the LAN, plus direct TCP connections by address |
 | Desktop | System tray, start on login, light/dark theming |
 
 ---
@@ -32,7 +32,7 @@ without the password cannot read it even though they receive the same broadcast 
 | Language | TypeScript 5.8 (strict) |
 | UI | React 19 |
 | Bundler | Vite 6 (renderer), `tsc` (main process) |
-| Transport | Node.js `dgram` (UDP), no external networking library |
+| Transport | Node.js `dgram` (UDP) and `net` (TCP), no external networking library |
 | Cryptography | Node.js `crypto` — scrypt + AES-256-GCM, no external crypto library |
 | Persistence | electron-store |
 | Packaging | electron-builder (NSIS / DMG / AppImage) |
@@ -333,7 +333,45 @@ like any other request — which is the point, since the acceptance arrives over
 the same network as everything else. And for an encrypted room the invitee still
 needs the password before it can read anything.
 
-### 6.5 Chunked transfer
+### 6.5 Two transports
+
+UDP broadcast is how devices find each other and is all an ordinary network needs. Plenty of
+networks are not ordinary: many campus and corporate deployments filter broadcast, and some filter
+UDP entirely while leaving TCP alone. So every device also listens on **TCP 37777**, and a peer
+added by address — or discovered — gets a real connection.
+
+```
+                       Transport
+                           │
+              ┌────────────┴────────────┐
+              ▼                         ▼
+     UDP broadcast + unicast      Direct TCP
+     discovery, and any peer      preferred for any peer
+     without a direct link        with a live connection
+              │                         │
+              └────────────┬────────────┘
+                           ▼
+                   handleWireMessage
+              (the same four-way gate for both)
+```
+
+Frames arriving over TCP go to exactly the same `handleWireMessage` as datagrams, so membership
+checks and decryption are unchanged. **This is a different pipe, not a different set of rules.**
+
+TCP is a byte stream, so each message is framed as a 4-byte big-endian length followed by that many
+bytes of JSON (`src/main/framing.ts`). The length is checked *before* anything is buffered, which is
+what stops a hostile peer announcing a 4 GB frame.
+
+Two consequences worth knowing:
+
+- **No chunking is needed over TCP.** Ordering and delivery are already guaranteed, so a large
+  payload goes as one frame. Measured on loopback, 8 MB arrives in 0.3 s against 1.8 s for the same
+  payload chunked over UDP.
+- **Client isolation defeats both.** When the access point drops packets between two of its own
+  clients, TCP fails exactly as UDP does. No transport, port, or protocol changes that — it is
+  enforced upstream of the application. Settings → Network says so rather than pretending otherwise.
+
+### 6.6 Chunked transfer
 
 A UDP datagram tops out at 64 KB, so anything larger is serialised, split into 8 KB pieces, and sent
 as individual `chunk` messages. `ChunkAssembler` (`src/main/transfer.ts`) rebuilds the original JSON
