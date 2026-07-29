@@ -163,14 +163,21 @@ export class Updater {
     return this.status;
   }
 
-  /** Restarts into the new version. Only valid once state is 'ready'. */
-  installNow(): void {
+  /**
+   * Restarts into the new version. Only valid once state is 'ready'; returns
+   * false otherwise, so the caller can say so rather than promising a restart
+   * that was never going to happen.
+   */
+  installNow(): boolean {
     if (this.status.state !== 'ready') {
-      return;
+      log.warn(`Install asked for while the update was '${this.status.state}'; ignoring`);
+      return false;
     }
+
     // isSilent false so the installer still shows progress; isForceRunAfter so
     // the app comes back up rather than leaving the user staring at a desktop.
     autoUpdater.quitAndInstall(false, true);
+    return true;
   }
 
   private schedule(): void {

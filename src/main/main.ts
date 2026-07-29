@@ -234,18 +234,50 @@ function write<K extends keyof AppStore>(key: K, value: AppStore[K]): void {
   save(key, value);
 }
 
+/** How long to wait before trying a write that failed again. */
+const SAVE_RETRY_MS = 15000;
+const retryingSaves = new Set<keyof AppStore>();
+
 /**
- * electron-store refuses `undefined` — it throws rather than clearing the key —
- * and clearing the current room is exactly what happens when you leave one. The
- * throw used to be swallowed by the message handler's catch, so the room came
- * back on the next launch.
+ * Writes a value out. Failing to do so must never take the app down.
+ *
+ * electron-store saves by writing a temporary file and renaming it over the
+ * real one, and on Windows that rename fails with EPERM whenever anything else
+ * holds the file open for a moment — a virus scanner, a backup agent, a folder
+ * being synced, or a second copy of the app. It happened inside a history flush
+ * on a timer, where nothing was there to catch it, so a momentary file lock
+ * killed the whole app with a stack trace in front of the user.
+ *
+ * The value is already in memory, so a failed write costs nothing right away.
+ * It is tried again shortly, and any later write of the same key covers it.
+ *
+ * `undefined` is a delete: electron-store throws rather than clearing the key,
+ * and clearing the current room is exactly what happens when you leave one.
  */
 function save<K extends keyof AppStore>(key: K, value: AppStore[K]): void {
-  if (value === undefined) {
-    store.delete(key);
-  } else {
-    store.set(key, value);
+  try {
+    if (value === undefined) {
+      store.delete(key);
+    } else {
+      store.set(key, value);
+    }
+  } catch (error) {
+    log.warn(`Could not save ${String(key)}, will try again: ${(error as Error).message}`);
+    scheduleSaveRetry(key);
   }
+}
+
+function scheduleSaveRetry(key: keyof AppStore): void {
+  if (retryingSaves.has(key)) {
+    return;
+  }
+
+  retryingSaves.add(key);
+  const timer = setTimeout(() => {
+    retryingSaves.delete(key);
+    persist(key);
+  }, SAVE_RETRY_MS);
+  timer.unref?.();
 }
 
 /** Writes out the in-memory copy of a value that is only updated in place. */
@@ -1895,6 +1927,25 @@ function createWindow(): BrowserWindow {
 }
 
 /*
+ * An app that lives in the tray should not disappear because something
+ * transient went wrong.
+ *
+ * Electron's default for an uncaught exception in the main process is a dialog
+ * with a stack trace and then nothing — the window stops responding and the
+ * user is left with an app that is neither running nor closed. Almost every
+ * candidate here is a passing failure of the outside world: a locked file, a
+ * socket closing at the wrong moment. Logging it and carrying on is far closer
+ * to what the user wants than the app vanishing.
+ */
+process.on('uncaughtException', (error) => {
+  log.error(`Uncaught exception in the main process: ${error?.stack ?? String(error)}`);
+});
+
+process.on('unhandledRejection', (reason) => {
+  log.error(`Unhandled promise rejection: ${(reason as Error)?.stack ?? String(reason)}`);
+});
+
+/*
  * One copy of the app per machine.
  *
  * It starts with the system and then lives in the tray, so opening it from the
@@ -2752,7 +2803,32 @@ ipcMain.handle('update:install', (): ActionResult => {
     return ok('Opened the download page — macOS needs the update installed by hand.');
   }
 
-  updater?.installNow();
+  const status = updater?.getStatus();
+  if (status?.state !== 'ready') {
+    // Saying "restarting" and then doing nothing is indistinguishable from the
+    // app having frozen, which is how it was read.
+    return fail(
+      status?.state === 'downloading'
+        ? `The update is still downloading (${status.percent ?? 0}%). This becomes available the moment it finishes.`
+        : 'No update has been downloaded yet. Check for updates, then download it first.'
+    );
+  }
+
+  /*
+   * The window's close handler keeps the app alive in the tray, so the quit the
+   * installer is about to ask for has to be marked as a real one first. History
+   * is written out here too: its flush is on a debounce, and the app is about
+   * to go away.
+   */
+  isQuiting = true;
+  historyManager.flush();
+  persist('peers');
+
+  if (!updater?.installNow()) {
+    isQuiting = false;
+    return fail('The update could not be started. Download it again, or install it by hand.');
+  }
+
   return ok('Restarting to finish the update…');
 });
 
