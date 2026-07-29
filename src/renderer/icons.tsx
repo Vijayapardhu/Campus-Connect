@@ -159,6 +159,13 @@ export const XCircleIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const PowerIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 3v9" />
+    <path d="M7.1 6.6a7.5 7.5 0 1 0 9.8 0" />
+  </Svg>
+);
+
 export const SignalIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M5 13a9.5 9.5 0 0 1 14 0M8 16.5a5 5 0 0 1 8 0M2 9.5a14 14 0 0 1 20 0M12 20v.01" />

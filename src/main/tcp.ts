@@ -28,8 +28,16 @@ import { FrameDecoder, encodeFrame } from './framing';
 const RECONNECT_DELAY_MS = 5000;
 const MAX_RECONNECT_DELAY_MS = 60000;
 const CONNECT_TIMEOUT_MS = 4000;
-/** Sockets idle longer than this are closed; the peer will be redialled. */
-const IDLE_TIMEOUT_MS = 120000;
+/**
+ * Idle connections are kept, not closed.
+ *
+ * They used to be dropped after two minutes and redialled, which is where the
+ * stream of "Connected directly to ..." messages came from: every peer
+ * reconnected on a loop for as long as the app was open. Keep-alive probes tell
+ * us a peer has gone away without needing that, and they cost two packets a
+ * minute.
+ */
+const KEEPALIVE_DELAY_MS = 30000;
 
 type Connection = {
   socket: net.Socket;
@@ -47,12 +55,19 @@ export type TcpTransportOptions = {
   /** Called with every complete frame, plus the address it arrived from. */
   onMessage: (payload: string, host: string) => void;
   onStatus?: (message: string) => void;
+  /** Addresses that must never be dialled: this device's own, and broadcasts. */
+  undialable?: () => string[];
 };
 
 export class TcpTransport {
   private server: net.Server | null = null;
   /** Keyed by host, so a peer has at most one connection either way. */
   private connections = new Map<string, Connection>();
+  /**
+   * Hosts already reported to the user. A reconnect is not news — it is the
+   * same link coming back — so each address is only ever announced once.
+   */
+  private announced = new Set<string>();
   private stopped = false;
 
   constructor(private readonly options: TcpTransportOptions) {}
@@ -81,6 +96,7 @@ export class TcpTransport {
       connection.socket.destroy();
     }
     this.connections.clear();
+    this.announced.clear();
 
     this.server?.close();
     this.server = null;
@@ -88,10 +104,28 @@ export class TcpTransport {
 
   /** Opens a connection to a peer, or leaves the existing one alone. */
   connect(host: string): void {
-    if (this.stopped || this.connections.has(host)) {
+    if (this.stopped || this.connections.has(host) || !this.isDialable(host)) {
       return;
     }
     this.dial(host, RECONNECT_DELAY_MS);
+  }
+
+  /**
+   * Dialling our own address connects the app to itself: the server accepts it,
+   * `adopt` tears the outbound down as a duplicate, and the whole thing starts
+   * again on the next announce. A broadcast address behaves much the same way
+   * without ever being a device, and multicast answers nothing at all.
+   */
+  private isDialable(host: string): boolean {
+    if (!host || host === '0.0.0.0' || host === '255.255.255.255') {
+      return false;
+    }
+    if (this.options.undialable?.().includes(host)) {
+      return false;
+    }
+    // 224.0.0.0/4 is multicast; nothing there answers a TCP connection.
+    const firstOctet = Number(host.split('.')[0]);
+    return !(firstOctet >= 224 && firstOctet <= 239);
   }
 
   /** True when a frame can be delivered to this host right now. */
@@ -121,6 +155,13 @@ export class TcpTransport {
   }
 
   private dial(host: string, delay: number): void {
+    // A retry can fall due after the peer has connected to us in the meantime,
+    // or after the transport has been shut down entirely. Neither is a reason
+    // to throw away a working connection and start again.
+    if (this.stopped || this.isConnected(host)) {
+      return;
+    }
+
     const socket = new net.Socket();
     const connection: Connection = {
       socket,
@@ -136,35 +177,68 @@ export class TcpTransport {
     socket.once('timeout', () => socket.destroy());
 
     socket.connect(this.options.port, host, () => {
-      // Past the handshake the timeout becomes an idle timeout, not a dial one.
-      socket.setTimeout(IDLE_TIMEOUT_MS);
+      // The dial deadline is done with; from here the link is held open by
+      // keep-alive rather than torn down whenever it goes quiet.
+      socket.setTimeout(0);
+      socket.setKeepAlive(true, KEEPALIVE_DELAY_MS);
+      socket.setNoDelay(true);
       connection.retryDelay = RECONNECT_DELAY_MS;
       log.info(`Direct connection to ${host} established`);
-      this.options.onStatus?.(`Connected directly to ${host}`);
+      this.report(host);
     });
 
     this.wire(connection);
   }
 
+  /** Tells the user about a direct link, but only the first time per address. */
+  private report(host: string): void {
+    if (this.announced.has(host)) {
+      return;
+    }
+    this.announced.add(host);
+    this.options.onStatus?.(`Connected directly to ${host}`);
+  }
+
   /** Takes over a socket the server accepted. */
   private adopt(socket: net.Socket, outbound: boolean): void {
     const host = socket.remoteAddress?.replace(/^::ffff:/, '') ?? '';
+    const self = socket.localAddress?.replace(/^::ffff:/, '') ?? '';
     if (!host) {
       socket.destroy();
       return;
     }
 
-    // An inbound connection replaces whatever was there: the peer clearly
-    // believes this one works, and two sockets to one host help nobody.
     const existing = this.connections.get(host);
     if (existing) {
+      /*
+       * Both devices dialled each other at the same moment, which is the normal
+       * case: each announces, each connects. Whoever replaces its connection
+       * with the incoming one drops a socket the other side is still using, and
+       * with both sides doing it they trade connections for as long as the app
+       * is open — which is what produced a "Connected directly to ..." message
+       * every fraction of a second.
+       *
+       * So both ends apply the same rule instead: the socket dialled by the
+       * lower address is the one that survives. A keeps its outbound to B, B
+       * keeps A's inbound, and they agree on one connection without talking
+       * about it.
+       */
+      const established =
+        !existing.socket.destroyed && !existing.socket.connecting && existing.socket.writable;
+      if (existing.outbound && established && self && self < host) {
+        socket.destroy();
+        return;
+      }
+
       if (existing.retryTimer) {
         clearTimeout(existing.retryTimer);
       }
       existing.socket.destroy();
     }
 
-    socket.setTimeout(IDLE_TIMEOUT_MS);
+    socket.setTimeout(0);
+    socket.setKeepAlive(true, KEEPALIVE_DELAY_MS);
+    socket.setNoDelay(true);
     const connection: Connection = {
       socket,
       decoder: new FrameDecoder(this.options.maxFrameBytes),
@@ -176,6 +250,7 @@ export class TcpTransport {
     this.connections.set(host, connection);
     this.wire(connection);
     log.info(`Accepted a direct connection from ${host}`);
+    this.report(host);
   }
 
   private wire(connection: Connection): void {

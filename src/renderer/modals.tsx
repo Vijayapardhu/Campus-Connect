@@ -566,6 +566,12 @@ export function SettingsModal({
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         <SwitchRow
+          title="Shared clipboard"
+          description="The master switch. Off means nothing is shared, received or announced."
+          checked={state.settings.online !== false}
+          onChange={(next) => onUpdateSettings({ online: next })}
+        />
+        <SwitchRow
           title="Share my clipboard"
           description="Send what you copy to the room you have selected."
           checked={state.settings.syncEnabled}

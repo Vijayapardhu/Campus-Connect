@@ -255,7 +255,8 @@ type Envelope = {
 };
 
 type AppSettings = {
-  syncEnabled: boolean;   // master switch for sharing
+  online: boolean;        // the header switch: off closes the sockets entirely
+  syncEnabled: boolean;   // share what this device copies
   autoApply: boolean;     // write incoming items straight to the clipboard
   shareImages: boolean;
   theme: 'system' | 'light' | 'dark';

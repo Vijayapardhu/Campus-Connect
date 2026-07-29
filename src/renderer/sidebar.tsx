@@ -43,6 +43,8 @@ export function Sidebar({
   onOpenSettings: () => void;
   settingsOpen: boolean;
 }) {
+  const online = state.settings.online !== false;
+
   // Reachable, but speaking a protocol this build cannot talk to.
   const outdated = state.peers.filter(
     (peer) =>
@@ -194,9 +196,9 @@ export function Sidebar({
           <span className="device-card__body">
             <span className="device-card__name">{state.deviceName}</span>
             <span className="device-card__status">
-              <span className={state.settings.syncEnabled ? 'status-dot' : 'status-dot is-off'} />
-              {state.settings.syncEnabled ? 'Sharing on' : 'Sharing paused'}
-              {state.peers.length > 0 ? ` · ${state.peers.length} nearby` : ''}
+              <span className={online && state.settings.syncEnabled ? 'status-dot' : 'status-dot is-off'} />
+              {!online ? 'Switched off' : state.settings.syncEnabled ? 'Sharing on' : 'Sharing paused'}
+              {online && state.peers.length > 0 ? ` · ${state.peers.length} nearby` : ''}
             </span>
           </span>
           <SettingsIcon size={15} />

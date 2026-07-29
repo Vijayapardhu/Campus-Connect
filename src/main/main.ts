@@ -22,7 +22,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import {
   createImageClipboardPayload,
   createTextClipboardPayload,
-  readClipboardImageDataUrl,
+  readClipboardImage,
   readClipboardText,
   writeClipboardImage,
   writeClipboardText
@@ -85,7 +85,13 @@ type AppStore = {
 
 const BROADCAST_PORT = 37777;
 const ANNOUNCE_INTERVAL_MS = 3000;
-const CLIPBOARD_POLL_MS = 1000;
+/**
+ * Checking the clipboard is now cheap enough to do properly. It used to
+ * re-encode any image it found on every tick, which is why it could not run
+ * more than once a second; the wait before a copy left the machine was most of
+ * what "it takes a while to arrive" meant.
+ */
+const CLIPBOARD_POLL_MS = 350;
 const PEER_TTL_MS = 15000;
 /** A UDP datagram tops out at 64KB; anything larger has to be chunked. */
 const MAX_DATAGRAM_BYTES = 60000;
@@ -168,6 +174,7 @@ function mimeForFile(fileName: string): string {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
+  online: true,
   syncEnabled: true,
   autoApply: true,
   shareImages: true,
@@ -199,18 +206,67 @@ const store = new Store<AppStore>({
   }
 });
 
+/**
+ * Everything reads through here rather than touching the store directly.
+ *
+ * electron-store re-reads and re-parses its entire file on every single `get`,
+ * and rewrites the whole thing on every `set`. That file also holds the
+ * clipboard and chat history, so it is routinely megabytes of JSON — and the
+ * hot paths hit it constantly: the room roster is checked for every message
+ * that arrives, and a peer's last-seen time is refreshed for every packet,
+ * which during a large image is thousands of them. The app was spending most of
+ * a transfer parsing its own settings file.
+ *
+ * So values are read from disk once and kept in memory afterwards. Writes still
+ * go straight through, because they have to survive a crash.
+ */
+const cache = new Map<keyof AppStore, unknown>();
+
+function read<K extends keyof AppStore>(key: K): AppStore[K] {
+  if (!cache.has(key)) {
+    cache.set(key, store.get(key));
+  }
+  return cache.get(key) as AppStore[K];
+}
+
+function write<K extends keyof AppStore>(key: K, value: AppStore[K]): void {
+  cache.set(key, value);
+  save(key, value);
+}
+
+/**
+ * electron-store refuses `undefined` — it throws rather than clearing the key —
+ * and clearing the current room is exactly what happens when you leave one. The
+ * throw used to be swallowed by the message handler's catch, so the room came
+ * back on the next launch.
+ */
+function save<K extends keyof AppStore>(key: K, value: AppStore[K]): void {
+  if (value === undefined) {
+    store.delete(key);
+  } else {
+    store.set(key, value);
+  }
+}
+
+/** Writes out the in-memory copy of a value that is only updated in place. */
+function persist<K extends keyof AppStore>(key: K): void {
+  if (cache.has(key)) {
+    save(key, cache.get(key) as AppStore[K]);
+  }
+}
+
 const roomManager = new RoomManager({
-  readRooms: () => store.get('rooms'),
-  writeRooms: (rooms) => store.set('rooms', rooms),
-  readKeys: () => store.get('roomKeys'),
-  writeKeys: (keys) => store.set('roomKeys', keys)
+  readRooms: () => read('rooms'),
+  writeRooms: (rooms) => write('rooms', rooms),
+  readKeys: () => read('roomKeys'),
+  writeKeys: (keys) => write('roomKeys', keys)
 });
 
 const historyManager = new HistoryManager({
-  readClipboard: () => store.get('clipboardHistory'),
-  writeClipboard: (entries) => store.set('clipboardHistory', entries),
-  readChat: () => store.get('chatHistory'),
-  writeChat: (messages) => store.set('chatHistory', messages)
+  readClipboard: () => read('clipboardHistory'),
+  writeClipboard: (entries) => write('clipboardHistory', entries),
+  readChat: () => read('chatHistory'),
+  writeChat: (messages) => write('chatHistory', messages)
 });
 
 let mainWindow: BrowserWindow | null = null;
@@ -235,6 +291,8 @@ const diagnostics = {
 let tray: Tray | null = null;
 let lastLocalClipboardHash = '';
 let lastRemoteClipboardHash = '';
+/** The image already accounted for, so the poller never re-encodes it. */
+let lastClipboardImageFingerprint = '';
 let isQuiting = false;
 
 // --- helpers -----------------------------------------------------------------
@@ -271,15 +329,15 @@ function getLocalIpAddress(): string {
 }
 
 function getSettings(): AppSettings {
-  return { ...DEFAULT_SETTINGS, ...store.get('settings') };
+  return { ...DEFAULT_SETTINGS, ...read('settings') };
 }
 
 function deviceId(): string {
-  return store.get('deviceId');
+  return read('deviceId');
 }
 
 function deviceName(): string {
-  return store.get('deviceName');
+  return read('deviceName');
 }
 
 function getAppState(): AppState {
@@ -287,10 +345,10 @@ function getAppState(): AppState {
     deviceId: deviceId(),
     deviceName: deviceName(),
     appVersion: app.getVersion(),
-    listenPort: store.get('listenPort'),
+    listenPort: read('listenPort'),
     localAddress: getLocalIpAddress(),
-    peers: store.get('peers'),
-    currentRoomId: store.get('currentRoomId'),
+    peers: read('peers'),
+    currentRoomId: read('currentRoomId'),
     rooms: roomManager.getRooms(),
     discovered: roomManager.getDiscoveredRooms(),
     lockedRoomIds: roomManager
@@ -352,7 +410,31 @@ function notify(title: string, body: string, onClick?: () => void): void {
 
 type StatusTone = 'info' | 'success' | 'warning' | 'error';
 
+/**
+ * A backstop against repeat messages, wherever they come from. Anything the
+ * user has just been told is not worth telling them again — and a message that
+ * arrives twice a second is worth telling them once.
+ */
+const STATUS_REPEAT_MS = 4000;
+const lastStatusAt = new Map<string, number>();
+
 function sendStatus(message: string, tone: StatusTone = 'info') {
+  const now = Date.now();
+  const previous = lastStatusAt.get(message) ?? 0;
+
+  if (lastStatusAt.size > 50) {
+    for (const [text, at] of lastStatusAt) {
+      if (now - at > STATUS_REPEAT_MS) {
+        lastStatusAt.delete(text);
+      }
+    }
+  }
+  lastStatusAt.set(message, now);
+
+  if (now - previous < STATUS_REPEAT_MS) {
+    return;
+  }
+
   log.info(`[${tone}] ${message}`);
   mainWindow?.webContents.send('sync:status', { message, tone });
 }
@@ -371,7 +453,7 @@ function baseMessage(type: WireMessage['type']): WireMessage {
     type,
     deviceId: deviceId(),
     deviceName: deviceName(),
-    port: store.get('listenPort'),
+    port: read('listenPort'),
     host: getLocalIpAddress(),
     timestamp: Date.now()
   };
@@ -703,15 +785,15 @@ function sweepTransfers(): void {
 }
 
 function getPeerHost(targetDeviceId: string): string | undefined {
-  return store.get('peers').find((peer) => peer.id === targetDeviceId)?.host;
+  return read('peers').find((peer) => peer.id === targetDeviceId)?.host;
 }
 
 /** Hosts of every accepted member of a room that we currently know how to reach. */
 /** Peers we can actually talk to — same protocol version. */
 function compatiblePeers(): PeerInfo[] {
-  return store
-    .get('peers')
-    .filter((peer) => peer.protocolVersion === undefined || peer.protocolVersion === PROTOCOL_VERSION);
+  return read('peers').filter(
+    (peer) => peer.protocolVersion === undefined || peer.protocolVersion === PROTOCOL_VERSION
+  );
 }
 
 function memberHosts(roomId: string): string[] {
@@ -728,20 +810,83 @@ function memberHosts(roomId: string): string[] {
   return hosts;
 }
 
+/**
+ * Where a room's traffic should go, and whether it still needs broadcasting.
+ *
+ * When every member's address is known, addressing them directly delivers the
+ * whole room. Broadcasting as well then sends a second copy of the same
+ * payload — unnoticeable for a line of text, but for a screenshot it doubles
+ * the work on the sender, the network and every receiver, which is a large part
+ * of why images felt slow. If even one member is unaccounted for, the broadcast
+ * stays: reaching everyone matters more than the saving.
+ */
+function deliverToRoom(message: WireMessage, roomId: string): boolean {
+  const members = roomManager
+    .getMembers(roomId, 'accepted')
+    .filter((member) => member.deviceId !== deviceId());
+
+  const hosts = members
+    .map((member) => getPeerHost(member.deviceId))
+    .filter((host): host is string => Boolean(host));
+
+  const allAddressable = hosts.length === members.length && hosts.length > 0;
+  return deliver(message, targetList(hosts, !allAddressable));
+}
+
+/**
+ * Records that a device is alive and reachable.
+ *
+ * This runs for every packet that arrives, and a chunked image is thousands of
+ * them. Only a change the user could actually see — a new device, a rename, a
+ * different address — is worth writing to disk, redialling, or redrawing the
+ * window for; the rest just moves a timestamp in memory. `sweepPeers` persists
+ * those on a timer and drops the ones that have gone quiet.
+ */
 function updatePeer(peer: PeerInfo) {
-  const peers = store.get('peers');
+  const peers = read('peers');
+  const existing = peers.find((candidate) => candidate.id === peer.id);
   const nextPeer: PeerInfo = { ...peer, lastSeen: Date.now() };
-  const filtered = peers.filter((existing) => existing.id !== nextPeer.id);
-  filtered.unshift(nextPeer);
-  const active = filtered
-    .filter((existing) => Date.now() - existing.lastSeen <= PEER_TTL_MS)
+
+  const isNews =
+    !existing ||
+    existing.host !== nextPeer.host ||
+    existing.name !== nextPeer.name ||
+    existing.port !== nextPeer.port ||
+    existing.protocolVersion !== nextPeer.protocolVersion;
+
+  if (!isNews) {
+    existing.lastSeen = nextPeer.lastSeen;
+    return;
+  }
+
+  const active = [nextPeer, ...peers.filter((candidate) => candidate.id !== nextPeer.id)]
+    .filter((candidate) => Date.now() - candidate.lastSeen <= PEER_TTL_MS)
     .slice(0, 20);
-  store.set('peers', active);
+  write('peers', active);
 
   // Keep a direct link to everyone we know, so room traffic can use it.
   tcp?.connect(nextPeer.host);
 
   sendStateToRenderer();
+}
+
+/**
+ * Retires devices that stopped announcing, and keeps the direct connections
+ * topped up. Runs on the announce timer, which is also what the peers on the
+ * other end are answering.
+ */
+function sweepPeers(): void {
+  const peers = read('peers');
+  const active = peers.filter((peer) => Date.now() - peer.lastSeen <= PEER_TTL_MS);
+
+  if (active.length !== peers.length) {
+    write('peers', active);
+    sendStateToRenderer();
+  }
+
+  for (const peer of active) {
+    tcp?.connect(peer.host);
+  }
 }
 
 function touchPeerFromMessage(message: WireMessage, host: string) {
@@ -877,7 +1022,7 @@ function shareClipboard(payload: ClipboardPayload, roomId: string) {
     return;
   }
 
-  if (fanOut(message, memberHosts(roomId))) {
+  if (deliverToRoom(message, roomId)) {
     sendStatus(`Shared to ${room.name}`, 'success');
   }
   notifyHistoryChanged(roomId);
@@ -893,7 +1038,10 @@ function applyRemoteClipboard(payload: ClipboardPayload, sourceName: string) {
   lastLocalClipboardHash = nextHash;
 
   if (payload.kind === 'image' && payload.dataUrl) {
-    writeClipboardImage(payload.dataUrl);
+    // Remember the picture as it looks on this clipboard, not as it arrived:
+    // re-encoding it here would otherwise look like a fresh copy to the poller,
+    // which would send it straight back to the device it came from.
+    lastClipboardImageFingerprint = writeClipboardImage(payload.dataUrl) ?? '';
     sendStatus(`Image copied from ${sourceName}`, 'success');
     return;
   }
@@ -904,14 +1052,20 @@ function applyRemoteClipboard(payload: ClipboardPayload, sourceName: string) {
 
 function pollLocalClipboard() {
   const settings = getSettings();
-  const roomId = store.get('currentRoomId');
+  const roomId = read('currentRoomId');
   if (!settings.syncEnabled || !roomId) {
     return;
   }
 
-  const imageDataUrl = settings.shareImages ? readClipboardImageDataUrl() : null;
-  if (imageDataUrl) {
-    const payload = createImageClipboardPayload(deviceId(), deviceName(), imageDataUrl);
+  const image = settings.shareImages ? readClipboardImage() : null;
+  if (image) {
+    // Nothing is encoded until the picture is known to be a new one.
+    if (image.fingerprint === lastClipboardImageFingerprint) {
+      return;
+    }
+    lastClipboardImageFingerprint = image.fingerprint;
+
+    const payload = createImageClipboardPayload(deviceId(), deviceName(), image.toDataUrl());
     const nextHash = hashClipboardPayload(payload);
     if (nextHash !== lastLocalClipboardHash) {
       lastLocalClipboardHash = nextHash;
@@ -921,6 +1075,7 @@ function pollLocalClipboard() {
     return;
   }
 
+  lastClipboardImageFingerprint = '';
   const text = readClipboardText();
   if (!text) {
     return;
@@ -1047,7 +1202,7 @@ function handleRoomAccept(message: WireMessage) {
 
   roomManager.saveRoom(room);
   roomManager.dropAdvert(room.roomId);
-  store.set('currentRoomId', room.roomId);
+  write('currentRoomId', room.roomId);
   sendStateToRenderer();
   mainWindow?.webContents.send('room:join-result', {
     roomId: room.roomId,
@@ -1098,8 +1253,8 @@ function handleRoomRoster(message: WireMessage) {
 
   if (!stillAMember) {
     roomManager.deleteRoom(room.roomId);
-    if (store.get('currentRoomId') === room.roomId) {
-      store.set('currentRoomId', undefined);
+    if (read('currentRoomId') === room.roomId) {
+      write('currentRoomId', undefined);
     }
     sendStatus(`You were removed from ${room.name}.`, 'warning');
   } else {
@@ -1129,8 +1284,8 @@ function handleRoomClosed(message: WireMessage) {
 
   roomManager.deleteRoom(room.roomId);
   historyManager.clearRoom(room.roomId);
-  if (store.get('currentRoomId') === room.roomId) {
-    store.set('currentRoomId', undefined);
+  if (read('currentRoomId') === room.roomId) {
+    write('currentRoomId', undefined);
   }
   sendStateToRenderer();
   sendStatus(`${room.name} was closed by its owner.`, 'warning');
@@ -1168,11 +1323,55 @@ function handleRoomPayload(message: WireMessage): Partial<WireMessage> | null {
   return body;
 }
 
+/**
+ * Copies already dealt with, by content.
+ *
+ * One copy legitimately arrives more than once. It is broadcast *and* addressed
+ * to each member, so that a network filtering either one still delivers it, and
+ * a device with a direct connection is sent it over that as well. Every arrival
+ * used to raise its own notification, so copying a single line could set off
+ * three of them on every other machine in the room.
+ */
+const INBOUND_CLIP_TTL_MS = 15000;
+const handledClips = new Map<string, number>();
+
+function isDuplicateClip(key: string): boolean {
+  const now = Date.now();
+
+  for (const [seen, at] of handledClips) {
+    if (now - at > INBOUND_CLIP_TTL_MS) {
+      handledClips.delete(seen);
+    }
+  }
+
+  if (handledClips.has(key)) {
+    return true;
+  }
+
+  handledClips.set(key, now);
+  return false;
+}
+
 function handleClipboardMessage(message: WireMessage) {
   const body = handleRoomPayload(message);
   const payload = body?.payload;
   if (!payload) {
     return;
+  }
+
+  if (isDuplicateClip(`${message.roomId}:${hashClipboardPayload(payload)}`)) {
+    return;
+  }
+
+  /*
+   * The clipboard first, everything else after. Storing the item and pushing it
+   * to the window means copying a multi-megabyte data URL about, and none of
+   * that has to happen before the paste is ready to go.
+   */
+  const settings = getSettings();
+  const applying = settings.autoApply && message.roomId === read('currentRoomId');
+  if (applying) {
+    applyRemoteClipboard(payload, message.deviceName);
   }
 
   historyManager.addClipboardEntry(
@@ -1185,10 +1384,7 @@ function handleClipboardMessage(message: WireMessage) {
   );
   notifyHistoryChanged(message.roomId!);
 
-  const settings = getSettings();
-  if (settings.autoApply && message.roomId === store.get('currentRoomId')) {
-    applyRemoteClipboard(payload, message.deviceName);
-  } else {
+  if (!applying) {
     sendStatus(`New item from ${message.deviceName} in history`, 'info');
   }
 
@@ -1453,12 +1649,13 @@ function startTcpService() {
     port: BROADCAST_PORT,
     maxFrameBytes: MAX_TRANSFER_BYTES,
     onMessage: (payload, host) => receiveMessage(payload, host, true),
-    onStatus: (message) => sendStatus(message, 'info')
+    onStatus: (message) => sendStatus(message, 'info'),
+    undialable: () => [getLocalIpAddress(), ...listBroadcastTargets(currentInterfaces())]
   });
   tcp.start();
 
   // Re-dial every peer we know about, so a direct link survives a restart.
-  for (const peer of store.get('peers')) {
+  for (const peer of read('peers')) {
     tcp.connect(peer.host);
   }
 }
@@ -1497,6 +1694,7 @@ function startUdpService() {
     announceTimer = setInterval(() => {
       broadcastPresence();
       advertiseOwnedRooms();
+      sweepPeers();
     }, ANNOUNCE_INTERVAL_MS);
     clipboardPollTimer = setInterval(pollLocalClipboard, CLIPBOARD_POLL_MS);
     transferSweepTimer = setInterval(sweepTransfers, TRANSFER_SWEEP_MS);
@@ -1516,6 +1714,40 @@ function compactStorage(): number {
     log.info(`Storage cleanup dropped ${cleared} attachment(s)`);
   }
   return cleared;
+}
+
+/**
+ * Brings the whole network up or down behind the header switch.
+ *
+ * Off is genuinely off — the sockets are closed, so there is nothing listening,
+ * nothing announcing, and no clipboard being watched. Rooms, keys and history
+ * are untouched and come straight back when it is switched on again.
+ */
+function setNetworkEnabled(next: boolean): void {
+  if (next === Boolean(udpSocket)) {
+    return;
+  }
+
+  if (next) {
+    startUdpService();
+    startTcpService();
+    updater?.start(getSettings().autoUpdate);
+    sendStatus('Shared clipboard is on.', 'success');
+    return;
+  }
+
+  stopUdpService();
+  write('peers', []);
+  roomManager.clearAdverts();
+  sendStatus('Shared clipboard is off. Nothing is shared or received.', 'warning');
+  sendStateToRenderer();
+}
+
+/** Rejects anything that needs the network while the switch is off. */
+function requireOnline(): ActionResult | null {
+  return getSettings().online
+    ? null
+    : fail('Shared clipboard is off. Turn it on from the header to use this.');
 }
 
 function stopUdpService() {
@@ -1589,8 +1821,15 @@ function refreshTrayMenu() {
     Menu.buildFromTemplate([
       { label: 'Open Shared Clipboard', click: () => showMainWindow() },
       {
+        label: 'Shared clipboard on',
+        type: 'checkbox',
+        checked: settings.online,
+        click: (item) => updateSettings({ online: item.checked })
+      },
+      {
         label: 'Share my clipboard',
         type: 'checkbox',
+        enabled: settings.online,
         checked: settings.syncEnabled,
         click: (item) => updateSettings({ syncEnabled: item.checked })
       },
@@ -1655,7 +1894,28 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
+/*
+ * One copy of the app per machine.
+ *
+ * It starts with the system and then lives in the tray, so opening it from the
+ * shortcut while it is already running is the normal thing to do — and that
+ * used to start a second copy. Two copies share the port, both answer the same
+ * room, and both raise a notification for everything that arrives, which looks
+ * exactly like the network sending everything twice.
+ */
+if (!app.requestSingleInstanceLock()) {
+  log.info('Another copy of Shared Clipboard is already running; handing over to it');
+  app.quit();
+}
+
+app.on('second-instance', () => showMainWindow());
+
 app.whenReady().then(() => {
+  // A second copy is on its way out; it must not open a window or take a port.
+  if (!app.hasSingleInstanceLock()) {
+    return;
+  }
+
   // No File/Edit/View/Window/Help ribbon — the app has its own chrome.
   Menu.setApplicationMenu(null);
   app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true });
@@ -1668,9 +1928,9 @@ app.whenReady().then(() => {
   });
 
   // Drop a stale current room left over from a previous run.
-  const currentRoomId = store.get('currentRoomId');
+  const currentRoomId = read('currentRoomId');
   if (currentRoomId && !roomManager.getRoom(currentRoomId)) {
-    store.set('currentRoomId', undefined);
+    write('currentRoomId', undefined);
   }
 
   // Windows attributes notifications by app id; without this they show as
@@ -1681,8 +1941,14 @@ app.whenReady().then(() => {
 
   mainWindow = createWindow();
   setupTray();
-  startUdpService();
-  startTcpService();
+
+  // Left off last time means still off now; the switch survives a restart.
+  if (getSettings().online) {
+    startUdpService();
+    startTcpService();
+  } else {
+    log.info('Starting with the shared clipboard switched off');
+  }
 
   updater = new Updater({
     onStatus: (status) => {
@@ -1711,6 +1977,7 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   isQuiting = true;
   historyManager.flush();
+  persist('peers');
   stopUdpService();
   tray?.destroy();
   tray = null;
@@ -1729,10 +1996,13 @@ function updateSettings(patch: Partial<AppSettings>): AppState {
   const next = { ...getSettings(), ...patch };
   // Clamp rather than reject, so a bad value can never make the UI unreadable.
   next.fontScale = Math.min(MAX_FONT_SCALE, Math.max(MIN_FONT_SCALE, Number(next.fontScale) || 1));
-  store.set('settings', next);
+  write('settings', next);
 
   if (patch.autoUpdate !== undefined) {
     updater?.setEnabled(patch.autoUpdate);
+  }
+  if (patch.online !== undefined) {
+    setNetworkEnabled(patch.online);
   }
   refreshTrayMenu();
   sendStateToRenderer();
@@ -1750,7 +2020,7 @@ function fail(message: string): ActionResult {
 ipcMain.handle('app:get-state', () => getAppState());
 
 ipcMain.handle('app:update-device-name', (_event, name: string) => {
-  store.set('deviceName', name.trim() || getSystemDeviceName());
+  write('deviceName', name.trim() || getSystemDeviceName());
   sendStateToRenderer();
   broadcastPresence();
   return getAppState();
@@ -1780,6 +2050,11 @@ ipcMain.handle('app:open-external', (_event, url: string): ActionResult => {
 });
 
 ipcMain.handle('app:connect-peer', (_event, host: string, port: number, name: string) => {
+  if (!getSettings().online) {
+    sendStatus('Shared clipboard is off. Turn it on from the header first.', 'warning');
+    return getAppState();
+  }
+
   const peer: PeerInfo = {
     id: `${host}:${port}`,
     name: name.trim() || host,
@@ -1816,7 +2091,7 @@ ipcMain.handle(
       ownerName: deviceName()
     });
 
-    store.set('currentRoomId', room.roomId);
+    write('currentRoomId', room.roomId);
     sendUdpMessage({ ...baseMessage('room-advert'), advert: roomManager.toAdvert(room) });
     sendStateToRenderer();
     return ok(
@@ -1834,9 +2109,14 @@ ipcMain.handle(
 ipcMain.handle(
   'room:request-join',
   (_event, roomId: string, password: string, joinCode: string): ActionResult => {
+    const offline = requireOnline();
+    if (offline) {
+      return offline;
+    }
+
     const existing = roomManager.getRoom(roomId);
     if (existing && roomManager.isAcceptedMember(roomId, deviceId())) {
-      store.set('currentRoomId', roomId);
+      write('currentRoomId', roomId);
       sendStateToRenderer();
       return ok(`Switched to ${existing.name}`);
     }
@@ -1886,6 +2166,11 @@ ipcMain.handle(
 ipcMain.handle(
   'room:join-by-code',
   (_event, joinCode: string, password: string): ActionResult => {
+    const offline = requireOnline();
+    if (offline) {
+      return offline;
+    }
+
     const code = normalizeJoinCode(joinCode);
     if (!code && !password) {
       return fail('Enter a join code, a room password, or both.');
@@ -1894,7 +2179,7 @@ ipcMain.handle(
     if (code) {
       const owned = roomManager.findRoomByCode(code);
       if (owned) {
-        store.set('currentRoomId', owned.roomId);
+        write('currentRoomId', owned.roomId);
         sendStateToRenderer();
         return ok(`Switched to ${owned.name}`);
       }
@@ -1991,6 +2276,11 @@ ipcMain.handle('room:qr-code', async (_event, roomId: string): Promise<string | 
  * so it is safe even though it travels the same broadcast as everything else.
  */
 ipcMain.handle('room:invite', (_event, roomId: string, targetDeviceId: string): ActionResult => {
+  const offline = requireOnline();
+  if (offline) {
+    return offline;
+  }
+
   const room = roomManager.getRoom(roomId);
   if (!room) {
     return fail('Room not found.');
@@ -2002,7 +2292,7 @@ ipcMain.handle('room:invite', (_event, roomId: string, targetDeviceId: string): 
     return fail('That device is already in this room.');
   }
 
-  const peer = store.get('peers').find((candidate) => candidate.id === targetDeviceId);
+  const peer = read('peers').find((candidate) => candidate.id === targetDeviceId);
   if (!peer) {
     return fail('That device is no longer on the network.');
   }
@@ -2023,6 +2313,11 @@ ipcMain.handle('room:invite', (_event, roomId: string, targetDeviceId: string): 
 
 /** Answer an invitation. Accepting only puts you in the owner's queue. */
 ipcMain.handle('room:respond-invite', (_event, roomId: string, accept: boolean): ActionResult => {
+  const offline = requireOnline();
+  if (offline) {
+    return offline;
+  }
+
   const invite = receivedInvites.get(roomId);
   if (!invite) {
     return fail('That invitation has expired.');
@@ -2054,7 +2349,7 @@ ipcMain.handle('room:switch', (_event, roomId: string): ActionResult => {
     return fail('Room not found.');
   }
 
-  store.set('currentRoomId', roomId);
+  write('currentRoomId', roomId);
   sendStateToRenderer();
   return ok(`Now sharing to ${room.name}`);
 });
@@ -2125,8 +2420,8 @@ ipcMain.handle('room:leave', (_event, roomId: string): ActionResult => {
 
   roomManager.deleteRoom(roomId);
   historyManager.clearRoom(roomId);
-  if (store.get('currentRoomId') === roomId) {
-    store.set('currentRoomId', undefined);
+  if (read('currentRoomId') === roomId) {
+    write('currentRoomId', undefined);
   }
 
   sendStateToRenderer();
@@ -2195,7 +2490,7 @@ function postChatMessage(
     return fail(`${room.name} is locked on this device — unlock it first.`);
   }
 
-  if (!fanOut(message, memberHosts(room.roomId))) {
+  if (!deliverToRoom(message, room.roomId)) {
     return fail('That was too large to send.');
   }
 
@@ -2205,6 +2500,11 @@ function postChatMessage(
 
 /** Shared guard for anything that writes into a room. */
 function requireWritableRoom(roomId: string): RoomInfo | ActionResult {
+  const offline = requireOnline();
+  if (offline) {
+    return offline;
+  }
+
   const room = roomManager.getRoom(roomId);
   if (!room) {
     return fail('Join a room before sending messages.');
@@ -2360,6 +2660,17 @@ ipcMain.handle('chat:mark-seen', (_event, roomId: string): ActionResult => {
  */
 ipcMain.handle('network:test', async (_event, host: string): Promise<ConnectivityResult> => {
   const target = host.trim();
+
+  if (!getSettings().online) {
+    return {
+      host: target,
+      tcpReachable: false,
+      udpReplied: false,
+      verdict: 'unreachable',
+      detail: 'The shared clipboard is switched off on this device, so nothing can be tested. Turn it on from the header and run this again.'
+    };
+  }
+
   if (!target) {
     return {
       host: target,
@@ -2375,13 +2686,13 @@ ipcMain.handle('network:test', async (_event, host: string): Promise<Connectivit
   // A UDP probe: announce directly, then see whether that device says anything
   // back within a couple of announce intervals.
   const before = diagnostics.packetsReceived;
-  const knownPeer = store.get('peers').find((peer) => peer.host === target);
+  const knownPeer = read('peers').find((peer) => peer.host === target);
   sendUdpMessage(baseMessage('announce'), target);
   await new Promise((resolve) => setTimeout(resolve, 3500));
   const udpReplied =
     diagnostics.packetsReceived > before ||
     Boolean(
-      knownPeer && store.get('peers').some((peer) => peer.host === target && peer.lastSeen > Date.now() - 5000)
+      knownPeer && read('peers').some((peer) => peer.host === target && peer.lastSeen > Date.now() - 5000)
     );
 
   if (tcpReachable && udpReplied) {
@@ -2469,8 +2780,9 @@ ipcMain.handle('clipboard:apply', (_event, entryId: string): ActionResult => {
   }
 
   if (entry.kind === 'image' && entry.dataUrl) {
-    writeClipboardImage(entry.dataUrl);
+    lastClipboardImageFingerprint = writeClipboardImage(entry.dataUrl) ?? '';
   } else {
+    lastClipboardImageFingerprint = '';
     writeClipboardText(entry.text);
   }
 
@@ -2490,19 +2802,26 @@ ipcMain.handle('clipboard:apply', (_event, entryId: string): ActionResult => {
 
 /** Share whatever is on the clipboard right now, without waiting for the poller. */
 ipcMain.handle('clipboard:share-now', (): ActionResult => {
-  const roomId = store.get('currentRoomId');
+  const offline = requireOnline();
+  if (offline) {
+    return offline;
+  }
+
+  const roomId = read('currentRoomId');
   if (!roomId) {
     return fail('Select a room first.');
   }
 
-  const imageDataUrl = getSettings().shareImages ? readClipboardImageDataUrl() : null;
-  const payload = imageDataUrl
-    ? createImageClipboardPayload(deviceId(), deviceName(), imageDataUrl)
+  const image = getSettings().shareImages ? readClipboardImage() : null;
+  const payload = image
+    ? createImageClipboardPayload(deviceId(), deviceName(), image.toDataUrl())
     : createTextClipboardPayload(deviceId(), deviceName(), readClipboardText());
 
   if (payload.kind === 'text' && !payload.text) {
     return fail('Your clipboard is empty.');
   }
+
+  lastClipboardImageFingerprint = image?.fingerprint ?? '';
 
   const hash = hashClipboardPayload(payload);
   lastLocalClipboardHash = hash;

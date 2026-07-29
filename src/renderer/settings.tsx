@@ -309,6 +309,12 @@ export function SettingsPage({
             <p className="settings__lede">What leaves this device, and what arrives on it.</p>
 
             <SwitchRow
+              title="Shared clipboard"
+              description="The master switch, also on the header. Off means nothing is shared, received or announced, and this device is invisible to the others."
+              checked={settings.online !== false}
+              onChange={(next) => onUpdateSettings({ online: next })}
+            />
+            <SwitchRow
               title="Share my clipboard"
               description="Send what you copy to the room you have selected."
               checked={settings.syncEnabled}

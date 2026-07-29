@@ -27,6 +27,7 @@ import {
   LockIcon,
   MoonIcon,
   PlusIcon,
+  PowerIcon,
   ShieldIcon,
   SignalIcon,
   SunIcon,
@@ -58,7 +59,15 @@ function useToasts() {
 
   const push = React.useCallback((message: string, tone: StatusTone = 'info') => {
     const id = nextId.current++;
-    setToasts((current) => [...current, { id, message, tone }].slice(-4));
+
+    setToasts((current) => {
+      // The same message twice over is one event as far as anyone reading it is
+      // concerned. It moves back to the bottom and its timer restarts rather
+      // than filling the corner with copies of itself.
+      const withoutDuplicate = current.filter((toast) => toast.message !== message);
+      return [...withoutDuplicate, { id, message, tone }].slice(-4);
+    });
+
     setTimeout(() => setToasts((current) => current.filter((toast) => toast.id !== id)), TOAST_MS);
   }, []);
 
@@ -265,6 +274,7 @@ export default function App() {
     );
   }
 
+  const online = state.settings.online !== false;
   const lockedRoomIds = new Set(state.lockedRoomIds);
   const room = state.rooms.find((candidate) => candidate.roomId === state.currentRoomId);
   const isLocked = room ? lockedRoomIds.has(room.roomId) : false;
@@ -343,13 +353,34 @@ export default function App() {
           <span className="topbar__spacer" />
 
           <div className="topbar__actions">
-            <span
-              className="text-sm text-tertiary row"
-              title={`${state.peers.length} device(s) seen on ${state.localAddress}`}
+            {online ? (
+              <span
+                className="text-sm text-tertiary row"
+                title={`${state.peers.length} device(s) seen on ${state.localAddress}`}
+              >
+                <SignalIcon size={14} />
+                {state.peers.length}
+              </span>
+            ) : null}
+
+            {/* The master switch. Off means the app shares and receives nothing
+                at all, so it says which of the two it is rather than making you
+                work it out from an icon. */}
+            <button
+              className={online ? 'power-toggle is-on' : 'power-toggle'}
+              onClick={() => api.updateSettings({ online: !online }).then(setState)}
+              role="switch"
+              aria-checked={online}
+              title={
+                online
+                  ? 'Shared clipboard is on. Click to switch it off.'
+                  : 'Shared clipboard is off. Click to switch it on.'
+              }
             >
-              <SignalIcon size={14} />
-              {state.peers.length}
-            </span>
+              <PowerIcon size={14} />
+              {online ? 'On' : 'Off'}
+            </button>
+
             <Button
               variant="ghost"
               icon
@@ -362,7 +393,7 @@ export default function App() {
           </div>
         </header>
 
-        {view === 'room' && room && !isLocked && (
+        {view === 'room' && online && room && !isLocked && (
           <nav className="tabbar">
             <button
               className={tab === 'clipboard' ? 'tabbar__tab is-active' : 'tabbar__tab'}
@@ -418,6 +449,20 @@ export default function App() {
               }}
               onDownloadUpdate={() => api.updateDownload()}
               onInstallUpdate={() => run(api.updateInstall())}
+            />
+          </div>
+        ) : !online ? (
+          <div className="panel">
+            <EmptyState
+              icon={<PowerIcon size={22} />}
+              title="Shared clipboard is off"
+              text="Nothing is being shared, received or announced, and no device on this network can see this one. Your rooms and history are kept exactly as they are."
+              actions={
+                <Button variant="primary" onClick={() => api.updateSettings({ online: true }).then(setState)}>
+                  <PowerIcon size={15} />
+                  Turn it on
+                </Button>
+              }
             />
           </div>
         ) : !room ? (

@@ -207,7 +207,15 @@ export type WireMessage = {
 };
 
 export type AppSettings = {
-  /** Master switch for sharing this device's clipboard. */
+  /**
+   * The master switch, on the header rather than buried in settings.
+   *
+   * Off means off: no announcing, no discovery, no direct connections, nothing
+   * sent and nothing received. The app keeps its rooms and its history and does
+   * nothing else until it is switched back on.
+   */
+  online: boolean;
+  /** Share this device's clipboard. Incoming items still arrive. */
   syncEnabled: boolean;
   /** Write incoming clipboard content straight to the local clipboard. */
   autoApply: boolean;

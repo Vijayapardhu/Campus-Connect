@@ -285,6 +285,11 @@ export class RoomManager {
     this.adverts.delete(roomId);
   }
 
+  /** Forgets every discovered room, for when the app stops listening entirely. */
+  clearAdverts(): void {
+    this.adverts.clear();
+  }
+
   private persist(): void {
     this.persistence.writeRooms(this.getRooms());
 

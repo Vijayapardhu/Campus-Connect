@@ -570,7 +570,7 @@ electron-store, at `%APPDATA%/shared-clipboard-desktop/config.json` on Windows:
   "peers": [ /* recently seen, TTL 15 s */ ],
   "currentRoomId": "uuid",
   "settings": {
-    "syncEnabled": true, "autoApply": true, "shareImages": true,
+    "online": true, "syncEnabled": true, "autoApply": true, "shareImages": true,
     "theme": "system", "fontScale": 1, "fontFamily": ""
   },
   "rooms": [ /* RoomInfo, including rosters */ ],

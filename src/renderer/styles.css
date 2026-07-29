@@ -579,6 +579,40 @@ select {
   gap: var(--space-2);
 }
 
+/* The master switch. Off is the state worth noticing, so that is the one that
+   gets the colour. */
+.power-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 30px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--danger);
+  background: transparent;
+  color: var(--danger);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--duration) var(--ease), color var(--duration) var(--ease),
+    border-color var(--duration) var(--ease);
+}
+
+.power-toggle:hover {
+  background: var(--bg-hover);
+}
+
+.power-toggle.is-on {
+  border-color: var(--border);
+  color: var(--success);
+}
+
+.power-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .tabbar {
   display: flex;
   gap: var(--space-1);
