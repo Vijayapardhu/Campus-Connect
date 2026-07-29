@@ -1618,7 +1618,95 @@ kbd {
   padding: var(--space-5);
 }
 
+/* The bar above the messages: message count, and the search box. */
+
+.chat__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.chat__bar .search {
+  flex: 1;
+}
+
+/* "Today" / "Yesterday", sitting on the rule that separates the days. */
+
+.chat__day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: var(--space-3) 0 var(--space-2);
+  position: relative;
+}
+
+.chat__day::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid var(--border);
+}
+
+.chat__day span {
+  position: relative;
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.chat__typing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.chat__typing-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.chat__typing-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--text-tertiary);
+  animation: typing-bounce 1.2s infinite ease-in-out;
+}
+
+.chat__typing-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.chat__typing-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes typing-bounce {
+  0%, 60%, 100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
 .msg {
+  position: relative;
   display: grid;
   gap: 2px;
   max-width: min(560px, 78%);
@@ -1627,6 +1715,27 @@ kbd {
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   align-self: flex-start;
+}
+
+/* One of a run from the same person: tucked closer, and the corner nearest
+   the message above is squared off so the run reads as a block. */
+.msg.is-run {
+  border-top-left-radius: var(--radius-sm);
+}
+
+.msg.is-mine.is-run {
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-sm);
+}
+
+.msg.is-deleted {
+  background: transparent;
+  border-style: dashed;
+}
+
+.msg.is-mine.is-deleted {
+  background: transparent;
+  border-color: var(--border);
 }
 
 .msg.is-mine {
@@ -1664,17 +1773,247 @@ kbd {
   word-break: break-word;
 }
 
+.msg__edited {
+  margin-left: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.msg.is-mine .msg__edited {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.msg__deleted {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-style: italic;
+  color: var(--text-tertiary);
+}
+
+.msg.is-mine .msg__deleted {
+  color: var(--text-tertiary);
+}
+
+/* The quoted message above a reply. */
+
+.msg__quote {
+  display: grid;
+  gap: 1px;
+  margin-bottom: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  font-size: var(--text-sm);
+}
+
+.msg.is-mine .msg__quote {
+  border-left-color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.msg__quote-author {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.msg__quote-text {
+  color: var(--text-tertiary);
+}
+
+.msg.is-mine .msg__quote-author,
+.msg.is-mine .msg__quote-text {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* Reactions sit under the bubble and overlap its edge slightly. */
+
+.reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: var(--space-1);
+}
+
+.reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.reaction:hover {
+  border-color: var(--accent);
+}
+
+.reaction.is-mine {
+  border-color: var(--accent);
+  background: var(--accent-soft, rgba(79, 70, 229, 0.12));
+}
+
+.reaction__count {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* The hover toolbar. Hidden until the message is hovered or focused within,
+   and pinned just outside the bubble so it never covers the text. */
+
+.msg__tools {
+  position: absolute;
+  top: -14px;
+  right: var(--space-2);
+  display: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+  z-index: 2;
+}
+
+.msg:hover .msg__tools,
+.msg:focus-within .msg__tools {
+  display: flex;
+}
+
+.msg.is-mine .msg__tools {
+  right: auto;
+  left: var(--space-2);
+}
+
+.msg__tool {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.msg__tool:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.msg__picker {
+  display: flex;
+  gap: 2px;
+  margin-top: var(--space-1);
+  padding: 2px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.msg__picker-emoji {
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 17px;
+  line-height: 1;
+  padding: 3px 4px;
+  cursor: pointer;
+}
+
+.msg__picker-emoji:hover {
+  background: var(--bg-hover);
+}
+
+.msg__confirm {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.msg__confirm-text {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.msg__confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* What is being replied to or edited, above the composer. */
+
+.composer__context {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-sunken);
+}
+
+.composer__context-icon {
+  color: var(--accent-text);
+  display: grid;
+  place-items: center;
+}
+
+.composer__context-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.composer__context-title {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.composer__context-text {
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
 .composer {
   display: flex;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-5);
   flex-shrink: 0;
+  align-items: flex-end;
   border-top: 1px solid var(--border);
   background: var(--bg-elevated);
 }
 
 .composer .input {
   flex: 1;
+}
+
+/* Grows with the message up to a limit, then scrolls. Enter sends, so the
+   several lines this allows are reached with Shift+Enter. */
+.composer__input {
+  resize: none;
+  min-height: 38px;
+  max-height: 140px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  line-height: 1.45;
+  font-family: inherit;
+  overflow-y: auto;
+  field-sizing: content;
 }
 
 /* Attachments inside a chat bubble */

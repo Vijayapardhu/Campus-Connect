@@ -25,6 +25,13 @@ export type JoinResultEvent = {
   message: string;
 };
 
+export type TypingEvent = {
+  roomId: string;
+  deviceId: string;
+  deviceName: string;
+  typing: boolean;
+};
+
 /** The complete surface exposed to the renderer as `window.sharedClipboard`. */
 export type SharedClipboardApi = {
   getState: () => Promise<AppState>;
@@ -61,8 +68,21 @@ export type SharedClipboardApi = {
     content: string,
     roomId: string,
     dataUrl?: string,
-    fileName?: string
+    fileName?: string,
+    /** Id of the message being answered; the quote is built from history. */
+    replyToId?: string
   ) => Promise<ActionResult>;
+  /** Rewrites your own message, everywhere. */
+  chatEdit: (messageId: string, content: string) => Promise<ActionResult>;
+  /**
+   * Removes a message. `forEveryone` withdraws it from the room and is only
+   * allowed on your own; without it, only this device forgets it.
+   */
+  chatDelete: (messageId: string, forEveryone: boolean) => Promise<ActionResult>;
+  /** Adds this device's reaction, or takes it back if it is already there. */
+  chatReact: (messageId: string, emoji: string) => Promise<ActionResult>;
+  /** Tells the room whether this device is composing. Never stored. */
+  chatTyping: (roomId: string, typing: boolean) => Promise<void>;
   /** Opens a native picker, then sends the chosen file into the room. */
   chatSendFile: (roomId: string) => Promise<ActionResult>;
   /** Opens a native save dialog for a received file. Never opens the file. */
@@ -92,6 +112,10 @@ export type SharedClipboardApi = {
   onHistoryChanged: (handler: (roomId: string) => void) => () => void;
   /** Receipts changed for a room; refetch its chat. */
   onReceipts: (handler: (roomId: string) => void) => () => void;
+  /** A message in this room was edited, withdrawn or reacted to; refetch. */
+  onChatChanged: (handler: (roomId: string) => void) => () => void;
+  /** Someone started or stopped composing. */
+  onTyping: (handler: (event: TypingEvent) => void) => () => void;
   onUpdateStatus: (handler: (status: UpdateStatus) => void) => () => void;
   onJoinRequest: (handler: (request: JoinRequest) => void) => () => void;
   onInvite: (handler: (invite: RoomInvite) => void) => () => void;

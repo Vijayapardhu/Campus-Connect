@@ -37,8 +37,12 @@ const api: SharedClipboardApi = {
   historyTogglePin: (entryId) => ipcRenderer.invoke('history:toggle-pin', entryId),
   historyClearRoom: (roomId) => ipcRenderer.invoke('history:clear-room', roomId),
 
-  chatSend: (type, content, roomId, dataUrl, fileName) =>
-    ipcRenderer.invoke('chat:send', type, content, roomId, dataUrl, fileName),
+  chatSend: (type, content, roomId, dataUrl, fileName, replyToId) =>
+    ipcRenderer.invoke('chat:send', type, content, roomId, dataUrl, fileName, replyToId),
+  chatEdit: (messageId, content) => ipcRenderer.invoke('chat:edit', messageId, content),
+  chatDelete: (messageId, forEveryone) => ipcRenderer.invoke('chat:delete', messageId, forEveryone),
+  chatReact: (messageId, emoji) => ipcRenderer.invoke('chat:react', messageId, emoji),
+  chatTyping: (roomId, typing) => ipcRenderer.invoke('chat:typing', roomId, typing),
   chatSendFile: (roomId) => ipcRenderer.invoke('chat:send-file', roomId),
   chatSaveFile: (messageId) => ipcRenderer.invoke('chat:save-file', messageId),
   chatMarkSeen: (roomId) => ipcRenderer.invoke('chat:mark-seen', roomId),
@@ -60,6 +64,8 @@ const api: SharedClipboardApi = {
   onChatMessage: (handler) => subscribe('chat:message', handler),
   onHistoryChanged: (handler) => subscribe('history:changed', handler),
   onReceipts: (handler) => subscribe('chat:receipts', handler),
+  onChatChanged: (handler) => subscribe('chat:changed', handler),
+  onTyping: (handler) => subscribe('chat:typing', handler),
   onUpdateStatus: (handler) => subscribe('update:status', handler),
   onJoinRequest: (handler) => subscribe('room:join-request', handler),
   onInvite: (handler) => subscribe('room:invite', handler),

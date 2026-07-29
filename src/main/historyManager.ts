@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ChatMessage, ClipboardHistoryEntry, StorageStats } from '../shared/types';
+import type { ChatMessage, ChatReplyTo, ClipboardHistoryEntry, StorageStats } from '../shared/types';
 
 const MAX_CLIPBOARD_PER_ROOM = 100;
 const MAX_CHAT_PER_ROOM = 500;
@@ -79,6 +79,7 @@ export class HistoryManager {
     dataUrl?: string;
     fileName?: string;
     fileSize?: number;
+    replyTo?: ChatReplyTo;
     /** Supplied when relaying a message received from another device. */
     id?: string;
     timestamp?: number;
@@ -90,6 +91,7 @@ export class HistoryManager {
       dataUrl: input.dataUrl,
       fileName: input.fileName,
       fileSize: input.fileSize,
+      replyTo: input.replyTo,
       deviceId: input.deviceId,
       deviceName: input.deviceName,
       roomId: input.roomId,
@@ -100,6 +102,90 @@ export class HistoryManager {
     this.chat = trimPerRoom(this.chat, MAX_CHAT_PER_ROOM);
     this.scheduleFlush();
     return message;
+  }
+
+  findChatMessage(id: string): ChatMessage | undefined {
+    return this.chat.find((message) => message.id === id);
+  }
+
+  /**
+   * Rewrites a message's text. Only the author may, which is checked here as
+   * well as at the wire, because this is also reached from the local UI.
+   */
+  editChatMessage(id: string, content: string, authorId: string, editedAt: number): ChatMessage | undefined {
+    const message = this.findChatMessage(id);
+    if (!message || message.deviceId !== authorId || message.deleted || message.type !== 'text') {
+      return undefined;
+    }
+
+    message.content = content;
+    message.editedAt = editedAt;
+    this.scheduleFlush();
+    return message;
+  }
+
+  /**
+   * Withdraws a message for everyone. The entry stays as a marker — a reply
+   * pointing at it still makes sense — but nothing of its content survives,
+   * including any attachment.
+   */
+  markChatMessageDeleted(id: string, authorId: string): ChatMessage | undefined {
+    const message = this.findChatMessage(id);
+    if (!message || message.deviceId !== authorId) {
+      return undefined;
+    }
+    if (message.deleted) {
+      return message; // Already gone; repeat arrivals are not a problem.
+    }
+
+    message.deleted = true;
+    message.content = '';
+    message.dataUrl = undefined;
+    message.fileName = undefined;
+    message.fileSize = undefined;
+    message.reactions = undefined;
+    message.editedAt = undefined;
+    this.scheduleFlush();
+    return message;
+  }
+
+  /** Removes a message from this device alone. */
+  deleteChatMessage(id: string): ChatMessage | undefined {
+    const message = this.findChatMessage(id);
+    if (!message) {
+      return undefined;
+    }
+
+    this.chat = this.chat.filter((candidate) => candidate.id !== id);
+    this.scheduleFlush();
+    return message;
+  }
+
+  /** Adds or removes one device's reaction. Returns true when it changed. */
+  setChatReaction(id: string, emoji: string, deviceId: string, on: boolean): boolean {
+    const message = this.findChatMessage(id);
+    if (!message || message.deleted) {
+      return false;
+    }
+
+    const reactions = { ...(message.reactions ?? {}) };
+    const current = reactions[emoji] ?? [];
+    const has = current.includes(deviceId);
+
+    if (on === has) {
+      return false;
+    }
+
+    const next = on ? [...current, deviceId] : current.filter((candidate) => candidate !== deviceId);
+    if (next.length > 0) {
+      reactions[emoji] = next;
+    } else {
+      delete reactions[emoji];
+    }
+
+    message.reactions = Object.keys(reactions).length > 0 ? reactions : undefined;
+    this.scheduleFlush();
+    return true;
   }
 
   /**

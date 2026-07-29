@@ -73,6 +73,17 @@ export type ClipboardHistoryEntry = {
   pinned?: boolean;
 };
 
+/** What a message is answering, kept with the reply so it survives on its own. */
+export type ChatReplyTo = {
+  messageId: string;
+  deviceName: string;
+  /** A short excerpt, so a reply still reads correctly if the original goes. */
+  preview: string;
+};
+
+/** Emoji offered in the reaction bar. Anything already on a message also shows. */
+export const REACTION_CHOICES = ['👍', '❤️', '😂', '🎉', '👀', '😢'] as const;
+
 export type ChatMessage = {
   id: string;
   type: 'text' | 'file' | 'image';
@@ -93,6 +104,19 @@ export type ChatMessage = {
   seenBy?: string[];
   /** True once the attachment has been cleaned up but the message is kept. */
   mediaCleared?: boolean;
+
+  /** The message this one is answering, if any. */
+  replyTo?: ChatReplyTo;
+  /** When the author last changed the text. */
+  editedAt?: number;
+  /**
+   * The author withdrew this for everyone. The message stays in place as a
+   * marker rather than vanishing, so a conversation that referred to it still
+   * makes sense; the text and any attachment are gone.
+   */
+  deleted?: boolean;
+  /** Emoji to the devices that reacted with it. */
+  reactions?: Record<string, string[]>;
 };
 
 /** What the sender shows against its own message. */
@@ -159,7 +183,17 @@ export type WireMessageType =
   | 'room-invite'
   | 'room-invite-accept'
   | 'room-invite-decline'
-  | 'chat-receipt';
+  | 'chat-receipt'
+  /*
+   * Changes to a message that has already been sent. These are additive: a
+   * device on an older build ignores a type it does not recognise, so it simply
+   * keeps showing the message as it was rather than refusing to talk at all.
+   * That is why the protocol version does not move for them.
+   */
+  | 'chat-edit'
+  | 'chat-delete'
+  | 'chat-reaction'
+  | 'chat-typing';
 
 /**
  * Every datagram on the wire. Bodies that belong to an encrypted room travel in
@@ -204,6 +238,18 @@ export type WireMessage = {
   /** On `chat-receipt`: which messages, and how far they got. */
   messageIds?: string[];
   receipt?: 'delivered' | 'seen';
+
+  /*
+   * Amendments to an existing message, all of them sealed with the room body
+   * like anything else. Each carries the id of the message it acts on, and is
+   * only honoured when the device sending it is entitled to: the author for an
+   * edit or a withdrawal, any member for a reaction.
+   */
+  chatEdit?: { messageId: string; content: string; editedAt: number };
+  chatDelete?: { messageId: string };
+  chatReaction?: { messageId: string; emoji: string; on: boolean };
+  /** On `chat-typing`: true while composing, false when they stop. */
+  typing?: boolean;
 };
 
 export type AppSettings = {

@@ -57,6 +57,7 @@ import {
   type AppSettings,
   type AppState,
   type ChatMessage,
+  type ChatReplyTo,
   type ClipboardHistoryEntry,
   type ClipboardPayload,
   type ConnectivityResult,
@@ -1455,6 +1456,80 @@ function handleChatMessage(message: WireMessage) {
   );
 }
 
+/** Tells the renderer a room's messages changed, so it refetches them. */
+function notifyChatChanged(roomId: string) {
+  mainWindow?.webContents.send('chat:changed', roomId);
+}
+
+/*
+ * Amendments to a message that is already sent.
+ *
+ * Each is checked the same way the message itself was: it has to come from an
+ * accepted member of a room this device is also in, and it has to open with the
+ * room key. On top of that, the history manager only applies an edit or a
+ * withdrawal when the device asking is the one that wrote the message, so
+ * nobody can rewrite or retract anyone else's words.
+ */
+function handleChatEdit(message: WireMessage) {
+  const edit = handleRoomPayload(message)?.chatEdit;
+  if (!edit?.messageId || typeof edit.content !== 'string') {
+    return;
+  }
+
+  const updated = historyManager.editChatMessage(
+    edit.messageId,
+    edit.content,
+    message.deviceId,
+    edit.editedAt ?? Date.now()
+  );
+
+  if (updated) {
+    notifyChatChanged(message.roomId!);
+  }
+}
+
+function handleChatDelete(message: WireMessage) {
+  const messageId = handleRoomPayload(message)?.chatDelete?.messageId;
+  if (!messageId) {
+    return;
+  }
+
+  if (historyManager.markChatMessageDeleted(messageId, message.deviceId)) {
+    notifyChatChanged(message.roomId!);
+  }
+}
+
+function handleChatReaction(message: WireMessage) {
+  const reaction = handleRoomPayload(message)?.chatReaction;
+  // A reaction is displayed as sent, so cap it at a couple of characters and an
+  // emoji's worth of modifiers rather than rendering whatever arrives.
+  if (!reaction?.messageId || !reaction.emoji || reaction.emoji.length > 12) {
+    return;
+  }
+
+  if (historyManager.setChatReaction(reaction.messageId, reaction.emoji, message.deviceId, Boolean(reaction.on))) {
+    notifyChatChanged(message.roomId!);
+  }
+}
+
+/**
+ * Someone is composing. Deliberately never stored: it is true for a few seconds
+ * and then it is not, and it should not outlive the window being open.
+ */
+function handleChatTyping(message: WireMessage) {
+  const body = handleRoomPayload(message);
+  if (typeof body?.typing !== 'boolean') {
+    return;
+  }
+
+  mainWindow?.webContents.send('chat:typing', {
+    roomId: message.roomId,
+    deviceId: message.deviceId,
+    deviceName: message.deviceName,
+    typing: body.typing
+  });
+}
+
 /** An invitation addressed to this device. Carries no credentials. */
 function handleRoomInvite(message: WireMessage, host: string) {
   if (message.targetDeviceId !== deviceId() || !message.advert) {
@@ -1612,6 +1687,14 @@ function handleWireMessage(message: WireMessage, host: string) {
       return handleInviteDecline(message);
     case 'chat-receipt':
       return handleChatReceipt(message);
+    case 'chat-edit':
+      return handleChatEdit(message);
+    case 'chat-delete':
+      return handleChatDelete(message);
+    case 'chat-reaction':
+      return handleChatReaction(message);
+    case 'chat-typing':
+      return handleChatTyping(message);
     default:
       return;
   }
@@ -2513,6 +2596,30 @@ ipcMain.handle('history:clear-room', (_event, roomId: string) => {
   return ok('History cleared for this room.');
 });
 
+/**
+ * What a reply quotes, built here rather than taken from the renderer so it
+ * always matches a message that genuinely exists in this room.
+ */
+function buildReplyTo(messageId: string | undefined, roomId: string): ChatReplyTo | undefined {
+  if (!messageId) {
+    return undefined;
+  }
+
+  const target = historyManager.findChatMessage(messageId);
+  if (!target || target.roomId !== roomId || target.deleted) {
+    return undefined;
+  }
+
+  const preview =
+    target.type === 'text' ? target.content : (target.fileName ?? 'Attachment');
+
+  return {
+    messageId: target.id,
+    deviceName: target.deviceName,
+    preview: truncateForNotice(preview)
+  };
+}
+
 /** Shared by text messages and file sends. */
 function postChatMessage(
   room: RoomInfo,
@@ -2522,6 +2629,7 @@ function postChatMessage(
     dataUrl?: string;
     fileName?: string;
     fileSize?: number;
+    replyTo?: ChatReplyTo;
   }
 ): ActionResult {
   const chatMessage = historyManager.addChatMessage({
@@ -2569,21 +2677,145 @@ function requireWritableRoom(roomId: string): RoomInfo | ActionResult {
   return room;
 }
 
-function isActionResult(value: RoomInfo | ActionResult): value is ActionResult {
+function isActionResult<T extends object>(value: T | ActionResult): value is ActionResult {
   return 'ok' in value;
 }
 
 ipcMain.handle(
   'chat:send',
-  (_event, type: ChatMessage['type'], content: string, roomId: string, dataUrl?: string, fileName?: string): ActionResult => {
+  (
+    _event,
+    type: ChatMessage['type'],
+    content: string,
+    roomId: string,
+    dataUrl?: string,
+    fileName?: string,
+    replyToId?: string
+  ): ActionResult => {
     const room = requireWritableRoom(roomId);
     if (isActionResult(room)) {
       return room;
     }
 
-    return postChatMessage(room, { type, content, dataUrl, fileName });
+    return postChatMessage(room, {
+      type,
+      content,
+      dataUrl,
+      fileName,
+      replyTo: buildReplyTo(replyToId, roomId)
+    });
   }
 );
+
+/** Sends an amendment — an edit, a withdrawal, a reaction — to a room. */
+function sendChatChange(room: RoomInfo, type: WireMessage['type'], body: Partial<WireMessage>): void {
+  const message = baseMessage(type);
+  message.roomId = room.roomId;
+  if (attachRoomBody(message, room, body)) {
+    deliverToRoom(message, room.roomId);
+  }
+}
+
+/** The room a message belongs to, if it can still be written to. */
+function roomForMessage(messageId: string): { message: ChatMessage; room: RoomInfo } | ActionResult {
+  const message = historyManager.findChatMessage(messageId);
+  if (!message) {
+    return fail('That message is no longer in history.');
+  }
+
+  const room = requireWritableRoom(message.roomId);
+  return isActionResult(room) ? room : { message, room };
+}
+
+ipcMain.handle('chat:edit', (_event, messageId: string, content: string): ActionResult => {
+  const text = content.trim();
+  if (!text) {
+    return fail('An edited message cannot be empty — delete it instead.');
+  }
+
+  const found = roomForMessage(messageId);
+  if (isActionResult(found)) {
+    return found;
+  }
+  if (found.message.deviceId !== deviceId()) {
+    return fail('You can only edit your own messages.');
+  }
+
+  const editedAt = Date.now();
+  if (!historyManager.editChatMessage(messageId, text, deviceId(), editedAt)) {
+    return fail('That message cannot be edited.');
+  }
+
+  sendChatChange(found.room, 'chat-edit', { chatEdit: { messageId, content: text, editedAt } });
+  notifyChatChanged(found.room.roomId);
+  return ok('Message edited.');
+});
+
+/**
+ * Deleting for everyone withdraws the message from the room; deleting without
+ * it only clears this device, which stays available even when the app is
+ * switched off, because it touches nothing but local history.
+ */
+ipcMain.handle('chat:delete', (_event, messageId: string, forEveryone: boolean): ActionResult => {
+  const existing = historyManager.findChatMessage(messageId);
+  if (!existing) {
+    return fail('That message is no longer in history.');
+  }
+
+  if (!forEveryone) {
+    historyManager.deleteChatMessage(messageId);
+    notifyChatChanged(existing.roomId);
+    return ok('Deleted from this device.');
+  }
+
+  if (existing.deviceId !== deviceId()) {
+    return fail('You can only delete your own messages for everyone.');
+  }
+
+  const found = roomForMessage(messageId);
+  if (isActionResult(found)) {
+    return found;
+  }
+
+  historyManager.markChatMessageDeleted(messageId, deviceId());
+  sendChatChange(found.room, 'chat-delete', { chatDelete: { messageId } });
+  notifyChatChanged(found.room.roomId);
+  return ok('Deleted for everyone.');
+});
+
+/** Toggles this device's reaction to a message. */
+ipcMain.handle('chat:react', (_event, messageId: string, emoji: string): ActionResult => {
+  const found = roomForMessage(messageId);
+  if (isActionResult(found)) {
+    return found;
+  }
+
+  const on = !found.message.reactions?.[emoji]?.includes(deviceId());
+  if (!historyManager.setChatReaction(messageId, emoji, deviceId(), on)) {
+    return fail('That reaction could not be applied.');
+  }
+
+  sendChatChange(found.room, 'chat-reaction', { chatReaction: { messageId, emoji, on } });
+  notifyChatChanged(found.room.roomId);
+  return ok(on ? 'Reacted.' : 'Reaction removed.');
+});
+
+/**
+ * Says whether this device is composing. Sent rather than stored, and quietly
+ * dropped when there is no room to send it to — a typing indicator is never
+ * worth an error message.
+ */
+ipcMain.handle('chat:typing', (_event, roomId: string, typing: boolean): void => {
+  const room = roomManager.getRoom(roomId);
+  if (!room || !getSettings().online || roomManager.isLocked(roomId)) {
+    return;
+  }
+  if (!roomManager.isAcceptedMember(roomId, deviceId())) {
+    return;
+  }
+
+  sendChatChange(room, 'chat-typing', { typing });
+});
 
 /** Pick a file with the native dialog and send it into the room. */
 ipcMain.handle('chat:send-file', async (_event, roomId: string): Promise<ActionResult> => {

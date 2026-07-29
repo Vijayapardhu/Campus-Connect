@@ -52,6 +52,8 @@ type ModalState =
   | null;
 
 const TOAST_MS = 4200;
+/** A typing indicator with no follow-up is dropped after this. */
+const TYPING_EXPIRY_MS = 6000;
 
 function useToasts() {
   const [toasts, setToasts] = React.useState<Toast[]>([]);
@@ -92,6 +94,7 @@ export default function App() {
   const [tab, setTab] = React.useState<Tab>('clipboard');
   const [view, setView] = React.useState<View>('room');
   const [modal, setModal] = React.useState<ModalState>(null);
+  const [typing, setTyping] = React.useState<Record<string, { name: string; at: number }>>({});
   const { toasts, push, dismiss } = useToasts();
 
   // Keep the room id in a ref so event handlers registered once still know
@@ -129,6 +132,28 @@ export default function App() {
           api.historyGetChat(roomId).then(setMessages);
         }
       }),
+      // An edit, a withdrawal or a reaction rewrites a message in place, so the
+      // room's messages are refetched rather than patched here.
+      api.onChatChanged((roomId) => {
+        if (roomId === currentRoomIdRef.current) {
+          api.historyGetChat(roomId).then(setMessages);
+        }
+      }),
+      api.onTyping(({ roomId, deviceId, deviceName, typing }) => {
+        if (roomId !== currentRoomIdRef.current) {
+          return;
+        }
+
+        setTyping((current) => {
+          const next = { ...current };
+          if (typing) {
+            next[deviceId] = { name: deviceName, at: Date.now() };
+          } else {
+            delete next[deviceId];
+          }
+          return next;
+        });
+      }),
       api.onJoinRequest((request) => {
         push(`${request.deviceName} wants to join ${request.roomName}`, 'warning');
       }),
@@ -155,7 +180,27 @@ export default function App() {
 
     api.historyGetClipboard(roomId).then(setClips);
     api.historyGetChat(roomId).then(setMessages);
+    setTyping({});
   }, [roomId]);
+
+  // "Stopped typing" travels over the same lossy network as everything else, so
+  // an indicator is also allowed to time out rather than trusting it to arrive.
+  React.useEffect(() => {
+    if (Object.keys(typing).length === 0) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setTyping((current) => {
+        const fresh = Object.fromEntries(
+          Object.entries(current).filter(([, who]) => Date.now() - who.at < TYPING_EXPIRY_MS)
+        );
+        return Object.keys(fresh).length === Object.keys(current).length ? current : fresh;
+      });
+    }, 1500);
+
+    return () => window.clearInterval(timer);
+  }, [typing]);
 
   // Acknowledge a room's messages while its chat is actually on screen.
   const chatVisible = view === 'room' && tab === 'chat' && Boolean(roomId);
@@ -527,15 +572,40 @@ export default function App() {
               room={room}
               messages={messages}
               deviceId={state.deviceId}
-              onSend={(text) => {
-                api.chatSend('text', text, room.roomId).then((result) => {
+              typingNames={Object.values(typing).map((who) => who.name)}
+              onSend={(text, replyToId) => {
+                api
+                  .chatSend('text', text, room.roomId, undefined, undefined, replyToId)
+                  .then((result) => {
+                    if (!result.ok) {
+                      push(result.message, 'error');
+                    }
+                  });
+              }}
+              onSendFile={() => run(api.chatSendFile(room.roomId))}
+              onSaveFile={(messageId) => run(api.chatSaveFile(messageId))}
+              onEdit={(messageId, content) => {
+                api.chatEdit(messageId, content).then((result) => {
                   if (!result.ok) {
                     push(result.message, 'error');
                   }
                 });
               }}
-              onSendFile={() => run(api.chatSendFile(room.roomId))}
-              onSaveFile={(messageId) => run(api.chatSaveFile(messageId))}
+              onDelete={(messageId, forEveryone) => run(api.chatDelete(messageId, forEveryone))}
+              // Reacting is a small, visible thing already; announcing each one
+              // with a toast would be noise.
+              onReact={(messageId, emoji) => {
+                api.chatReact(messageId, emoji).then((result) => {
+                  if (!result.ok) {
+                    push(result.message, 'error');
+                  }
+                });
+              }}
+              onCopy={(text) => {
+                navigator.clipboard.writeText(text);
+                push('Copied to your clipboard.', 'success');
+              }}
+              onTyping={(isTyping) => api.chatTyping(room.roomId, isTyping)}
             />
           </div>
         ) : (

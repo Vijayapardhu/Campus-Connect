@@ -6,6 +6,7 @@ import type {
   PeerInfo,
   RoomInfo
 } from '../shared/types';
+import { REACTION_CHOICES } from '../shared/types';
 import { Badge, Button, Callout, EmptyState } from './ui';
 import { clockTime, formatBytes, initials, relativeTime, truncate } from './format';
 import {
@@ -22,11 +23,14 @@ import {
   ImageIcon,
   LockIcon,
   PaperclipIcon,
+  PencilIcon,
   PinIcon,
   QrIcon,
+  ReplyIcon,
   SearchIcon,
   SendIcon,
   ShieldIcon,
+  SmileIcon,
   TrashIcon,
   UsersIcon,
   XIcon
@@ -316,32 +320,316 @@ function ChatAttachment({
   );
 }
 
+/** Messages closer together than this from one person are shown as a run. */
+const GROUP_WINDOW_MS = 5 * 60 * 1000;
+/** How often "still typing" is re-asserted while someone keeps writing. */
+const TYPING_PING_MS = 2500;
+/** Silence for this long ends it, as does sending. */
+const TYPING_IDLE_MS = 3500;
+
+function sameDay(a: number, b: number): boolean {
+  return new Date(a).toDateString() === new Date(b).toDateString();
+}
+
+/** "Today" / "Yesterday" / "12 Mar 2026" above the first message of each day. */
+function dayLabel(timestamp: number): string {
+  const date = new Date(timestamp);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (sameDay(timestamp, today.getTime())) return 'Today';
+  if (sameDay(timestamp, yesterday.getTime())) return 'Yesterday';
+
+  return date.toLocaleDateString([], {
+    day: 'numeric',
+    month: 'short',
+    year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric'
+  });
+}
+
+function typingLine(names: string[]): string {
+  if (names.length === 1) return `${names[0]} is typing…`;
+  if (names.length === 2) return `${names[0]} and ${names[1]} are typing…`;
+  return `${names[0]} and ${names.length - 1} others are typing…`;
+}
+
+/** The hover toolbar, the reaction picker, and the two ways to delete. */
+function MessageRow({
+  message,
+  room,
+  deviceId,
+  showHeader,
+  onSaveFile,
+  onReply,
+  onEdit,
+  onDelete,
+  onReact,
+  onCopy
+}: {
+  message: ChatMessage;
+  room: RoomInfo;
+  deviceId: string;
+  showHeader: boolean;
+  onSaveFile: (messageId: string) => void;
+  onReply: (message: ChatMessage) => void;
+  onEdit: (message: ChatMessage) => void;
+  onDelete: (messageId: string, forEveryone: boolean) => void;
+  onReact: (messageId: string, emoji: string) => void;
+  onCopy: (text: string) => void;
+}) {
+  const [picking, setPicking] = React.useState(false);
+  const [confirming, setConfirming] = React.useState(false);
+  const isMine = message.deviceId === deviceId;
+
+  // Anything already on the message stays offered, even an emoji this build
+  // does not list, so a reaction from a newer version is still answerable.
+  const used = Object.keys(message.reactions ?? {});
+  const choices = [...REACTION_CHOICES, ...used.filter((emoji) => !REACTION_CHOICES.includes(emoji as never))];
+
+  const classes = ['msg', isMine ? 'is-mine' : '', showHeader ? '' : 'is-run', message.deleted ? 'is-deleted' : '']
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <div className={classes}>
+      {showHeader && (
+        <div className="msg__head">
+          <span className="msg__author">{isMine ? 'You' : message.deviceName}</span>
+          <span className="msg__time">{clockTime(message.timestamp)}</span>
+          {isMine && !message.deleted && <Receipt status={statusOf(message, room)} />}
+        </div>
+      )}
+
+      {message.deleted ? (
+        <div className="msg__body msg__deleted">
+          <TrashIcon size={13} />
+          This message was deleted
+        </div>
+      ) : (
+        <>
+          {message.replyTo && (
+            <div className="msg__quote" title={message.replyTo.preview}>
+              <span className="msg__quote-author">{message.replyTo.deviceName}</span>
+              <span className="msg__quote-text truncate">{message.replyTo.preview}</span>
+            </div>
+          )}
+
+          {message.type === 'text' ? (
+            <div className="msg__body">
+              {message.content}
+              {message.editedAt ? <span className="msg__edited" title={`Edited ${clockTime(message.editedAt)}`}>edited</span> : null}
+            </div>
+          ) : (
+            <ChatAttachment message={message} onSaveFile={onSaveFile} />
+          )}
+
+          {used.length > 0 && (
+            <div className="reactions">
+              {used.map((emoji) => {
+                const who = message.reactions?.[emoji] ?? [];
+                const mine = who.includes(deviceId);
+                return (
+                  <button
+                    key={emoji}
+                    className={mine ? 'reaction is-mine' : 'reaction'}
+                    onClick={() => onReact(message.id, emoji)}
+                    title={mine ? 'You reacted — click to take it back' : `${who.length} reacted`}
+                  >
+                    <span>{emoji}</span>
+                    <span className="reaction__count">{who.length}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {picking && !message.deleted && (
+        <div className="msg__picker">
+          {choices.map((emoji) => (
+            <button
+              key={emoji}
+              className="msg__picker-emoji"
+              onClick={() => {
+                onReact(message.id, emoji);
+                setPicking(false);
+              }}
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {confirming && (
+        <div className="msg__confirm">
+          <span className="msg__confirm-text">
+            {isMine ? 'Delete this message…' : 'Remove from this device?'}
+          </span>
+          <div className="msg__confirm-actions">
+            <Button size="sm" onClick={() => { onDelete(message.id, false); setConfirming(false); }}>
+              For me
+            </Button>
+            {isMine && (
+              <Button size="sm" variant="danger" onClick={() => { onDelete(message.id, true); setConfirming(false); }}>
+                For everyone
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {!message.deleted && (
+        <div className="msg__tools">
+          <button className="msg__tool" onClick={() => setPicking((open) => !open)} title="React" aria-label="React">
+            <SmileIcon size={14} />
+          </button>
+          <button className="msg__tool" onClick={() => onReply(message)} title="Reply" aria-label="Reply">
+            <ReplyIcon size={14} />
+          </button>
+          {message.type === 'text' && (
+            <button className="msg__tool" onClick={() => onCopy(message.content)} title="Copy text" aria-label="Copy text">
+              <CopyIcon size={14} />
+            </button>
+          )}
+          {isMine && message.type === 'text' && (
+            <button className="msg__tool" onClick={() => onEdit(message)} title="Edit" aria-label="Edit">
+              <PencilIcon size={14} />
+            </button>
+          )}
+          <button className="msg__tool" onClick={() => setConfirming(true)} title="Delete" aria-label="Delete">
+            <TrashIcon size={14} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ChatPanel({
   room,
   messages,
   deviceId,
+  typingNames,
   onSend,
   onSendFile,
-  onSaveFile
+  onSaveFile,
+  onEdit,
+  onDelete,
+  onReact,
+  onCopy,
+  onTyping
 }: {
   room: RoomInfo;
   messages: ChatMessage[];
   deviceId: string;
-  onSend: (text: string) => void;
+  /** Everyone in this room currently composing, excluding this device. */
+  typingNames: string[];
+  onSend: (text: string, replyToId?: string) => void;
   onSendFile: () => void;
   onSaveFile: (messageId: string) => void;
+  onEdit: (messageId: string, content: string) => void;
+  onDelete: (messageId: string, forEveryone: boolean) => void;
+  onReact: (messageId: string, emoji: string) => void;
+  onCopy: (text: string) => void;
+  onTyping: (typing: boolean) => void;
 }) {
   const [draft, setDraft] = React.useState('');
   const [dragging, setDragging] = React.useState(false);
+  const [replyTo, setReplyTo] = React.useState<ChatMessage | null>(null);
+  const [editing, setEditing] = React.useState<ChatMessage | null>(null);
+  const [query, setQuery] = React.useState('');
+  const [searching, setSearching] = React.useState(false);
+
+  const composerRef = React.useRef<HTMLTextAreaElement | null>(null);
+  // Typing is a side effect of writing, so it is kept out of render entirely.
+  const typingSince = React.useRef(0);
+  const typingStop = React.useRef<number | undefined>(undefined);
+
+  const stopTyping = React.useCallback(() => {
+    window.clearTimeout(typingStop.current);
+    if (typingSince.current > 0) {
+      typingSince.current = 0;
+      onTyping(false);
+    }
+  }, [onTyping]);
+
+  // Leaving the room, or closing the window, should not leave everyone else
+  // believing this device is still mid-sentence.
+  React.useEffect(() => stopTyping, [room.roomId, stopTyping]);
+
+  function noteTyping(next: string) {
+    setDraft(next);
+
+    if (!next.trim()) {
+      stopTyping();
+      return;
+    }
+
+    const now = Date.now();
+    if (now - typingSince.current > TYPING_PING_MS) {
+      typingSince.current = now;
+      onTyping(true);
+    }
+
+    window.clearTimeout(typingStop.current);
+    typingStop.current = window.setTimeout(stopTyping, TYPING_IDLE_MS);
+  }
 
   function submit() {
     const text = draft.trim();
     if (!text) {
       return;
     }
-    onSend(text);
+
+    stopTyping();
+
+    if (editing) {
+      onEdit(editing.id, text);
+      setEditing(null);
+    } else {
+      onSend(text, replyTo?.id);
+      setReplyTo(null);
+    }
+
     setDraft('');
   }
+
+  function beginEdit(message: ChatMessage) {
+    setReplyTo(null);
+    setEditing(message);
+    setDraft(message.content);
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }
+
+  function beginReply(message: ChatMessage) {
+    setEditing(null);
+    setReplyTo(message);
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }
+
+  function cancelComposing() {
+    setEditing(null);
+    setReplyTo(null);
+    setDraft('');
+    stopTyping();
+  }
+
+  const needle = query.trim().toLowerCase();
+  const visible = needle
+    ? messages.filter(
+        (message) =>
+          !message.deleted &&
+          (message.content.toLowerCase().includes(needle) ||
+            message.deviceName.toLowerCase().includes(needle) ||
+            (message.fileName ?? '').toLowerCase().includes(needle))
+      )
+    : messages;
 
   return (
     <div
@@ -367,58 +655,169 @@ export function ChatPanel({
           <span>Drop to attach a file</span>
         </div>
       )}
+
+      <div className="chat__bar">
+        {searching ? (
+          <>
+            <div className="search">
+              <SearchIcon size={14} />
+              <input
+                className="search__input"
+                value={query}
+                autoFocus
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    setQuery('');
+                    setSearching(false);
+                  }
+                }}
+                placeholder={`Search ${room.name}`}
+                aria-label="Search messages"
+                spellCheck={false}
+              />
+            </div>
+            <span className="text-sm text-tertiary">
+              {needle ? `${visible.length} of ${messages.length}` : `${messages.length} messages`}
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              icon
+              onClick={() => {
+                setQuery('');
+                setSearching(false);
+              }}
+              aria-label="Close search"
+            >
+              <XIcon size={14} />
+            </Button>
+          </>
+        ) : (
+          <>
+            <span className="text-sm text-secondary">
+              {messages.length} {messages.length === 1 ? 'message' : 'messages'}
+            </span>
+            <span className="spacer" />
+            <Button size="sm" variant="ghost" onClick={() => setSearching(true)}>
+              <SearchIcon size={14} />
+              Search
+            </Button>
+          </>
+        )}
+      </div>
+
       <div className="chat__scroll">
+        {/* The column is reversed in CSS, so the first child sits at the bottom
+            and new messages need no scroll bookkeeping. Anything that belongs
+            visually above a message is therefore rendered after it. */}
+        {typingNames.length > 0 && (
+          <div className="chat__typing">
+            <span className="chat__typing-dots">
+              <i />
+              <i />
+              <i />
+            </span>
+            {typingLine(typingNames)}
+          </div>
+        )}
+
         {messages.length === 0 ? (
           <EmptyState
             icon={<ChatIcon size={22} />}
             title="No messages yet"
             text={`Say something to everyone in ${room.name}.`}
           />
+        ) : visible.length === 0 ? (
+          <EmptyState
+            icon={<SearchIcon size={22} />}
+            title="No matches"
+            text={`Nothing in ${room.name} matches “${query.trim()}”.`}
+            actions={<Button onClick={() => setQuery('')}>Clear search</Button>}
+          />
         ) : (
-          // The column is reversed in CSS so new messages sit at the bottom
-          // without any scroll bookkeeping.
-          messages.map((message) => (
-            <div
-              key={message.id}
-              className={message.deviceId === deviceId ? 'msg is-mine' : 'msg'}
-            >
-              <div className="msg__head">
-                <span className="msg__author">
-                  {message.deviceId === deviceId ? 'You' : message.deviceName}
-                </span>
-                <span className="msg__time">{clockTime(message.timestamp)}</span>
-                {message.deviceId === deviceId && <Receipt status={statusOf(message, room)} />}
-              </div>
-              {message.type === 'text' ? (
-                <div className="msg__body">{message.content}</div>
-              ) : (
-                <ChatAttachment message={message} onSaveFile={onSaveFile} />
-              )}
-            </div>
-          ))
+          visible.map((message, index) => {
+            // The next entry is the older one: the list runs newest first.
+            const older = visible[index + 1];
+            const opensDay = !older || !sameDay(older.timestamp, message.timestamp);
+            const inRun =
+              !opensDay &&
+              Boolean(older) &&
+              older.deviceId === message.deviceId &&
+              message.timestamp - older.timestamp < GROUP_WINDOW_MS;
+
+            return (
+              <React.Fragment key={message.id}>
+                <MessageRow
+                  message={message}
+                  room={room}
+                  deviceId={deviceId}
+                  showHeader={!inRun}
+                  onSaveFile={onSaveFile}
+                  onReply={beginReply}
+                  onEdit={beginEdit}
+                  onDelete={onDelete}
+                  onReact={onReact}
+                  onCopy={onCopy}
+                />
+                {opensDay && (
+                  <div className="chat__day">
+                    <span>{dayLabel(message.timestamp)}</span>
+                  </div>
+                )}
+              </React.Fragment>
+            );
+          })
         )}
       </div>
+
+      {(replyTo || editing) && (
+        <div className="composer__context">
+          <span className="composer__context-icon">
+            {editing ? <PencilIcon size={14} /> : <ReplyIcon size={14} />}
+          </span>
+          <div className="composer__context-body">
+            <div className="composer__context-title">
+              {editing ? 'Editing your message' : `Replying to ${replyTo?.deviceName}`}
+            </div>
+            <div className="composer__context-text truncate">
+              {editing ? editing.content : (replyTo?.content || replyTo?.fileName || 'Attachment')}
+            </div>
+          </div>
+          <Button size="sm" variant="ghost" icon onClick={cancelComposing} aria-label="Cancel">
+            <XIcon size={14} />
+          </Button>
+        </div>
+      )}
 
       <div className="composer">
         <Button icon onClick={onSendFile} aria-label="Attach a file" title="Attach a file">
           <PaperclipIcon size={16} />
         </Button>
-        <input
-          className="input"
+        <textarea
+          ref={composerRef}
+          className="input composer__input"
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          rows={1}
+          onChange={(event) => noteTyping(event.target.value)}
+          onBlur={stopTyping}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();
               submit();
+              return;
+            }
+            if (event.key === 'Escape' && (editing || replyTo)) {
+              event.preventDefault();
+              cancelComposing();
             }
           }}
-          placeholder={`Message ${room.name}`}
+          placeholder={editing ? 'Edit your message' : `Message ${room.name}`}
           aria-label="Message"
         />
         <Button variant="primary" onClick={submit} disabled={!draft.trim()}>
           <SendIcon size={15} />
-          Send
+          {editing ? 'Save' : 'Send'}
         </Button>
       </div>
     </div>

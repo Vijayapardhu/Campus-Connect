@@ -159,6 +159,28 @@ export const XCircleIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const ReplyIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M9 7 4 12l5 5" />
+    <path d="M4 12h9a7 7 0 0 1 7 7v1" />
+  </Svg>
+);
+
+export const PencilIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 20h4L20 8l-4-4L4 16v4Z" />
+    <path d="m14 6 4 4" />
+  </Svg>
+);
+
+export const SmileIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M8.5 14.5a4.5 4.5 0 0 0 7 0" />
+    <path d="M9 9.5v.01M15 9.5v.01" />
+  </Svg>
+);
+
 export const PowerIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12 3v9" />
