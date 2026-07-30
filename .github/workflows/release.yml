@@ -48,9 +48,12 @@ jobs:
 
     # Both downloaders honour these, so every Electron binary the run needs
     # lands in one pair of directories the cache step below can carry over.
+    # Under the workspace because a job-level env block can only read the
+    # `github` context — `runner.temp` is a step-level value and fails to parse
+    # here. The `files` allow-list in package.json keeps .cache out of the app.
     env:
-      ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
-      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+      ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
 
     strategy:
       fail-fast: false
@@ -98,9 +101,7 @@ jobs:
       - name: Cache Electron binaries
         uses: actions/cache@v4
         with:
-          path: |
-            ${{ runner.temp }}/electron-cache
-            ${{ runner.temp }}/electron-builder-cache
+          path: .cache
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
           restore-keys: electron-${{ runner.os }}-
 

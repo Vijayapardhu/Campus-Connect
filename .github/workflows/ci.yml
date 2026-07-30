@@ -51,8 +51,8 @@ jobs:
     # Same reason as the release workflow: keep the Electron binaries in one
     # cacheable place so a flaky download does not fail the run.
     env:
-      ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
-      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+      ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
 
     steps:
       - uses: actions/checkout@v4
@@ -65,9 +65,7 @@ jobs:
       - name: Cache Electron binaries
         uses: actions/cache@v4
         with:
-          path: |
-            ${{ runner.temp }}/electron-cache
-            ${{ runner.temp }}/electron-builder-cache
+          path: .cache
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
           restore-keys: electron-${{ runner.os }}-
 

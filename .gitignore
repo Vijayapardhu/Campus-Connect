@@ -7,6 +7,9 @@ release/
 out/
 *.tsbuildinfo
 
+# Downloaded Electron binaries (ELECTRON_CACHE / ELECTRON_BUILDER_CACHE in CI)
+.cache/
+
 # Electron Builder
 build/*.exe
 build/*.dmg
