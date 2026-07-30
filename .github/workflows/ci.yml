@@ -48,6 +48,12 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
 
+    # Same reason as the release workflow: keep the Electron binaries in one
+    # cacheable place so a flaky download does not fail the run.
+    env:
+      ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
+      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+
     steps:
       - uses: actions/checkout@v4
 
@@ -56,10 +62,26 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Cache Electron binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/electron-cache
+            ${{ runner.temp }}/electron-builder-cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
+
       - run: npm ci
 
       - name: Build a Linux installer
-        run: npm run package:linux -- --publish never
+        run: |
+          for attempt in 1 2 3; do
+            if npm run package:linux -- --publish never; then exit 0; fi
+            echo "::warning::Packaging failed (attempt $attempt of 3)."
+            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 30)); fi
+          done
+          echo "::error::Packaging failed three times — see the log above."
+          exit 1
 
       - uses: actions/upload-artifact@v4
         with:

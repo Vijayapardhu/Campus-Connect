@@ -45,6 +45,13 @@ jobs:
     name: Build ${{ matrix.label }}
     needs: verify
     runs-on: ${{ matrix.os }}
+
+    # Both downloaders honour these, so every Electron binary the run needs
+    # lands in one pair of directories the cache step below can carry over.
+    env:
+      ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
+      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+
     strategy:
       fail-fast: false
       matrix:
@@ -83,7 +90,31 @@ jobs:
           node-version: 20
           cache: npm
 
-      - run: npm ci
+      # Fetching Electron itself is the least reliable part of a release: v0.3.6
+      # failed with "An existing connection was forcibly closed by the remote
+      # host" partway through the 121 MB win32-x64 zip, and took the whole
+      # release down with it. A warm cache means most runs never make the
+      # request; the retries below cover the runs that still have to.
+      - name: Cache Electron binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/electron-cache
+            ${{ runner.temp }}/electron-builder-cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
+
+      # npm ci runs Electron's postinstall download, so it can fail the same way.
+      - name: Install dependencies
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then exit 0; fi
+            echo "::warning::npm ci failed (attempt $attempt of 3)."
+            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 20)); fi
+          done
+          echo "::error::npm ci failed three times — see the log above."
+          exit 1
 
       # The signing variables must be *absent* when there is no certificate, not
       # present-but-empty: electron-builder treats an empty CSC_LINK as a path
@@ -122,8 +153,20 @@ jobs:
       # --publish never, and no GH_TOKEN: otherwise electron-builder uploads its
       # own copy of every artifact on a tag, and the release ends up with each
       # installer listed twice alongside blockmaps and latest*.yml.
+      #
+      # Retried because the Electron download happens inside this step: a dropped
+      # connection is worth another attempt, and recompiling the app beforehand
+      # costs about a second. A genuine packaging fault fails all three times.
       - name: Build installer
-        run: ${{ matrix.command }} -- --publish never
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if ${{ matrix.command }} -- --publish never; then exit 0; fi
+            echo "::warning::Packaging failed (attempt $attempt of 3)."
+            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 30)); fi
+          done
+          echo "::error::Packaging failed three times — see the log above."
+          exit 1
 
       # v0.3.1 shipped installers that could not start: the `files` glob had
       # been narrowed and silently dropped dist/shared, which main.js requires
