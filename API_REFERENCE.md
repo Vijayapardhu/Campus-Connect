@@ -14,9 +14,9 @@ renderer and the main process, and the **wire protocol** between devices.
 ## IPC API
 
 Everything the renderer can do is declared once in
-[`src/shared/bridge.ts`](src/shared/bridge.ts) as `SharedClipboardApi`,
+[`src/shared/bridge.ts`](src/shared/bridge.ts) as `CampusConnectApi`,
 implemented in [`src/main/preload.ts`](src/main/preload.ts), and reached as
-`window.sharedClipboard`.
+`window.campusConnect`.
 
 > **Adding a call?** Declare it in `bridge.ts` first, then `preload.ts`, then
 > `main.ts`. One contract, three consumers, no drift.
@@ -45,6 +45,7 @@ type ActionResult = { ok: boolean; message: string };
 | `roomRequestJoin(roomId, password, joinCode)` | `ActionResult` | Either credential is enough; pass `''` for the one you do not have. Success means *sent*, not *joined* — the outcome arrives via `onJoinResult` |
 | `roomJoinByCode(joinCode, password)` | `ActionResult` | Join with a code, a password, or both. Asks every advertised room's owner; the wrong ones reject it. This is what lets someone join on the password alone without knowing which room it belongs to |
 | `roomUnlock(roomId, password)` | `ActionResult` | Re-derives the key for an encrypted room this device has no key for |
+| `roomUpdate(roomId, patch)` | `ActionResult` | Owner only. `patch` may set `name`, `type`, `regenerateJoinCode`, and `password` — where `undefined` leaves the credentials alone, `null` removes the password, and a string sets a new one. The last two **re-key the room** and lock every other member out until they enter it |
 | `roomSwitch(roomId)` | `ActionResult` | Changes which room this device shares into |
 | `roomLeave(roomId)` | `ActionResult` | The owner closing a room removes it for everyone |
 | `roomApproveMember(roomId, memberId)` | `ActionResult` | Owner only |
@@ -85,6 +86,60 @@ lifted to the top.
 | `clipboardApply(entryId)` | `ActionResult` | Puts a history entry back on this machine's clipboard |
 | `clipboardShareNow()` | `ActionResult` | Shares the clipboard immediately instead of waiting for the poller |
 
+### Calls
+
+The main process relays setup and tracks who is in what. The microphone, the camera and every peer
+connection live in the renderer — nothing here touches media.
+
+| Call | Returns | Notes |
+|------|---------|-------|
+| `callStart(roomId, mode)` | `CallStartResult` | `mode` is `'audio' \| 'video'`. Rings the room. Fails if you are already on a call, or if nobody else is in the room |
+| `callJoin(callId)` | `CallStartResult` | Answers a ring, or joins a call already under way. Fails once the call holds 6 devices |
+| `callLeave()` | `ActionResult` | Leaves the call this device is in |
+| `callDecline(callId)` | `ActionResult` | Refuses a ring and tells the caller |
+| `callSignal(signal)` | `boolean` | Carries one negotiation step out. **Refused for any call this device is not in**, so the renderer cannot signal on behalf of a call it never joined |
+| `callScreenSources()` | `ScreenSource[]` | Screens and windows available to share, with thumbnails. Listing them captures nothing |
+
+`CallStartResult` is an `ActionResult` plus `callId`, `roomId` and `mode` — everything the renderer
+needs to negotiate, including for a call it is joining late, where the room and mode were decided by
+whoever started it.
+
+### Remote desktop
+
+The screen travels over WebRTC and input over its data channel. The main process owns setup and one
+gate — `remoteInput` — which is the only decision between an event arriving and the mouse moving.
+
+| Call | Returns | Notes |
+|------|---------|-------|
+| `remoteRequest(roomId, targetDeviceId)` | `ActionResult` | Asks a member for their screen. Shares nothing; a person on the other machine has to answer |
+| `remoteRespond(sessionId, allow, grant, screenId, screenLabel)` | `ActionResult` | The host's answer, and **the only path by which a screen starts being shared**. `grant` is `'view' \| 'control'`. Downgraded to `'view'` automatically when this machine cannot accept input |
+| `remoteSetGrant(grant)` | `ActionResult` | Host only. Hands control over or takes it back, without ending the session. Releases any held keys when narrowing |
+| `remoteEnd()` | `ActionResult` | Ends the session from either side |
+| `remoteSignal(signal)` | `boolean` | One negotiation step. Refused for any session this device is not in |
+| `remoteInput(sessionId, fromDeviceId, event)` | `boolean` | Applies one input event. Refused unless there is a live session, this device is the **host**, the ids match, and control is granted |
+| `remoteScreens()` | `ScreenSource[]` | Whole displays only — a window cannot be clicked on reliably |
+| `remoteCapabilities()` | `RemoteCapabilities` | Whether this machine can be driven, and why not if it cannot |
+
+### Productivity
+
+| Call | Returns | Notes |
+|------|---------|-------|
+| `quickPasteItems()` | `QuickPasteItems` | Clipboard history across **every** room, plus snippets. Called from the overlay window |
+| `quickPastePick(kind, id)` | `ActionResult` | Copies the pick, then pastes it into whatever had focus. Suppresses the clipboard poller so an old item is not rebroadcast |
+| `quickPasteClose()` | `void` | Dismisses the overlay |
+| `snippetSave({ id?, label, content })` | `ActionResult` | Adds, or amends when `id` is given. Identical content is not stored twice |
+| `snippetDelete(id)` | `ActionResult` | |
+| `snippetCopy(id)` | `ActionResult` | Copies without going through the overlay, and counts as a use |
+| `searchAll(query)` | `SearchHit[]` | Clipboard history and chat, every room, newest first. Room names resolved; withdrawn messages excluded |
+| `openLink(url)` | `ActionResult` | Opens a link from the clipboard. **http/https only** — never `file://`, `javascript:`, or a scheme another app registered |
+
+### Privacy
+
+| Call | Returns | Notes |
+|------|---------|-------|
+| `blockDevice(deviceId, deviceName)` | `ActionResult` | Nothing that device sends is read, stored, shown or answered again, in any room. It is also removed from every room **you own** |
+| `unblockDevice(deviceId)` | `ActionResult` | It reappears on the network, but is not back in any room |
+
 ---
 
 ## Events
@@ -93,7 +148,7 @@ Each subscriber returns its own unsubscribe function:
 
 ```ts
 React.useEffect(() => {
-  const off = window.sharedClipboard.onStateChanged(setState);
+  const off = window.campusConnect.onStateChanged(setState);
   return off;
 }, []);
 ```
@@ -107,6 +162,16 @@ React.useEffect(() => {
 | `onJoinRequest` | `JoinRequest` | Someone asks to join a room you own, or accepts your invitation |
 | `onInvite` | `RoomInvite` | Someone invited this device to a room |
 | `onJoinResult` | `{ roomId, ok, message }` | Your own join request was accepted or refused |
+| `onCallRing` | `CallRinging` | Someone is calling a room this device is in |
+| `onCallRingCancelled` | `callId: string` | A ring stopped being offered — withdrawn, answered elsewhere, or timed out |
+| `onCallSignal` | `CallSignalEvent` | A negotiation step for the call this device is in. `fromDeviceId` has already been checked against the room's roster |
+| `onCallEnded` | `callId: string` | The call this device was in is over, whoever ended it |
+| `onRemoteRequest` | `RemoteRequest` | Someone is asking to see this screen. Nothing is shared until you allow it |
+| `onRemoteRequestExpired` | `sessionId: string` | A request nobody answered stopped being offered |
+| `onRemoteStarted` | `RemoteSessionState` | A session opened, in either role |
+| `onRemoteSignal` | `RemoteSignalEvent` | A negotiation step for the session this device is in |
+| `onRemoteGrantChanged` | `RemoteGrant` | The host handed control over, or took it back |
+| `onRemoteEnded` | `{ sessionId, reason }` | The session is over, whoever ended it |
 
 ---
 
@@ -128,11 +193,14 @@ machines corrupting each other.
 | `room-reject` | owner → joiner | Refused; carries a human-readable reason |
 | `room-roster` | owner → members | Authoritative roster after any change |
 | `room-leave` | member → owner | Voluntary departure |
+| `room-rekey` | owner → members | Credentials changed. Sealed with the key the room had **before** the change, and deliberately does not carry the new one |
 | `room-closed` | owner → members | Room deleted |
 | `clipboard` | member → room | Clipboard payload |
 | `chat` | member → room | Chat message |
 | `chunk` | sender → room | One piece of an oversized message |
 | `chunk-nack` | receiver → sender | Indices that never arrived; please resend |
+| `call` | member → room, or one device | Every call setup step. The media itself never travels here |
+| `remote` | member → one device | Remote desktop setup. Always addressed; input never travels here |
 
 ### Sealed vs plaintext bodies
 
@@ -254,6 +322,110 @@ type Envelope = {
   data: string;  // ciphertext, base64
 };
 
+/**
+ * Call setup. Sealed with the room key like any other body, and only ever
+ * honoured from an accepted member. `to` narrows a signal to one device; the
+ * sender is always taken from the enclosing message, never from here.
+ */
+type CallSignal =
+  | { kind: 'ring';    callId: string; mode: CallMode }
+  | { kind: 'join';    callId: string; mode: CallMode }
+  | { kind: 'here';    callId: string; mode: CallMode; to: string }
+  | { kind: 'leave';   callId: string }
+  | { kind: 'decline'; callId: string }
+  | { kind: 'sdp';     callId: string; to: string; description: CallDescription }
+  | { kind: 'ice';     callId: string; to: string; candidate: CallCandidate }
+  | { kind: 'device';  callId: string; state: CallDeviceState };
+
+type ActiveCall = {
+  callId: string;
+  roomId: string;
+  mode: 'audio' | 'video';
+  startedAt: number;
+  participants: { deviceId: string; deviceName: string }[];
+};
+
+/**
+ * Remote desktop setup. Always addressed — a session is strictly one to one —
+ * and only ever honoured from an accepted member of the same room.
+ */
+type RemoteSignal =
+  | { kind: 'request';       sessionId: string; to: string }
+  | { kind: 'grant';         sessionId: string; to: string; grant: RemoteGrant; screenLabel: string }
+  | { kind: 'deny';          sessionId: string; to: string; reason: string }
+  | { kind: 'grant-changed'; sessionId: string; to: string; grant: RemoteGrant }
+  | { kind: 'end';           sessionId: string; to: string; reason: string }
+  | { kind: 'sdp';           sessionId: string; to: string; description: CallDescription }
+  | { kind: 'ice';           sessionId: string; to: string; candidate: CallCandidate };
+
+/**
+ * One input event, as it crosses the data channel. Pointer coordinates are
+ * fractions of the shared screen (0..1), never pixels — the controller does not
+ * know the host's resolution and the viewer is scaled to fit a window.
+ */
+type RemoteInputEvent =
+  | { t: 'move';   x: number; y: number }
+  | { t: 'down';   x: number; y: number; b: 'left' | 'right' | 'middle' }
+  | { t: 'up';     x: number; y: number; b: 'left' | 'right' | 'middle' }
+  | { t: 'scroll'; dx: number; dy: number }
+  | { t: 'key';    k: string; down: boolean }
+  | { t: 'text';   s: string };
+
+type RemoteSessionState = {
+  sessionId: string;
+  roomId: string;
+  role: 'host' | 'controller';
+  peerId: string;
+  peerName: string;
+  grant: 'view' | 'control';
+  screenLabel: string;
+  startedAt: number;
+};
+
+/**
+ * Saved text. Local to the device and never sent anywhere — a snippet is
+ * convenient *because* it is to hand, and the moment it syncs it becomes
+ * something to think about before saving.
+ */
+type Snippet = {
+  id: string;
+  label: string;      // falls back to the content when blank
+  content: string;
+  createdAt: number;
+  useCount: number;   // ranking: recently used, then most used, then newest
+  lastUsedAt: number;
+};
+
+/** One hit from searching clipboard history and chat at once. */
+type SearchHit = {
+  kind: 'clipboard' | 'chat';
+  id: string;
+  roomId: string;
+  roomName: string;   // resolved, or 'A room you have left'
+  deviceName: string;
+  timestamp: number;
+  excerpt: string;    // trimmed around the match, whitespace collapsed
+  matchStart: number; // offsets into `excerpt`, for highlighting
+  matchLength: number;
+  fileName?: string;
+  hasMedia: boolean;
+};
+
+type BlockedDevice = {
+  deviceId: string;
+  deviceName: string;   // kept so the list is readable; an id alone is not
+  blockedAt: number;
+};
+
+/** What an owner may change about a room after it exists. */
+type RoomUpdate = {
+  name?: string;
+  type?: 'public' | 'private';
+  /** absent = leave alone · null = remove the password · string = set a new one */
+  password?: string | null;
+  regenerateJoinCode?: boolean;
+};
+
 type AppSettings = {
   online: boolean;        // the header switch: off closes the sockets entirely
   syncEnabled: boolean;   // share what this device copies
@@ -262,6 +434,10 @@ type AppSettings = {
   theme: 'system' | 'light' | 'dark';
   fontScale: number;      // 0.9 – 1.3, multiplies the whole type scale
   fontFamily: string;     // an installed font, or '' for the system default
+  notifications: boolean;      // show the popup at all
+  notificationSound: boolean;  // and whether it makes a sound — separate switches
+  ringOnCalls: boolean;        // ring out loud for an incoming call
+  startCallsMuted: boolean;    // join every call with the microphone off
 };
 
 type AppState = {

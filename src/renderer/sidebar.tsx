@@ -23,6 +23,7 @@ function roomMeta(room: RoomInfo, locked: boolean): string {
 }
 
 export function Sidebar({
+  header,
   state,
   lockedRoomIds,
   onSelectRoom,
@@ -33,6 +34,8 @@ export function Sidebar({
   onOpenSettings,
   settingsOpen
 }: {
+  /** Rendered above everything else. The phone puts its two actions here. */
+  header?: React.ReactNode;
   state: AppState;
   lockedRoomIds: Set<string>;
   onSelectRoom: (roomId: string) => void;
@@ -58,10 +61,11 @@ export function Sidebar({
         <span className="sidebar__mark">
           <ClipboardIcon size={15} />
         </span>
-        <span className="sidebar__name">Shared Clipboard</span>
+        <span className="sidebar__name">Campus Connect</span>
       </div>
 
       <div className="sidebar__scroll">
+        {header}
         {outdated.length > 0 && (
           <section className="sidebar__section">
             <button className="room-item is-warning" onClick={onOpenSettings} title="Open network settings">

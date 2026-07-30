@@ -5,7 +5,8 @@ import type {
   DiscoveredRoom,
   RoomInfo,
   RoomInvite,
-  RoomType
+  RoomType,
+  RoomUpdate
 } from '../shared/types';
 import { APP_INFO, FONT_SCALES, MAX_FONT_SCALE, MIN_FONT_SCALE } from '../shared/types';
 import { Button, Field, Modal, SwitchRow } from './ui';
@@ -133,6 +134,213 @@ export function CreateRoomModal({
           autoComplete="new-password"
         />
       </Field>
+    </Modal>
+  );
+}
+
+// --------------------------------------------------------------- edit a room
+
+/**
+ * Changing a room after it exists. The owner's dialog, and the one place the
+ * difference between an ordinary edit and a re-key has to be made plain: a name
+ * change is invisible to everyone, while a password change locks every other
+ * member out until they are told the new one.
+ */
+export function EditRoomModal({
+  room,
+  onClose,
+  onSave
+}: {
+  room: RoomInfo;
+  onClose: () => void;
+  onSave: (patch: RoomUpdate) => Promise<boolean>;
+}) {
+  const [name, setName] = React.useState(room.name);
+  const [type, setType] = React.useState<RoomType>(room.type);
+  /** Off by default: the credentials are left alone unless asked for. */
+  const [changingPassword, setChangingPassword] = React.useState(false);
+  const [password, setPassword] = React.useState('');
+  const [removePassword, setRemovePassword] = React.useState(false);
+  const [newCode, setNewCode] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+
+  const strength = passwordStrength(password);
+  const trimmed = name.trim();
+  const rekeying = changingPassword && (removePassword || password.length > 0);
+
+  const nameChanged = trimmed !== room.name;
+  const typeChanged = type !== room.type;
+  const dirty = nameChanged || typeChanged || newCode || rekeying;
+
+  async function submit() {
+    if (!trimmed) {
+      setError('A room needs a name.');
+      return;
+    }
+    if (changingPassword && !removePassword && password.length > 0 && password.length < 4) {
+      setError('Use at least 4 characters, or remove the password instead.');
+      return;
+    }
+    if (changingPassword && !removePassword && password.length === 0) {
+      setError('Enter the new password, or choose to remove it.');
+      return;
+    }
+    if (!dirty) {
+      onClose();
+      return;
+    }
+
+    const patch: RoomUpdate = {};
+    if (nameChanged) patch.name = trimmed;
+    if (typeChanged) patch.type = type;
+    if (newCode) patch.regenerateJoinCode = true;
+    if (rekeying) patch.password = removePassword ? null : password;
+
+    setBusy(true);
+    const saved = await onSave(patch);
+    setBusy(false);
+    if (saved) {
+      onClose();
+    }
+  }
+
+  return (
+    <Modal
+      title={`Edit ${room.name}`}
+      description="Only you can change this room. Everyone in it sees the change."
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant={rekeying ? 'danger' : 'primary'} onClick={submit} disabled={busy || !dirty}>
+            {busy ? 'Saving…' : rekeying ? 'Save and re-key' : 'Save changes'}
+          </Button>
+        </>
+      }
+    >
+      <Field label="Room name">
+        <input
+          className="input"
+          value={name}
+          onChange={(event) => {
+            setName(event.target.value);
+            setError('');
+          }}
+          onKeyDown={(event) => event.key === 'Enter' && submit()}
+          maxLength={48}
+        />
+      </Field>
+
+      <div className="field" style={{ marginTop: 'var(--space-4)' }}>
+        <span className="field__label">Access</span>
+        <div className="segmented">
+          <button
+            className={type === 'public' ? 'segmented__option is-selected' : 'segmented__option'}
+            onClick={() => setType('public')}
+          >
+            <span className="segmented__title">
+              <GlobeIcon size={14} />
+              Public
+            </span>
+            <span className="segmented__desc">Anyone on this WiFi can join instantly.</span>
+          </button>
+          <button
+            className={type === 'private' ? 'segmented__option is-selected' : 'segmented__option'}
+            onClick={() => setType('private')}
+          >
+            <span className="segmented__title">
+              <LockIcon size={14} />
+              Private
+            </span>
+            <span className="segmented__desc">Needs a code, a password, and your approval.</span>
+          </button>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 'var(--space-4)' }}>
+        <SwitchRow
+          title="Issue a new join code"
+          description="The current code stops working. Anyone already in the room stays in."
+          checked={newCode}
+          onChange={setNewCode}
+        />
+
+        <SwitchRow
+          title={room.encrypted ? 'Change the password' : 'Add a password'}
+          description={
+            room.encrypted
+              ? 'Everyone else is locked out until you tell them the new one.'
+              : 'Encrypts everything sent in this room from now on. Everyone else has to enter it.'
+          }
+          checked={changingPassword}
+          onChange={(next) => {
+            setChangingPassword(next);
+            setError('');
+            if (!next) {
+              setPassword('');
+              setRemovePassword(false);
+            }
+          }}
+        />
+      </div>
+
+      {changingPassword && (
+        <div style={{ marginTop: 'var(--space-4)' }}>
+          {room.encrypted && (
+            <SwitchRow
+              title="Remove the password instead"
+              description="The room stops being encrypted. Anything sent in it can be read by anyone who joins."
+              checked={removePassword}
+              onChange={(next) => {
+                setRemovePassword(next);
+                setError('');
+              }}
+            />
+          )}
+
+          {!removePassword && (
+            <Field
+              label="New room password"
+              hint={
+                password
+                  ? `${strength.label} — this becomes the new encryption key. It is never sent over the network.`
+                  : 'At least 4 characters.'
+              }
+              error={error}
+            >
+              <input
+                className="input"
+                type="password"
+                value={password}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                  setError('');
+                }}
+                onKeyDown={(event) => event.key === 'Enter' && submit()}
+                placeholder="Choose a new password"
+                autoComplete="new-password"
+              />
+            </Field>
+          )}
+
+          <div className="callout callout--warning" style={{ marginTop: 'var(--space-4)' }}>
+            <span className="callout__icon">
+              <LockIcon size={17} />
+            </span>
+            <div className="callout__body">
+              <div className="callout__title">This locks everyone else out</div>
+              <div className="callout__text">
+                Every other device in {room.name} stops being able to read it until you give them
+                the new password — including any device you were trying to shut out, which is what
+                makes this worth doing. Nobody loses their history, and any call in progress ends.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!changingPassword && error ? <p className="field__error">{error}</p> : null}
     </Modal>
   );
 }

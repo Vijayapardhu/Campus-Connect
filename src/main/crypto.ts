@@ -110,6 +110,14 @@ export function openJson<T>(key: Buffer, envelope: Envelope | undefined): T | nu
   }
 }
 
+/**
+ * The label that domain-separates a join proof from any other sealed value.
+ *
+ * Frozen at the app's old name on purpose. It is not shown to anyone — it exists
+ * only so that a proof cannot be confused for a different kind of message — and
+ * changing it would break every device that has not been updated yet, for
+ * exactly no benefit.
+ */
 function proofPlaintext(roomId: string): string {
   return `shared-clipboard:proof:${roomId}`;
 }

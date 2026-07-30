@@ -1,5 +1,5 @@
 /* =========================================================================
-   Shared Clipboard — design tokens
+   Campus Connect — design tokens
    One accent, neutral surfaces, hairline borders. Light and dark are the same
    layout with a different palette, so nothing shifts when the theme changes.
    ========================================================================= */
@@ -27,22 +27,28 @@
    * so changing the text size moves the whole scale together instead of
    * leaving some labels behind.
    */
+  /*
+   * Raised a step across the board. The old scale started at 13px, which is
+   * fine on a 13" laptop at 150% and genuinely hard work on a 1080p screen at
+   * 100% — which is what most of these machines are. Everything still moves
+   * together with --text-scale, so the size control in Settings is unaffected.
+   */
   --text-scale: 1;
-  --text-xs: calc(11px * var(--text-scale));
-  --text-sm: calc(12px * var(--text-scale));
-  --text-base: calc(13px * var(--text-scale));
-  --text-md: calc(14px * var(--text-scale));
-  --text-lg: calc(16px * var(--text-scale));
-  --text-xl: calc(20px * var(--text-scale));
-  --text-2xl: calc(26px * var(--text-scale));
+  --text-xs: calc(12px * var(--text-scale));
+  --text-sm: calc(13px * var(--text-scale));
+  --text-base: calc(14.5px * var(--text-scale));
+  --text-md: calc(16px * var(--text-scale));
+  --text-lg: calc(18px * var(--text-scale));
+  --text-xl: calc(23px * var(--text-scale));
+  --text-2xl: calc(30px * var(--text-scale));
 
   /* --font-sans is overridden inline when the user picks an installed font. */
   --font-sans: 'Segoe UI Variable Display', 'Segoe UI', -apple-system, BlinkMacSystemFont,
     system-ui, sans-serif;
   --font-mono: 'Cascadia Mono', 'SF Mono', 'JetBrains Mono', Consolas, monospace;
 
-  --sidebar-width: 264px;
-  --topbar-height: 56px;
+  --sidebar-width: 292px;
+  --topbar-height: 64px;
 
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
   --duration: 160ms;
@@ -488,8 +494,8 @@ select {
 .device-card__avatar {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   flex-shrink: 0;
   border-radius: var(--radius-full);
   background: var(--accent-soft);
@@ -585,7 +591,7 @@ select {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  height: 30px;
+  height: 34px;
   padding: 0 var(--space-3);
   border-radius: var(--radius-full);
   border: 1px solid var(--danger);
@@ -660,6 +666,32 @@ select {
   color: var(--warning);
 }
 
+/* A call is the one thing in here that is happening right now, so its tab is
+   the one thing that moves. */
+.tabbar__live {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--danger);
+  animation: pulse 1.8s var(--ease) infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabbar__live {
+    animation: none;
+  }
+}
+
 .panel {
   flex: 1;
   min-height: 0;
@@ -680,7 +712,7 @@ select {
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  height: 32px;
+  height: 36px;
   padding: 0 var(--space-3);
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
@@ -735,19 +767,19 @@ select {
 }
 
 .btn--sm {
-  height: 26px;
-  padding: 0 var(--space-2);
+  height: 30px;
+  padding: 0 var(--space-3);
   font-size: var(--text-sm);
 }
 
 .btn--icon {
-  width: 32px;
+  width: 36px;
   padding: 0;
   flex-shrink: 0;
 }
 
 .btn--sm.btn--icon {
-  width: 26px;
+  width: 30px;
 }
 
 .btn--block {
@@ -783,7 +815,7 @@ select {
 .select,
 .textarea {
   width: 100%;
-  height: 34px;
+  height: 40px;
   padding: 0 var(--space-3);
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
@@ -803,6 +835,32 @@ select {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* A multi-line input has to grow; the fixed height above is for single lines. */
+.input--area {
+  height: auto;
+  min-height: 76px;
+  padding: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+/* The shortcut recorder: a button that looks like a field, because it is one
+   you fill in by pressing keys rather than by typing. */
+.shortcut-record {
+  display: flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  text-align: left;
+}
+
+.shortcut-record.is-recording {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  color: var(--accent-text);
 }
 
 .input--code {
@@ -1167,6 +1225,17 @@ select {
   max-width: 60ch;
 }
 
+/* Groups a run of switches under a heading, for sections that cover more than
+   one thing. */
+.settings__subtitle {
+  margin: var(--space-6) 0 var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
 /* Key/value block */
 
 .facts {
@@ -1276,17 +1345,33 @@ select {
   border-top: 1px solid var(--border);
 }
 
+/*
+ * A key cap, wherever one appears inline.
+ *
+ * Sized to its content. This used to carry `min-width: 108px` as a bare element
+ * selector — which was right for the shortcut table below, where the caps line
+ * up in a column, and quietly wrong everywhere else: every inline key in the
+ * palette and the overlay came out as a 108px bar.
+ */
 kbd {
-  min-width: 108px;
-  padding: 3px 8px;
+  display: inline-block;
+  padding: 2px 7px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-bottom-width: 2px;
   background: var(--bg-sunken);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: 0.88em;
+  line-height: 1.4;
   color: var(--text-primary);
   text-align: center;
+  white-space: nowrap;
+}
+
+/* In the reference table the caps are a column, so there they do line up. */
+.shortcut kbd {
+  min-width: 108px;
+  font-size: var(--text-xs);
 }
 
 /* Delivery receipts */
@@ -1423,6 +1508,7 @@ kbd {
 }
 
 .stack {
+  min-width: 0;
   display: grid;
   gap: var(--space-4);
 }
@@ -1431,6 +1517,9 @@ kbd {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
+  /* Toolbars have to be allowed to stack rather than run off the edge. */
+  flex-wrap: wrap;
 }
 
 .row--end {
@@ -1483,85 +1572,37 @@ kbd {
 
 /* ----------------------------------------------------------- clipboard --- */
 
-.feed {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.clip {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
-  transition: border-color var(--duration) var(--ease), box-shadow var(--duration) var(--ease);
-}
-
-.clip:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
-}
-
-.clip__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
-}
-
-.clip__author {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.clip__author.is-me {
-  color: var(--accent-text);
-}
-
-.clip__time {
-  color: var(--text-tertiary);
-}
-
-.clip__actions {
-  display: flex;
-  gap: var(--space-1);
-  opacity: 0;
-  transition: opacity var(--duration) var(--ease);
-}
-
-.clip:hover .clip__actions,
-.clip:focus-within .clip__actions,
-.clip__actions.is-visible {
-  opacity: 1;
-}
-
-/* Pinned entries stay obvious once the actions fade back out. */
-.clip.is-pinned {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg-elevated);
-}
-
-/* Search box in the clipboard toolbar */
-
+/*
+ * The search field.
+ *
+ * Restored — and rebuilt taller and rounder to sit with the cards below it,
+ * which are now generous and soft-cornered. A 32px hairline box under a wall of
+ * 16px-radius cards read as a leftover from a denser design.
+ */
 .search {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   flex: 1;
   min-width: 0;
-  max-width: 420px;
-  height: 32px;
-  padding: 0 var(--space-2) 0 var(--space-3);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
+  max-width: 460px;
+  height: 42px;
+  padding: 0 var(--space-3) 0 var(--space-4);
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  background: var(--bg-sunken);
   color: var(--text-tertiary);
-  transition: border-color var(--duration) var(--ease), box-shadow var(--duration) var(--ease);
+  transition: border-color var(--duration) var(--ease), background var(--duration) var(--ease),
+    box-shadow var(--duration) var(--ease);
+}
+
+.search:hover {
+  background: var(--bg-hover);
 }
 
 .search:focus-within {
   border-color: var(--accent);
+  background: var(--bg-elevated);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -1571,6 +1612,7 @@ kbd {
   border: 0;
   background: none;
   color: var(--text-primary);
+  font-family: inherit;
   font-size: var(--text-base);
   outline: none;
 }
@@ -1579,15 +1621,218 @@ kbd {
   color: var(--text-tertiary);
 }
 
-.clip__text {
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  line-height: 1.6;
-  color: var(--text-primary);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 140px;
+/*
+ * A masonry wall, built on a fine grid.
+ *
+ * Grid with 8px rows and a per-card row span, rather than CSS `columns`. Columns
+ * re-balance every card whenever any one of them changes height, which made
+ * hovering one card shuffle the whole page; a span is fixed once and stays put.
+ * A one-line entry is still a one-line card, which is what makes a wall of them
+ * scannable — the shape tells you what each is before you have read a word.
+ */
+.feed {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  grid-auto-rows: 8px;
+  column-gap: var(--space-3);
+  /*
+   * Stretch, not start. The card's only child is absolutely positioned, so its
+   * content height is zero — with `align-items: start` the item shrank to that
+   * and the row span had no effect at all. Stretching makes it fill the rows it
+   * spans, which is where its height is supposed to come from.
+   */
+  align-items: stretch;
+  min-width: 0;
+}
+
+/*
+ * The card is a positioning frame; `.clip__inner` is the surface you see.
+ *
+ * Splitting them is what makes expanding smooth. On hover the inner surface
+ * lifts out of the flow and grows downward over its neighbours, so the article
+ * keeps its collapsed height and **nothing else moves**. Growing the card in
+ * place instead made the whole masonry re-flow on every hover — cards jumping
+ * between columns — which is the jitter, not the height animation itself.
+ */
+.clip {
+  position: relative;
+  display: block;
+  min-width: 0;
+  animation: rise 180ms var(--ease);
+}
+
+/*
+ * Always out of flow, never only on hover.
+ *
+ * Switching to absolute at hover time emptied the article and collapsed it to
+ * nothing. Being absolute from the start means the article's height comes from
+ * its row span alone, and growing this surface cannot disturb anything.
+ */
+.clip__inner {
+  position: absolute;
+  inset: 0 0 auto 0;
+  min-width: 0;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  transition: border-color 200ms var(--ease), box-shadow 200ms var(--ease);
+}
+
+.clip:hover,
+.clip:focus-within {
+  /* Above the cards it is about to overlap. */
+  z-index: 20;
+}
+
+.clip:hover .clip__inner,
+.clip:focus-within .clip__inner {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-lg);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clip {
+    animation: none;
+  }
+}
+
+.clip.is-pinned .clip__inner {
+  border-color: var(--accent-soft);
+  background: var(--accent-soft);
+}
+
+.clip__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  min-height: 28px;
+}
+
+/*
+ * Present, not hidden. These used to fade in only on hover, which made a card
+ * look like it had no controls — so the obvious thing to do was click the card,
+ * which copies, and the buttons appeared not to work.
+ */
+.clip__actions {
+  opacity: 0.62;
+  transition: opacity 200ms var(--ease);
+}
+
+.clip:hover .clip__actions,
+.clip:focus-within .clip__actions {
+  opacity: 1;
+}
+
+.clip__actions .btn {
+  width: 34px;
+  height: 34px;
+}
+
+.clip__meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+}
+
+.clip__body {
+  position: relative;
+  min-width: 0;
+}
+
+.clip__text {
+  /*
+   * The reading font, not the monospace one. Most of what lands here is prose,
+   * a link or a note, and setting all of it in a terminal face made an ordinary
+   * sentence look like a stack trace. Code still gets monospace — see `.is-code`.
+   */
+  font-family: inherit;
+  font-size: var(--text-md);
+  line-height: 1.55;
+  color: var(--text-primary);
+  /*
+   * `pre-wrap`, not the `pre` a <pre> element defaults to. Copied text keeps its
+   * line breaks and its indentation, but a line longer than the card still has
+   * to wrap rather than run off the side of it.
+   */
+  white-space: pre-wrap;
+  /*
+   * `anywhere` rather than `break-word`: what overflows here is long unbroken
+   * strings — URLs, tokens, base64 — which `break-word` leaves sticking out.
+   */
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow: hidden;
+  /*
+   * Eased towards the height the content really has (see `--clip-full`), over
+   * a duration long enough to read as movement rather than as a jump.
+   */
+  transition: max-height 260ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/*
+ * The tail fades instead of stopping dead. A hard cut makes a truncated command
+ * look exactly like a complete one, which is the worst possible outcome for
+ * something about to be pasted somewhere.
+ */
+.clip__body.is-clipped::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 64px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--bg-elevated) 92%);
+  transition: opacity var(--duration) var(--ease);
+}
+
+.clip__more {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  pointer-events: none;
+  transition: opacity var(--duration) var(--ease);
+}
+
+/* Focus as well as hover, or this is unreachable without a mouse. */
+.clip:hover .clip__text,
+.clip:focus-within .clip__text {
+  max-height: min(var(--clip-full, 520px), 62vh);
+  overflow-y: auto;
+}
+
+.clip:hover .clip__body.is-clipped::after,
+.clip:focus-within .clip__body.is-clipped::after,
+.clip:hover .clip__more,
+.clip:focus-within .clip__more {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clip__text,
+  .clip__body.is-clipped::after,
+  .clip__more {
+    transition: none;
+  }
 }
 
 .clip__image {
@@ -2042,8 +2287,8 @@ kbd {
 .attach__icon {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   border-radius: var(--radius-sm);
   background: var(--bg-hover);
@@ -2138,8 +2383,8 @@ kbd {
 .member__avatar {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   flex-shrink: 0;
   border-radius: var(--radius-full);
   background: var(--bg-hover);
@@ -2231,11 +2476,24 @@ kbd {
 }
 
 .code-block__value {
+  /* Nothing in here may push past the box, whatever it is. */
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: var(--text-xl);
   font-weight: 600;
   letter-spacing: 0.24em;
   color: var(--text-primary);
+}
+
+/*
+ * The base style is built for a six-character join code — big, widely spaced,
+ * readable across a room. A URL is none of those things and simply overflowed,
+ * so it gets its own size.
+ */
+.code-block__value--url {
+  font-size: var(--text-md);
+  letter-spacing: 0;
 }
 
 /* --------------------------------------------------------------- modal --- */
@@ -2408,10 +2666,1127 @@ kbd {
   border: 0;
 }
 
-/* Narrow windows collapse the rail to icons-with-labels at a tighter width. */
+/* --------------------------------------------------- quick-paste overlay -- */
+
+/*
+ * The overlay window is transparent, so the page draws its own surface. Without
+ * this the rounded corners would sit on an opaque rectangle and the whole thing
+ * would look like a badly cropped screenshot.
+ */
+body.is-overlay {
+  background: transparent;
+  overflow: hidden;
+}
+
+.qp {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  background: var(--bg-elevated);
+  box-shadow: 0 24px 64px rgba(9, 9, 11, 0.35);
+  animation: qp-in 120ms var(--ease);
+}
+
+@keyframes qp-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.99);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qp {
+    animation: none;
+  }
+}
+
+.qp__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-tertiary);
+}
+
+/* Deliberately large. It is the only thing you interact with, and the overlay
+   is read at a glance rather than studied. */
+.qp__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-lg);
+}
+
+.qp__input:focus {
+  outline: none;
+}
+
+.qp__count {
+  flex-shrink: 0;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.qp__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2);
+}
+
+.qp__empty {
+  padding: var(--space-8) var(--space-5);
+  color: var(--text-tertiary);
+  font-size: var(--text-base);
+  text-align: center;
+}
+
+.qp-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  text-align: left;
+}
+
+/*
+ * Selection follows the keyboard *and* the pointer, and there is no separate
+ * hover state. Two different highlights on screen at once would leave you
+ * unsure which one Enter is going to take.
+ */
+.qp-row.is-active {
+  background: var(--accent-soft);
+}
+
+.qp-row__icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+}
+
+.qp-row__icon.is-snippet {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.qp-row__body {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.qp-row__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-base);
+  color: var(--text-primary);
+}
+
+.qp-row__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.qp-row__key {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+}
+
+.qp-row.is-active .qp-row__key {
+  opacity: 1;
+}
+
+.qp__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border);
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+/*
+ * `flex: 0 0 auto` and `nowrap` are both load-bearing. Without them the hint
+ * groups stretch to fill the row — which pulled every key cap out into a wide
+ * bar and pushed the last hint off the edge entirely.
+ */
+.qp__footer span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.qp__footer kbd {
+  flex: 0 0 auto;
+}
+
+/* --------------------------------------------------------------- palette -- */
+
+/* The palette is the same surface as the overlay, inside the main window. It
+   sits high rather than centred: dead centre reads as a modal demanding an
+   answer, and this is something you dismiss without thinking. */
+.overlay--top {
+  place-items: start center;
+  padding-top: 12vh;
+}
+
+.palette {
+  width: min(760px, 100%);
+  height: min(580px, 72vh);
+}
+
+.palette__group {
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.hit__mark {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: var(--warning-soft);
+  color: inherit;
+  font-weight: 600;
+}
+
+/* A quiet aside — present, readable, and never competing with the content. */
+.hint-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+}
+
+/* ------------------------------------------------- typed clipboard items -- */
+
+/*
+ * A copied value is shown as the thing it is. Code keeps its whitespace, a
+ * colour shows the colour, a link offers to be followed. The alternative — one
+ * grey paragraph for everything — is most of what makes a clipboard tool read
+ * as a text dump.
+ */
+.clip__body:has(.is-code).is-clipped::after {
+  background: linear-gradient(to bottom, transparent, var(--bg-sunken) 88%);
+}
+
+.clip__text.is-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.clip__text.is-inline {
+  padding: 0;
+  background: none;
+  border: 0;
+  font-family: var(--font-mono);
+}
+
+.clip__link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.clip__link-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.clip__color {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.clip__color-chip {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  /* An inset border rather than an outset one, so a pale colour still reads as
+     a swatch against a pale background without changing its size. */
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.clip__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+/* --------------------------------------------------------- phone access --- */
+
+.phone-live {
+  display: flex;
+  gap: var(--space-5);
+  align-items: flex-start;
+  flex-wrap: wrap;
+  padding: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+
+/* White regardless of theme — a QR code inverted in dark mode will not scan. */
+.phone-live__qr {
+  display: grid;
+  place-items: center;
+  width: 180px;
+  height: 180px;
+  flex: none;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: #ffffff;
+}
+
+.phone-live__qr img {
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.phone-live__body {
+  flex: 1;
+  min-width: 260px;
+}
+
+.phone-live__room {
+  font-size: var(--text-md);
+}
+
+/* Read aloud across a room and typed on a phone, so it is spaced and large. */
+.phone-live__pin {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  color: var(--accent-text);
+}
+
+/* -------------------------------------------------------------- privacy --- */
+
+.blocklist {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.blocklist__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+}
+
+.blocklist__row + .blocklist__row {
+  border-top: 1px solid var(--border);
+}
+
+.blocklist__icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.blocklist__body {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.blocklist__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.blocklist__meta {
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+/* ---------------------------------------------------------------- calls --- */
+
+/*
+ * The call stage is the one surface in the app that is deliberately dark in
+ * both themes. Video is the content here, and a light frame around it both
+ * washes the picture out and lights up the room you are sitting in.
+ */
+.call-stage {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  background: #0b0c10;
+  color: #f4f4f5;
+}
+
+.call-stage__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: var(--text-base);
+}
+
+.call-stage__title {
+  font-weight: 600;
+}
+
+.call-stage__meta {
+  color: rgba(244, 244, 245, 0.6);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.call-stage__spacer {
+  flex: 1;
+}
+
+.call-stage__dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--danger);
+  animation: pulse 1.8s var(--ease) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .call-stage__dot {
+    animation: none;
+  }
+}
+
+/*
+ * The grid fills the space it is given rather than laying tiles out at a fixed
+ * size, so two people get half the window each and six get a sixth — which is
+ * what every call UI does, because a 1:1 call in a postage stamp is useless.
+ */
+.call-grid {
+  display: grid;
+  gap: var(--space-3);
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-3);
+  grid-template-columns: 1fr;
+  align-content: stretch;
+}
+
+.call-grid[data-count='2'] {
+  grid-template-columns: repeat(2, 1fr);
+}
+.call-grid[data-count='3'],
+.call-grid[data-count='4'] {
+  grid-template-columns: repeat(2, 1fr);
+  grid-auto-rows: 1fr;
+}
+.call-grid[data-count='5'],
+.call-grid[data-count='6'] {
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: 1fr;
+}
+
 @media (max-width: 860px) {
+  .call-grid[data-count='3'],
+  .call-grid[data-count='4'],
+  .call-grid[data-count='5'],
+  .call-grid[data-count='6'] {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.call-tile {
+  position: relative;
+  overflow: hidden;
+  min-height: 120px;
+  border-radius: var(--radius-lg);
+  background: #16171d;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.call-tile.is-live {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.call-tile--waiting {
+  border-style: dashed;
+}
+
+.call-tile__video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #0b0c10;
+  display: block;
+}
+
+/* Your own camera, seen the way a mirror shows it. A shared screen is not
+   mirrored — reversed text is unreadable. */
+.call-tile__video.is-mirrored {
+  transform: scaleX(-1);
+}
+
+.call-tile__placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: var(--space-3);
+  background: #16171d;
+}
+
+.call-tile__avatar {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.09);
+  color: #f4f4f5;
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.call-tile__status {
+  color: rgba(244, 244, 245, 0.6);
+  font-size: var(--text-sm);
+  text-align: center;
+  padding: 0 var(--space-4);
+}
+
+.call-tile__label {
+  position: absolute;
+  left: var(--space-3);
+  bottom: var(--space-3);
+  right: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 5px var(--space-3);
+  width: fit-content;
+  max-width: calc(100% - var(--space-6));
+  border-radius: var(--radius-full);
+  background: rgba(9, 9, 11, 0.62);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  font-size: var(--text-sm);
+}
+
+.call-tile__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-tile__mic {
+  display: grid;
+  place-items: center;
+  color: rgba(244, 244, 245, 0.75);
+}
+
+.call-tile__mic.is-off {
+  color: #fb7185;
+}
+
+.call-tile__badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.14);
+  font-size: var(--text-xs);
+}
+
+.call-controls {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.call-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.1);
+  color: #f4f4f5;
+  font-size: var(--text-base);
+  font-weight: 500;
+  transition: background var(--duration) var(--ease);
+}
+
+.call-btn:hover {
+  background: rgba(255, 255, 255, 0.17);
+}
+
+/* Off states say so in colour as well as in the icon, because at a glance the
+   slash through a microphone is easy to miss. */
+.call-btn.is-off {
+  background: rgba(251, 113, 133, 0.2);
+  color: #fda4af;
+}
+
+.call-btn.is-active {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.call-btn--leave {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.call-btn--leave:hover {
+  background: #9f1239;
+}
+
+.call-btn:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+/*
+ * Focus mode: one tile takes the stage, the rest become thumbnails under it.
+ *
+ * A shared screen, or whoever is talking, is what people want to look at; an
+ * equal grid gives a presentation the same room as five idle faces.
+ */
+.call-grid.is-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: var(--space-3);
+}
+
+/* The strip, under the stage. */
+.call-grid.is-strip .call-tile {
+  flex: 0 0 150px;
+  height: 100px;
+  min-height: 0;
+  order: 2;
+}
+
+.call-grid.is-strip .call-tile.is-focused {
+  flex: 1 1 100%;
+  height: auto;
+  /* Leaves room for the thumbnails below without pushing them off the stage. */
+  min-height: min(58vh, 480px);
+  order: 1;
+}
+
+.call-tile.is-focused {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+@media (max-width: 760px) {
+  .call-grid.is-strip .call-tile {
+    flex: 0 0 104px;
+    height: 72px;
+  }
+
+  .call-grid.is-strip .call-tile.is-focused {
+    min-height: 44vh;
+  }
+}
+
+/* A call happening in the room you are looking at, which you are not in. */
+.call-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+  font-size: var(--text-base);
+}
+
+.call-banner__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.incoming-call {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.incoming-call__avatar {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.incoming-call__name {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------ remote desktop --- */
+
+/*
+ * The bar shown on the machine being shared. Deliberately loud, deliberately
+ * not dismissible, and it turns red when the far side can actually click: the
+ * difference between being watched and being driven is the one thing the person
+ * sitting here must never be unsure about.
+ */
+.remote-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  background: var(--warning-soft);
+  color: var(--text-primary);
+  font-size: var(--text-base);
+}
+
+.remote-bar.is-control {
+  background: var(--danger-soft);
+}
+
+.remote-bar__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-stage {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: #0b0c10;
+  color: #f4f4f5;
+}
+
+.remote-surface {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--space-3);
+}
+
+/* Actual size scrolls rather than shrinking, for reading small text on a
+   high-resolution remote screen. */
+.remote-surface.is-actual {
+  place-items: start;
+  overflow: auto;
+}
+
+.remote-video {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  border-radius: var(--radius-md);
+  background: #000000;
+}
+
+.remote-surface.is-actual .remote-video {
+  max-width: none;
+  max-height: none;
+}
+
+/* The pointer becomes a crosshair only when clicks actually go somewhere, so
+   the cursor itself says whether control is live. */
+.remote-video.is-live {
+  cursor: crosshair;
+}
+
+.remote-surface__note {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.remote-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.12);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.remote-chip.is-control {
+  background: rgba(251, 113, 133, 0.22);
+  color: #fda4af;
+}
+
+.call-btn--slim {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.remote-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(244, 244, 245, 0.7);
+  font-size: var(--text-sm);
+}
+
+
+/* ------------------------------------------------------- screen picker --- */
+
+.picker__label {
+  margin: var(--space-4) 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.picker__label:first-child {
+  margin-top: 0;
+}
+
+.picker__grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
+.picker__item {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--duration) var(--ease), background var(--duration) var(--ease);
+}
+
+.picker__item:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.picker__item.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.picker__name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.picker__thumb {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+}
+
+.picker__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+/* ----------------------------------------------------- phone home page -- */
+
+.phone-home {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.phone-home__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 650;
+}
+
+.phone-home__lede {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+}
+
+/* Deliberately large. These are the two things the phone is for, and a phone is
+   held at arm's length and tapped with a thumb. */
+.phone-action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-4);
+  text-align: left;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  transition: border-color var(--duration) var(--ease), background var(--duration) var(--ease);
+}
+
+.phone-action:active {
+  background: var(--bg-hover);
+}
+
+.phone-action:disabled {
+  opacity: 0.6;
+}
+
+.phone-action--primary {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.phone-action__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.phone-action--primary .phone-action__icon {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.phone-action__body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.phone-action__title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.phone-action__desc {
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+/*
+ * What is on the laptop right now, kept live.
+ *
+ * Selectable and always visible: when a browser refuses the programmatic copy —
+ * which some will, whatever technique is used — long-pressing this is the
+ * fallback, and a fallback nobody can see is not one.
+ */
+.laptop-clip {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-sunken);
+}
+
+.laptop-clip.is-empty .laptop-clip__text {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.laptop-clip__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.laptop-clip__text {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+/* Plain text goes in here far more often than code does. */
+.phone-home__draft {
+  font-family: inherit;
+  font-size: var(--text-base);
+}
+
+/* The send field, revealed only when "Paste to computer" is tapped. */
+.phone-compose {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.phone-compose__prompt {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.phone-action--compact {
+  flex: 1;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.phone-action--compact.phone-action--primary {
+  color: var(--accent-text);
+}
+
+.phone-home__send {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.phone-home__result {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+}
+
+.phone-home__result-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+/* Selectable on purpose: when a browser refuses a programmatic copy, this is
+   what gets long-pressed instead. */
+.phone-home__result-text {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* ----------------------------------------------------------- responsive -- */
+
+/*
+ * Three widths, one layout.
+ *
+ * Above 1080px everything is as designed. Between 760 and 1080 the rail
+ * narrows and the grids fold to one column — that is a split-screen window or a
+ * small laptop. Below 760 there is genuinely not room for a rail beside a room,
+ * so the app becomes two pages and navigates between them; that is a phone.
+ */
+
+@media (max-width: 1080px) {
   :root {
-    --sidebar-width: 210px;
+    --sidebar-width: 240px;
   }
 
   .panel {
@@ -2423,4 +3798,258 @@ kbd {
     padding-left: var(--space-4);
     padding-right: var(--space-4);
   }
+
+  .feed {
+    grid-template-columns: 1fr;
+  }
+
+  .phone-live {
+    flex-direction: column;
+  }
+}
+
+/* --- phones ------------------------------------------------------------- */
+
+@media (max-width: 760px) {
+  :root {
+    --topbar-height: 56px;
+  }
+
+  /*
+   * The rail and the room become two pages stacked in the same place. Sliding
+   * one over the other keeps the relationship legible — you went *into* a room,
+   * and back out of it — which a hard swap does not.
+   */
+  .app.is-narrow {
+    position: relative;
+    display: block;
+    overflow: hidden;
+  }
+
+  .app.is-narrow .sidebar,
+  .app.is-narrow .main {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    transition: transform var(--duration) var(--ease);
+  }
+
+  .app.is-narrow .main {
+    transform: translateX(100%);
+    /* Kept out of the tab order while it is off screen. */
+    visibility: hidden;
+  }
+
+  .app.is-narrow.is-room-open .sidebar {
+    transform: translateX(-24%);
+  }
+
+  .app.is-narrow.is-room-open .main {
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .app.is-narrow .sidebar,
+    .app.is-narrow .main {
+      transition: none;
+    }
+  }
+
+  /* Roomier targets: a finger is not a pointer. */
+  .btn {
+    height: 40px;
+  }
+
+  .btn--sm {
+    height: 34px;
+  }
+
+  .room-item {
+    padding: var(--space-3);
+  }
+
+  .panel {
+    padding: var(--space-3);
+  }
+
+  .topbar {
+    padding: 0 var(--space-3);
+    gap: var(--space-2);
+  }
+
+  /* The badges are the first thing to go; the room's name is what matters. */
+  .topbar .badge {
+    display: none;
+  }
+
+  .tabbar {
+    padding: 0 var(--space-2);
+  }
+
+  .tabbar__tab {
+    flex: 1;
+    justify-content: center;
+    padding: var(--space-3) var(--space-2);
+  }
+
+  .clip__text {
+    max-height: 320px;
+  }
+
+  /*
+   * The quick-paste hint names a keyboard shortcut. There is no keyboard here,
+   * and nothing to press it on.
+   */
+  .hint-inline {
+    display: none;
+  }
+
+  /* The search field takes the row; the buttons wrap under it. */
+  .search {
+    flex: 1 1 100%;
+  }
+
+  .panel,
+  .feed,
+  .stack {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Hovering does not exist here, so the expansion is on tap-focus instead. */
+  .clip:focus-within .clip__text {
+    max-height: min(70vh, 620px);
+  }
+
+  .settings {
+    display: block;
+  }
+
+  .settings__nav {
+    display: flex;
+    overflow-x: auto;
+    width: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: var(--space-2);
+    gap: var(--space-1);
+  }
+
+  .settings__tab {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  .settings__body {
+    padding: var(--space-4);
+  }
+
+  .phone-live__qr {
+    width: 150px;
+    height: 150px;
+  }
+
+  .modal {
+    width: 100%;
+    max-height: 88vh;
+  }
+
+  .overlay {
+    padding: var(--space-3);
+  }
+
+  .palette {
+    height: min(70vh, 520px);
+  }
+
+  .call-grid[data-count='2'],
+  .call-grid[data-count='3'],
+  .call-grid[data-count='4'],
+  .call-grid[data-count='5'],
+  .call-grid[data-count='6'] {
+    grid-template-columns: 1fr;
+  }
+
+  .call-controls {
+    padding: var(--space-3);
+  }
+
+  .call-btn span {
+    display: none;
+  }
+}
+
+/*
+ * Served over HTTP to a phone rather than running in Electron. The safe-area
+ * insets matter here and nowhere else — a notch and a home indicator will
+ * happily sit on top of the interface otherwise.
+ */
+body.is-phone {
+  overscroll-behavior: none;
+}
+
+body.is-phone .app {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+/*
+ * 16px minimum on anything typed into, or iOS Safari zooms the whole page the
+ * moment it is focused and never quite zooms back.
+ */
+body.is-phone input,
+body.is-phone textarea,
+body.is-phone select {
+  font-size: max(16px, var(--text-base));
+}
+
+/* --------------------------------------------------------- pairing gate -- */
+
+.pair {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: var(--space-3);
+  max-width: 340px;
+  margin: 14vh auto 0;
+  padding: 0 var(--space-5);
+  text-align: center;
+}
+
+.pair__mark {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.pair__title {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 650;
+}
+
+.pair__lede {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+}
+
+.pair__note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+}
+
+.pair__error {
+  min-height: 22px;
+  color: var(--danger);
+  font-size: var(--text-sm);
 }

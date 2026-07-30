@@ -7,6 +7,11 @@ import { listSystemFonts } from './fonts';
 import {
   AlertIcon,
   BellIcon,
+  BookmarkIcon,
+  CopyIcon,
+  QrIcon,
+  XIcon,
+  TrashIcon,
   DownloadIcon,
   ClipboardIcon,
   DatabaseIcon,
@@ -25,6 +30,9 @@ type SectionId =
   | 'appearance'
   | 'sync'
   | 'notifications'
+  | 'privacy'
+  | 'snippets'
+  | 'phone'
   | 'storage'
   | 'network'
   | 'updates'
@@ -35,6 +43,9 @@ const SECTIONS: Array<{ id: SectionId; label: string; icon: React.ReactNode }> =
   { id: 'appearance', label: 'Appearance', icon: <TypeIcon size={15} /> },
   { id: 'sync', label: 'Sharing', icon: <ClipboardIcon size={15} /> },
   { id: 'notifications', label: 'Notifications', icon: <BellIcon size={15} /> },
+  { id: 'privacy', label: 'Privacy', icon: <ShieldIcon size={15} /> },
+  { id: 'snippets', label: 'Snippets', icon: <BookmarkIcon size={15} /> },
+  { id: 'phone', label: 'Phone', icon: <QrIcon size={15} /> },
   { id: 'storage', label: 'Storage', icon: <DatabaseIcon size={15} /> },
   { id: 'network', label: 'Network', icon: <SignalIcon size={15} /> },
   { id: 'updates', label: 'Updates', icon: <DownloadIcon size={15} /> },
@@ -54,6 +65,15 @@ export function SettingsPage({
   onConnectPeer,
   onOpenExternal,
   onCompactStorage,
+  onUnblockDevice,
+  onSaveSnippet,
+  onDeleteSnippet,
+  onCopySnippet,
+  onStartPhone,
+  onStopPhone,
+  onRevokePhone,
+  onPhoneQr,
+  onBlockDevice,
   onTestConnection,
   onCheckUpdate,
   onDownloadUpdate,
@@ -65,6 +85,15 @@ export function SettingsPage({
   onConnectPeer: (host: string) => void;
   onOpenExternal: (url: string) => void;
   onCompactStorage: () => void;
+  onUnblockDevice: (deviceId: string) => void;
+  onSaveSnippet: (input: { id?: string; label: string; content: string }) => void;
+  onDeleteSnippet: (id: string) => void;
+  onCopySnippet: (id: string) => void;
+  onStartPhone: () => void;
+  onStopPhone: () => void;
+  onRevokePhone: (connectedAt: number) => void;
+  onPhoneQr: () => Promise<string | null>;
+  onBlockDevice: (deviceId: string, deviceName: string) => void;
   onTestConnection: (host: string) => Promise<ConnectivityResult>;
   onCheckUpdate: () => void;
   onDownloadUpdate: () => void;
@@ -350,10 +379,33 @@ export function SettingsPage({
             </p>
 
             <SwitchRow
-              title="System notifications"
-              description="Show a notification for new messages, clipboard items, join requests and invitations."
+              title="Show popups"
+              description="A notification for new messages, clipboard items, join requests and invitations. Turning this off silences the app completely — nothing appears on screen and nothing is heard."
               checked={settings.notifications}
               onChange={(next) => onUpdateSettings({ notifications: next })}
+            />
+
+            <SwitchRow
+              title="Notification sound"
+              description="Play the system sound with each popup. Off means notifications still appear, but arrive quietly."
+              checked={settings.notificationSound && settings.notifications}
+              onChange={(next) => onUpdateSettings({ notificationSound: next })}
+            />
+
+            <h3 className="settings__subtitle">Calls</h3>
+
+            <SwitchRow
+              title="Ring for incoming calls"
+              description="Ring out loud when someone calls a room you are in. The call still appears on screen when this is off."
+              checked={settings.ringOnCalls}
+              onChange={(next) => onUpdateSettings({ ringOnCalls: next })}
+            />
+
+            <SwitchRow
+              title="Join calls muted"
+              description="Start every call with your microphone off, so the room does not hear whatever is going on around you before you are ready."
+              checked={settings.startCallsMuted}
+              onChange={(next) => onUpdateSettings({ startCallsMuted: next })}
             />
 
             <div className="callout callout--accent" style={{ marginTop: 'var(--space-4)' }}>
@@ -365,11 +417,111 @@ export function SettingsPage({
                 <div className="callout__text">
                   Nothing is shown while the window is open and focused — you can already see it.
                   Notifications appear when the window is hidden, minimised, or behind something
-                  else.
+                  else. A ringing call is the exception: it appears wherever you are, because it
+                  is over in seconds.
                 </div>
               </div>
             </div>
           </section>
+        )}
+
+        {section === 'privacy' && (
+          <section className="settings__section">
+            <h2 className="settings__title">Privacy</h2>
+            <p className="settings__lede">
+              Blocking a device stops this one dealing with it at all. Nothing it sends is read,
+              stored, shown or answered, in any room, and it is removed from every room you own.
+            </p>
+
+            <h3 className="settings__subtitle">Blocked devices</h3>
+
+            {state.blocked.length === 0 ? (
+              <p className="text-secondary text-sm">
+                No devices are blocked. You can block one from the Members list of any room, or
+                from the list of devices on this network below.
+              </p>
+            ) : (
+              <div className="blocklist">
+                {state.blocked.map((entry) => (
+                  <div key={entry.deviceId} className="blocklist__row">
+                    <span className="blocklist__icon">
+                      <ShieldIcon size={15} />
+                    </span>
+                    <span className="blocklist__body">
+                      <span className="blocklist__name">{entry.deviceName}</span>
+                      <span className="blocklist__meta">
+                        Blocked {relativeTime(entry.blockedAt)}
+                      </span>
+                    </span>
+                    <Button size="sm" onClick={() => onUnblockDevice(entry.deviceId)}>
+                      Unblock
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <h3 className="settings__subtitle">Devices on this network</h3>
+
+            {state.peers.length === 0 ? (
+              <p className="text-secondary text-sm">
+                No other devices are announcing themselves right now.
+              </p>
+            ) : (
+              <div className="blocklist">
+                {state.peers.map((peer) => (
+                  <div key={peer.id} className="blocklist__row">
+                    <span className="blocklist__icon">
+                      <UserIcon size={15} />
+                    </span>
+                    <span className="blocklist__body">
+                      <span className="blocklist__name">{peer.name}</span>
+                      <span className="blocklist__meta">{peer.host}</span>
+                    </span>
+                    <Button size="sm" variant="danger" onClick={() => onBlockDevice(peer.id, peer.name)}>
+                      Block
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="callout callout--warning" style={{ marginTop: 'var(--space-5)' }}>
+              <span className="callout__icon">
+                <AlertIcon size={17} />
+              </span>
+              <div className="callout__body">
+                <div className="callout__title">What blocking cannot do</div>
+                <div className="callout__text">
+                  It is a decision made on this device. A blocked device is thrown out of rooms you
+                  own, but a room owned by someone else is theirs to manage — there, blocking only
+                  means you stop seeing anything that device sends. It also has no way of hiding
+                  that this device exists: discovery is a broadcast, and anything on the network
+                  can hear it.
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {section === 'snippets' && (
+          <SnippetsSection
+            state={state}
+            onSave={onSaveSnippet}
+            onDelete={onDeleteSnippet}
+            onCopy={onCopySnippet}
+            onUpdateSettings={onUpdateSettings}
+          />
+        )}
+
+        {section === 'phone' && (
+          <PhoneSection
+            state={state}
+            onStart={onStartPhone}
+            onStop={onStopPhone}
+            onRevoke={onRevokePhone}
+            onQr={onPhoneQr}
+          />
         )}
 
         {section === 'storage' && (
@@ -785,5 +937,357 @@ export function SettingsPage({
         )}
       </div>
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ snippets
+
+/**
+ * The snippet library, and the shortcut that reaches it.
+ *
+ * Kept in its own component because it is the one settings section with real
+ * state of its own — an editor that is either adding or amending — and inlining
+ * that would have made the main component's state a good deal harder to follow.
+ */
+function SnippetsSection({
+  state,
+  onSave,
+  onDelete,
+  onCopy,
+  onUpdateSettings
+}: {
+  state: AppState;
+  onSave: (input: { id?: string; label: string; content: string }) => void;
+  onDelete: (id: string) => void;
+  onCopy: (id: string) => void;
+  onUpdateSettings: (patch: Partial<AppSettings>) => void;
+}) {
+  const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [label, setLabel] = React.useState('');
+  const [content, setContent] = React.useState('');
+  const [recording, setRecording] = React.useState(false);
+
+  function reset() {
+    setEditingId(null);
+    setLabel('');
+    setContent('');
+  }
+
+  function submit() {
+    if (!content.trim()) {
+      return;
+    }
+    onSave({ id: editingId ?? undefined, label, content });
+    reset();
+  }
+
+  /**
+   * Captures the next key combination pressed and stores it as an Electron
+   * accelerator. Far kinder than asking someone to type `Control+Shift+V` by
+   * hand and getting the spelling wrong.
+   */
+  function onRecordKey(event: React.KeyboardEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (event.key === 'Escape') {
+      setRecording(false);
+      return;
+    }
+
+    const parts: string[] = [];
+    if (event.ctrlKey) parts.push('Control');
+    if (event.metaKey) parts.push('Command');
+    if (event.altKey) parts.push('Alt');
+    if (event.shiftKey) parts.push('Shift');
+
+    const key = event.key;
+    // A modifier on its own is not a shortcut; keep listening.
+    if (['Control', 'Meta', 'Alt', 'Shift'].includes(key)) {
+      return;
+    }
+    // A global shortcut without a modifier would swallow that key everywhere on
+    // the machine, which is never what anyone means.
+    if (parts.length === 0) {
+      return;
+    }
+
+    parts.push(key.length === 1 ? key.toUpperCase() : key);
+    onUpdateSettings({ quickPasteShortcut: parts.join('+') });
+    setRecording(false);
+  }
+
+  return (
+    <section className="settings__section">
+      <h2 className="settings__title">Snippets</h2>
+      <p className="settings__lede">
+        Text you retype constantly — a build command, an endpoint, your student number. Snippets
+        stay on this device and are never sent anywhere.
+      </p>
+
+      <h3 className="settings__subtitle">Quick paste</h3>
+
+      <Field
+        label="Shortcut"
+        hint="Opens a searchable list of what you have copied, plus your snippets, over whatever app you are in. It works while this window is closed."
+      >
+        <div className="row">
+          <button
+            className={recording ? 'input shortcut-record is-recording' : 'input shortcut-record'}
+            onClick={() => setRecording(true)}
+            onKeyDown={recording ? onRecordKey : undefined}
+          >
+            {recording ? 'Press a combination…' : state.settings.quickPasteShortcut || 'Off'}
+          </button>
+          {state.settings.quickPasteShortcut ? (
+            <Button size="sm" onClick={() => onUpdateSettings({ quickPasteShortcut: '' })}>
+              Turn off
+            </Button>
+          ) : null}
+        </div>
+      </Field>
+
+      <SwitchRow
+        title="Paste automatically"
+        description="After you pick something, press paste in the app you were using. Off means it is only copied and you paste it yourself."
+        checked={state.settings.quickPasteAutoPaste}
+        onChange={(next) => onUpdateSettings({ quickPasteAutoPaste: next })}
+      />
+
+      <h3 className="settings__subtitle">{editingId ? 'Edit snippet' : 'New snippet'}</h3>
+
+      <Field label="Name" hint="Optional. The content is used when this is blank.">
+        <input
+          className="input"
+          value={label}
+          onChange={(event) => setLabel(event.target.value)}
+          placeholder="e.g. Dev server"
+          maxLength={60}
+        />
+      </Field>
+
+      <Field label="Content">
+        <textarea
+          className="input input--area"
+          value={content}
+          onChange={(event) => setContent(event.target.value)}
+          placeholder="npm run dev -- --host"
+          rows={3}
+        />
+      </Field>
+
+      <div className="row row--end" style={{ marginTop: 'var(--space-3)' }}>
+        {editingId ? <Button onClick={reset}>Cancel</Button> : null}
+        <Button variant="primary" onClick={submit} disabled={!content.trim()}>
+          {editingId ? 'Save changes' : 'Add snippet'}
+        </Button>
+      </div>
+
+      <h3 className="settings__subtitle">
+        Saved · {state.snippets.length}
+      </h3>
+
+      {state.snippets.length === 0 ? (
+        <p className="text-secondary text-sm">
+          Nothing saved yet. Anything in your clipboard history can be kept as a snippet from the
+          Clipboard tab.
+        </p>
+      ) : (
+        <div className="blocklist">
+          {state.snippets.map((snippet) => (
+            <div key={snippet.id} className="blocklist__row">
+              <span className="blocklist__icon">
+                <BookmarkIcon size={15} />
+              </span>
+              <span className="blocklist__body">
+                <span className="blocklist__name">{snippet.label || snippet.content}</span>
+                <span className="blocklist__meta">
+                  {snippet.label ? `${oneLine(snippet.content)} · ` : ''}
+                  {snippet.useCount === 0
+                    ? 'Not used yet'
+                    : `Used ${snippet.useCount} time${snippet.useCount === 1 ? '' : 's'}`}
+                </span>
+              </span>
+              <Button size="sm" onClick={() => onCopy(snippet.id)} title="Copy to the clipboard">
+                <CopyIcon size={14} />
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setEditingId(snippet.id);
+                  setLabel(snippet.label);
+                  setContent(snippet.content);
+                }}
+              >
+                Edit
+              </Button>
+              <Button size="sm" variant="danger" onClick={() => onDelete(snippet.id)} title="Delete">
+                <TrashIcon size={14} />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Snippets keep their line breaks; a one-line preview must not. */
+function oneLine(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > 60 ? `${flat.slice(0, 60)}…` : flat;
+}
+
+// --------------------------------------------------------------- phone access
+
+/**
+ * Serving one room to a phone browser.
+ *
+ * The section is written to make the trade explicit before anyone switches it
+ * on, not after. What a phone gets is plaintext, because a browser cannot hold
+ * the room key — so the honest thing is to say that plainly next to the switch
+ * rather than let it be discovered.
+ */
+function PhoneSection({
+  state,
+  onStart,
+  onStop,
+  onRevoke,
+  onQr
+}: {
+  state: AppState;
+  onStart: () => void;
+  onStop: () => void;
+  onRevoke: (connectedAt: number) => void;
+  onQr: () => Promise<string | null>;
+}) {
+  const phone = state.phone;
+  const [qr, setQr] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!phone.active) {
+      setQr(null);
+      return;
+    }
+    let cancelled = false;
+    onQr().then((image) => !cancelled && setQr(image));
+    return () => {
+      cancelled = true;
+    };
+  }, [phone.active, phone.url, onQr]);
+
+  return (
+    <section className="settings__section">
+      <h2 className="settings__title">Phone</h2>
+      <p className="settings__lede">
+        Use this computer from your phone's browser, on the same WiFi. No app to install — scan
+        the code and the phone gets the same interface you are looking at now.
+      </p>
+
+      {phone.active ? (
+        <>
+          <div className="phone-live">
+            <div className="phone-live__qr">
+              {qr ? (
+                <img src={qr} alt={`QR code for ${phone.url}`} />
+              ) : (
+                <span className="text-sm text-tertiary">Generating…</span>
+              )}
+            </div>
+            <div className="phone-live__body">
+              <div className="phone-live__room">
+                <strong>Phone access is on</strong>
+              </div>
+              <p className="field__hint" style={{ marginTop: 'var(--space-3)' }}>
+                Scan this with the phone's camera. It pairs straight away — there is nothing to
+                type, and the phone is remembered afterwards.
+              </p>
+              <p className="field__hint">
+                <strong>Each code works once.</strong> A new one appears after a phone pairs, so
+                scan again for a second device. Typing the address instead of scanning will not
+                connect.
+              </p>
+              <div className="row" style={{ marginTop: 'var(--space-4)' }}>
+                <Button variant="danger" onClick={onStop}>
+                  <XIcon size={15} />
+                  Switch phone access off
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {phone.lockedUntil > 0 ? (
+            <div className="callout callout--warning" style={{ marginTop: 'var(--space-4)' }}>
+              <span className="callout__icon">
+                <AlertIcon size={17} />
+              </span>
+              <div className="callout__body">
+                <div className="callout__title">Too many wrong PINs</div>
+                <div className="callout__text">
+                  Something tried the PIN too many times, so it is locked for a few minutes. If
+                  that was not you, switch phone access off — whatever is guessing is on this
+                  network.
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          <h3 className="settings__subtitle">Connected phones · {phone.clients.length}</h3>
+
+          {phone.clients.length === 0 ? (
+            <p className="text-secondary text-sm">
+              Nothing has paired yet. A phone types the PIN once and is then remembered.
+            </p>
+          ) : (
+            <div className="blocklist">
+              {phone.clients.map((client) => (
+                <div key={client.pairedAt} className="blocklist__row">
+                  <span className="blocklist__icon">
+                    <QrIcon size={15} />
+                  </span>
+                  <span className="blocklist__body">
+                    <span className="blocklist__name">{client.label}</span>
+                    <span className="blocklist__meta">
+                      {client.address} · paired {relativeTime(client.pairedAt)}
+                    </span>
+                  </span>
+                  <Button size="sm" variant="danger" onClick={() => onRevoke(client.pairedAt)}>
+                    Unpair
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="row" style={{ marginTop: 'var(--space-4)' }}>
+          <Button variant="primary" onClick={onStart}>
+            <QrIcon size={15} />
+            Switch phone access on
+          </Button>
+        </div>
+      )}
+
+      <div className="callout callout--warning" style={{ marginTop: 'var(--space-5)' }}>
+        <span className="callout__icon">
+          <AlertIcon size={17} />
+        </span>
+        <div className="callout__body">
+          <div className="callout__title">What a phone gets, and what it does not</div>
+          <div className="callout__text">
+            A paired phone can do almost everything this computer can — every room, chat, members,
+            settings. Only remote desktop, calls and installing updates are held back, because
+            they either cannot work from a browser or should not happen from a pocket.
+            <br />
+            <br />
+            A browser also cannot hold a room's encryption key, so this computer decrypts and
+            serves as ordinary text over the local network. Anyone able to watch traffic on this
+            WiFi could read what the phone reads — unlike traffic between two computers running
+            Campus Connect, which stays sealed. Scanning is what grants access; unpairing is what
+            takes it away. Switch it off when you are done.
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }

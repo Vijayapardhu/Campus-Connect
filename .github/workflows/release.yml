@@ -208,7 +208,7 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.tag || github.ref_name }}"
           {
-            echo "## Shared Clipboard ${VERSION}"
+            echo "## Campus Connect ${VERSION}"
             echo
             echo "Copy on one machine, paste on another. Encrypted, room-based, and entirely on your own network."
             echo
@@ -252,7 +252,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          name: Shared Clipboard ${{ github.event.inputs.tag || github.ref_name }}
+          name: Campus Connect ${{ github.event.inputs.tag || github.ref_name }}
           body_path: notes.md
           files: installers/*
           draft: false

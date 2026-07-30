@@ -207,6 +207,108 @@ export const MonitorIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const PhoneIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M6.5 3h2l1.5 4-2 1.5a11 11 0 0 0 5.5 5.5L15 12l4 1.5v2a2.5 2.5 0 0 1-2.7 2.5A14.5 14.5 0 0 1 3.5 5.7 2.5 2.5 0 0 1 6 3Z" />
+  </Svg>
+);
+
+export const PhoneOffIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M6.5 3h2l1.5 4-2 1.5a11 11 0 0 0 5.5 5.5L15 12l4 1.5v2a2.5 2.5 0 0 1-2.7 2.5A14.5 14.5 0 0 1 3.5 5.7 2.5 2.5 0 0 1 6 3Z" />
+    <path d="M3 21 21 3" />
+  </Svg>
+);
+
+export const VideoIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="2.5" y="6" width="13" height="12" rx="2.5" />
+    <path d="m15.5 12 6-3.5v11l-6-3.5Z" />
+  </Svg>
+);
+
+export const VideoOffIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M15.5 13.5V15a2.5 2.5 0 0 1-2.5 2.5H5A2.5 2.5 0 0 1 2.5 15V9A2.5 2.5 0 0 1 5 6.5h1.5" />
+    <path d="M10.5 6.5H13a2.5 2.5 0 0 1 2.5 2.5v1l6-3.5v11l-4-2.4" />
+    <path d="M3 21 21 3" />
+  </Svg>
+);
+
+export const MicIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="9" y="2.5" width="6" height="11" rx="3" />
+    <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M9 21h6" />
+  </Svg>
+);
+
+export const MicOffIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M15 5.4V5.5a3 3 0 0 0-6 0V11M9.6 13.9A3 3 0 0 0 15 12v-1" />
+    <path d="M5.5 11a6.5 6.5 0 0 0 10.8 4.8M18.5 11v.4M12 17.5V21M9 21h6" />
+    <path d="M3 21 21 3" />
+  </Svg>
+);
+
+export const ScreenShareIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="2.5" y="4" width="19" height="13" rx="2" />
+    <path d="M8.5 21h7M12 17v4" />
+    <path d="M12 13V8m0 0-2.2 2.2M12 8l2.2 2.2" />
+  </Svg>
+);
+
+export const SpeakerIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M11 5 6.5 8.5H3v7h3.5L11 19V5Z" />
+    <path d="M15 9.5a3.5 3.5 0 0 1 0 5M17.8 7a7 7 0 0 1 0 10" />
+  </Svg>
+);
+
+export const BookmarkIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4.5L5 21V4a1 1 0 0 1 1-1Z" />
+  </Svg>
+);
+
+export const CommandIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6Z" />
+  </Svg>
+);
+
+export const ChevronLeftIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m15 5-7 7 7 7" />
+  </Svg>
+);
+
+export const MaximiseIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M9 4H4v5M15 4h5v5M15 20h5v-5M9 20H4v-5" />
+  </Svg>
+);
+
+export const MinimiseIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 9h5V4M20 9h-5V4M20 15h-5v5M4 15h5v5" />
+  </Svg>
+);
+
+export const EyeIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" />
+    <circle cx="12" cy="12" r="2.8" />
+  </Svg>
+);
+
+export const MousePointerIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m4.5 3 6 17 2.6-6.9L20 10.5 4.5 3Z" />
+    <path d="m13.5 13.5 5.5 5.5" />
+  </Svg>
+);
+
 export const GithubIcon = ({ size = 16, className }: IconProps) => (
   <svg
     width={size}
