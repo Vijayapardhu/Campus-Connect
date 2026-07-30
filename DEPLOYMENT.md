@@ -216,6 +216,38 @@ every unsigned release, so an unsigned build is never a silent surprise.
 > it as a path and fails the macOS build with `<workspace> not a file`. The
 > workflow exports them from a preceding step only when they hold something.
 
+### An unsigned build must not name a publisher
+
+`build.win` deliberately does **not** set `signtoolOptions.publisherName`, and it
+has to stay that way for as long as the installers are unsigned.
+
+electron-builder copies that value into the `app-update.yml` it packages inside
+the app. electron-updater reads it back on Windows and, when it is present, runs
+`Get-AuthenticodeSignature` over the downloaded installer and rejects anything
+whose signature does not match:
+
+> New version 0.3.6 is not signed by the application owner: publisherNames:
+> Vijaya Pardhu, raw info: { "SignerCertificate": null, … "Status": 2,
+> "StatusMessage": "The file … is not digitally signed." }
+
+So naming a publisher while shipping unsigned installers breaks auto-update
+outright — every download is fetched in full and then thrown away. v0.3.6
+shipped that way. With the setting absent and no certificate configured,
+electron-builder omits `publisherName` from `app-update.yml`, electron-updater
+skips the check, and the update installs.
+
+Getting a certificate later needs no change here. electron-builder then derives
+the publisher from the certificate's common name, writes that into
+`app-update.yml`, and verification turns itself back on — which is the reason to
+leave the name out rather than hardcode it. (`verifyUpdateCodeSignature: false`
+silences the same error, but it would stay silenced after signing, which is worse
+than the problem.)
+
+One consequence worth knowing: the check runs in the **installed** app, against
+the `app-update.yml` that shipped with it. An install that already carries the
+bad file cannot repair itself and will go on rejecting every download. Those
+users have to install one release by hand; auto-update works from there on.
+
 ### SignPath Foundation works differently
 
 **SignPath does not give you a certificate file.** There is no `.pfx` to put in

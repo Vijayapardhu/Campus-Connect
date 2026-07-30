@@ -84,10 +84,7 @@
       "target": "nsis",
       "icon": "build/icon.ico",
       "legalTrademarks": "Shared Clipboard",
-      "signAndEditExecutable": true,
-      "signtoolOptions": {
-        "publisherName": "Vijaya Pardhu"
-      }
+      "signAndEditExecutable": true
     },
     "mac": {
       "target": [
