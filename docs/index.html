@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Campus Connect — clipboard, chat and calls on your own network</title>
-<meta name="description" content="An encrypted, room-based clipboard and chat for devices on the same network. No cloud, no account, nothing leaving your WiFi. Free and open source, by Vijaya Pardhu.">
+<title>Campus Connect — clipboard, calls and remote desktop on your own network</title>
+<meta name="description" content="Clipboard, files, chat, video calls and full remote control between the devices on your own network. No cloud, no account, nothing leaving your WiFi. Free and open source, by Vijaya Pardhu.">
 <meta name="author" content="Vijaya Pardhu">
 <meta name="theme-color" content="#4f46e5">
 
 <meta property="og:type" content="website">
-<meta property="og:title" content="Campus Connect — clipboard, chat and calls on your own network">
-<meta property="og:description" content="An encrypted, room-based clipboard for devices on the same network. No cloud, no account. Built by Vijaya Pardhu.">
+<meta property="og:title" content="Campus Connect — clipboard, calls and remote desktop on your own network">
+<meta property="og:description" content="Clipboard, files, chat, calls and remote desktop across your own network. No cloud, no account. Built by Vijaya Pardhu.">
 <meta property="og:url" content="https://vijayapardhu.github.io/Clipboard/">
 <meta property="og:image" content="https://vijayapardhu.github.io/Clipboard/screenshots/clipboard-light.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -221,8 +221,10 @@ section[id],[id]{scroll-margin-top:86px}
 @keyframes breathe{0%,100%{opacity:.75;transform:scale(1)}50%{opacity:1;transform:scale(1.08)}}
 .hero__inner{position:relative}
 .hero h1{
-  font-size:clamp(38px,6.4vw,66px);line-height:1.02;letter-spacing:-.04em;font-weight:760;
-  max-width:15ch;margin-inline:auto;
+  font-size:clamp(38px,6.4vw,66px);line-height:1.04;letter-spacing:-.04em;font-weight:760;
+  /* Wide enough that the headline breaks into three lines rather than four —
+     at 15ch the third line was a single stranded word. */
+  max-width:19ch;margin-inline:auto;
 }
 .hero h1 em{font-style:normal;color:var(--accent-text);position:relative;white-space:nowrap}
 .hero h1 em::after{
@@ -589,6 +591,61 @@ section[id],[id]{scroll-margin-top:86px}
 .help b span{font-weight:inherit}
 .help>span{display:block;font-size:14px;color:var(--text-2)}
 
+/* ==================================================== one-line install == */
+.oneline{max-width:640px;margin:var(--space-8) auto 0;text-align:center}
+.oneline .cmd{
+  justify-content:center;font-size:16px;padding:var(--space-4) var(--space-5);
+  background:var(--bg-elevated);border-color:var(--border-2);box-shadow:var(--shadow-sm);
+}
+.oneline .cmd code{flex:0 1 auto;font-weight:600;color:var(--text);word-break:normal}
+.oneline__note{margin-top:var(--space-3);font-size:13.5px;color:var(--text-3)}
+/* A rule with the word sitting in the gap, rather than floating above it. */
+.or{
+  display:flex;align-items:center;gap:var(--space-4);
+  max-width:640px;margin:var(--space-8) auto 0;
+  font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);
+}
+.or::before,.or::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* ========================================================= features ===== */
+/*
+ * Six equal cards, three across. A six-column track rather than `auto-fit`
+ * because auto-fit put four on the first row and two orphans on the second at
+ * some widths, and the set reads as pairs of three.
+ */
+.feat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(272px,1fr));gap:var(--space-4);margin-top:var(--space-10)}
+@media (min-width:940px){
+  .feat-grid{grid-template-columns:repeat(6,minmax(0,1fr))}
+  .feat{grid-column:span 2}
+}
+.feat{
+  position:relative;display:flex;flex-direction:column;
+  padding:var(--space-6);border-radius:var(--radius-xl);
+  border:1px solid var(--border);background:var(--bg-elevated);
+  transition:border-color .25s var(--ease),transform .25s var(--ease),box-shadow .25s var(--ease);
+}
+.feat:hover{border-color:var(--border-2);transform:translateY(-4px);box-shadow:var(--shadow-md)}
+.feat__icon{
+  width:44px;height:44px;border-radius:var(--radius-lg);display:grid;place-items:center;
+  background:var(--accent-soft);color:var(--accent-text);margin-bottom:var(--space-4);
+  transition:transform .3s var(--ease);
+}
+.feat:hover .feat__icon{transform:scale(1.08) rotate(-5deg)}
+.feat h3{font-size:18px;font-weight:660;letter-spacing:-.015em;padding-right:64px}
+.feat>p{margin-top:var(--space-2);font-size:14.5px;color:var(--text-2);line-height:1.6}
+.feat__list{margin-top:var(--space-4);display:grid;gap:7px}
+.feat__list li{position:relative;padding-left:var(--space-5);font-size:13.5px;color:var(--text-2);line-height:1.5}
+.feat__list li::before{
+  content:'';position:absolute;left:2px;top:.5em;width:6px;height:6px;border-radius:50%;
+  background:var(--accent);opacity:.45;
+}
+.feat__new{
+  position:absolute;top:var(--space-6);right:var(--space-6);
+  padding:3px 9px;border-radius:var(--radius-full);
+  background:var(--success-soft);color:var(--success);
+  font-size:10.5px;font-weight:750;letter-spacing:.06em;text-transform:uppercase;
+}
+
 /* =========================================================== footer ==== */
 .footer{border-top:1px solid var(--border);padding:var(--space-10) 0;color:var(--text-2);font-size:14px}
 .footer__inner{display:flex;flex-wrap:wrap;gap:var(--space-5);align-items:center}
@@ -606,6 +663,7 @@ section[id],[id]{scroll-margin-top:86px}
       <span>Campus Connect</span>
     </a>
     <nav class="topnav__links">
+      <a href="#features">Features</a>
       <a href="#how">How it works</a>
       <a href="#inside">Under the hood</a>
       <a href="#security">Security</a>
@@ -630,14 +688,14 @@ section[id],[id]{scroll-margin-top:86px}
   <div class="hero__glow" aria-hidden="true"></div>
 
   <div class="wrap hero__inner center">
-    <span class="pill reveal"><span class="pill__dot"></span> Free and open source &middot; <b>No account</b> &middot; Works offline</span>
+    <span class="pill reveal"><span class="pill__dot"></span> <b>v0.4.0</b> — calls, remote desktop and phone access &middot; Free and open source</span>
 
-    <h1 class="reveal" data-delay="1">Copy on one machine. <em>Paste on another.</em></h1>
+    <h1 class="reveal" data-delay="1">Everything between your devices. <em>None of it online.</em></h1>
 
     <p class="lede reveal" data-delay="2">
-      An encrypted clipboard and chat shared between the devices on your own
-      network. Nothing touches the internet, nothing touches a server, and you
-      can read every line of how it works.
+      Clipboard, files, chat, video calls and full remote control — shared
+      between the machines on your own network. Nothing touches the internet,
+      nothing touches a server, and you can read every line of how it works.
     </p>
 
     <div class="btn-row reveal" data-delay="3">
@@ -648,7 +706,7 @@ section[id],[id]{scroll-margin-top:86px}
       <a class="btn" href="#how">See how it works</a>
     </div>
 
-    <p class="hero__note reveal" data-delay="4">Windows &middot; macOS &middot; Ubuntu — no internet connection required</p>
+    <p class="hero__note reveal" data-delay="4">Windows &middot; macOS &middot; Ubuntu &middot; and your phone, from its browser</p>
 
     <a class="hero__by reveal" data-delay="4" href="#author">
       <img src="https://github.com/Vijayapardhu.png?size=80" alt="" width="28" height="28"
@@ -691,6 +749,19 @@ section[id],[id]{scroll-margin-top:86px}
         by themselves.
       </p>
     </div>
+
+    <div class="oneline reveal" data-delay="2">
+      <div class="cmd">
+        <code>npx campus-connect</code>
+        <button class="btn btn--sm copy" data-copy="npx campus-connect">Copy</button>
+      </div>
+      <p class="oneline__note">
+        If you have Node installed: picks the build for your machine, checks it
+        against the checksum published with the release, and runs it.
+      </p>
+    </div>
+
+    <p class="or reveal" data-delay="2">or download it</p>
 
     <div class="downloads reveal" data-delay="3">
       <a class="dl" id="dl-win" href="https://github.com/Vijayapardhu/Clipboard/releases" data-os="windows">
@@ -789,9 +860,98 @@ section[id],[id]{scroll-margin-top:86px}
           <li><svg class="tick tick--yes" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg><span>Stays on <b>your own network</b></span></li>
           <li><svg class="tick tick--yes" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg><span>Works on <b>WiFi with no internet</b></span></li>
           <li><svg class="tick tick--yes" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg><span><b>Ctrl+C here, Ctrl+V there.</b> That is the whole workflow</span></li>
-          <li><svg class="tick tick--yes" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg><span>Text, images and files, with <b>history you can search</b></span></li>
+          <li><svg class="tick tick--yes" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg><span>Clipboard, files, chat, <b>calls and remote control</b> in one app</span></li>
         </ul>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================================================== features ===== -->
+<section class="section" id="features">
+  <div class="wrap">
+    <div class="center">
+      <p class="eyebrow reveal">Everything it does</p>
+      <h2 class="h2 reveal" data-delay="1">Six things, one app, none of them online</h2>
+      <p class="lede center reveal" data-delay="2">
+        It started as a clipboard. It is now most of what you actually need two
+        machines to do together — and every one of these works on a network with
+        the internet unplugged.
+      </p>
+    </div>
+
+    <div class="feat-grid reveal" data-delay="3">
+
+      <article class="feat">
+        <span class="feat__icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2.5" width="8" height="4" rx="1.5"/><path d="M16 4.5h2a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2h2"/><path d="M8.5 12h7M8.5 16h4.5"/></svg></span>
+        <h3>Clipboard &amp; files</h3>
+        <p>Copy on one machine, paste on another. Text, images and files, all encrypted with the room.</p>
+        <ul class="feat__list">
+          <li>Searchable history you can pin to</li>
+          <li>Large screenshots sent in chunks</li>
+          <li>Anything you send is typed, tagged and previewed</li>
+        </ul>
+      </article>
+
+      <article class="feat">
+        <span class="feat__icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a7.5 7.5 0 0 1-10.9 6.7L4.5 19.5l1.4-4.9A7.5 7.5 0 1 1 21 11.5Z"/><path d="M9 11.5h.01M12 11.5h.01M15 11.5h.01"/></svg></span>
+        <h3>Rooms &amp; chat</h3>
+        <p>A room is a shared space with a password only its members know. Create one, share the code, done.</p>
+        <ul class="feat__list">
+          <li>Scannable join codes — never the password</li>
+          <li>Approve, block and remove members</li>
+          <li>Rename, retype or close a room whenever</li>
+        </ul>
+      </article>
+
+      <article class="feat">
+        <span class="feat__new">New</span>
+        <span class="feat__icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="6" width="13" height="12" rx="2.5"/><path d="m15.5 10.5 6-3.4v9.8l-6-3.4z"/></svg></span>
+        <h3>Voice &amp; video calls</h3>
+        <p>Call everyone in the room over WebRTC, peer to peer, with no signalling server anywhere.</p>
+        <ul class="feat__list">
+          <li>Full screen, focus and spotlight modes</li>
+          <li>Screen sharing, mute and camera controls</li>
+          <li>No STUN, no TURN, no account</li>
+        </ul>
+      </article>
+
+      <article class="feat">
+        <span class="feat__new">New</span>
+        <span class="feat__icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M8.5 20.5h7M12 16.5v4"/><path d="m10 7.5 5.2 4.3-2.4.5-.7 2.3z" fill="currentColor" stroke="none"/></svg></span>
+        <h3>Remote desktop</h3>
+        <p>See another machine&rsquo;s screen and take its mouse and keyboard — after its owner says yes.</p>
+        <ul class="feat__list">
+          <li>Watch first, control only once granted</li>
+          <li>Encrypted over a DTLS data channel</li>
+          <li>Revoke it instantly from either end</li>
+        </ul>
+      </article>
+
+      <article class="feat">
+        <span class="feat__new">New</span>
+        <span class="feat__icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M10.5 18.5h3"/><path d="M9.5 6.5h5"/></svg></span>
+        <h3>Your phone, paired once</h3>
+        <p>Scan the code and your phone gets the whole app in its browser. There is nothing to install.</p>
+        <ul class="feat__list">
+          <li>Only the phone that scanned gets in</li>
+          <li>Copy from and paste to the computer in a tap</li>
+          <li>Dark on the phone, light on the laptop, if you like</li>
+        </ul>
+      </article>
+
+      <article class="feat">
+        <span class="feat__new">New</span>
+        <span class="feat__icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2.5 4.8 13.8h6.1l-.9 7.7 8.2-11.3H12z"/></svg></span>
+        <h3>Out of your way</h3>
+        <p>The parts that make it something you leave running rather than something you go and open.</p>
+        <ul class="feat__list">
+          <li>A global overlay that pastes without switching window</li>
+          <li>A command palette for everything else</li>
+          <li>Saved snippets, and search across the lot</li>
+        </ul>
+      </article>
+
     </div>
   </div>
 </section>
@@ -1249,6 +1409,7 @@ section[id],[id]{scroll-margin-top:86px}
           <div class="stack-item"><b>Vite 6</b><span>Fast dev server, small production build</span></div>
           <div class="stack-item"><b>Node dgram</b><span>UDP on the LAN. No server, no broker</span></div>
           <div class="stack-item"><b>Node crypto</b><span>scrypt and AES-256-GCM from the standard library</span></div>
+          <div class="stack-item"><b>WebRTC</b><span>Calls and remote control, peer to peer, no STUN or TURN server</span></div>
         </div>
       </div>
 
@@ -1265,9 +1426,10 @@ section[id],[id]{scroll-margin-top:86px}
             <button class="btn btn--sm copy" data-copy="npm run dev">Copy</button></div>
         </div>
         <p style="margin-top:var(--space-5);color:var(--text-2);font-size:15px">
-          <code>npm test</code> runs 56 assertions covering key derivation,
-          tampered packets, forged proofs, chunk reassembly and the membership
-          rules — in plain Node, with no framework.
+          <code>npm test</code> runs 174 assertions covering key derivation,
+          tampered packets, forged proofs, chunk reassembly, the membership
+          rules and who is allowed to move your mouse — in plain Node, with no
+          framework.
         </p>
         <div class="btn-row">
           <a class="btn" href="https://github.com/Vijayapardhu/Clipboard/blob/main/ARCHITECTURE.md">Read the architecture</a>
@@ -1292,9 +1454,13 @@ section[id],[id]{scroll-margin-top:86px}
       <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Pinned clipboard items <span class="tag tag--done">Shipped</span></li>
       <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Search across clipboard history <span class="tag tag--done">Shipped</span></li>
       <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Keyboard shortcuts <span class="tag tag--done">Shipped</span></li>
+      <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Voice and video calls over the LAN <span class="tag tag--done">0.4.0</span></li>
+      <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Remote desktop with permission and revocation <span class="tag tag--done">0.4.0</span></li>
+      <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Phone access, paired by scanning once <span class="tag tag--done">0.4.0</span></li>
+      <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Quick-paste overlay, command palette and snippets <span class="tag tag--done">0.4.0</span></li>
       <li><span class="box"></span> Translations <span class="tag">Open</span></li>
-      <li><span class="box"></span> A mobile companion app <span class="tag">Open</span></li>
       <li><span class="box"></span> Working on networks that block UDP broadcast <span class="tag">Open</span></li>
+      <li><span class="box"></span> Signed installers, so the SmartScreen warning goes away <span class="tag">Open</span></li>
     </ul>
 
     <p class="lede center reveal" data-delay="3" style="margin-top:var(--space-6)">

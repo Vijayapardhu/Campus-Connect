@@ -1,0 +1,40 @@
+{
+  "name": "campus-connect",
+  "version": "1.0.0",
+  "description": "Installs Campus Connect — clipboard, files, chat, calls and remote desktop across your own network. Downloads the right build for your machine from GitHub releases.",
+  "keywords": [
+    "campus-connect",
+    "clipboard",
+    "lan",
+    "local-network",
+    "remote-desktop",
+    "installer"
+  ],
+  "homepage": "https://vijayapardhu.github.io/Clipboard/",
+  "bugs": "https://github.com/Vijayapardhu/Clipboard/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vijayapardhu/Clipboard.git",
+    "directory": "cli"
+  },
+  "license": "MIT",
+  "author": "Vijaya Pardhu",
+  "type": "commonjs",
+  "bin": {
+    "campus-connect": "bin/campus-connect.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "os": [
+    "win32",
+    "darwin",
+    "linux"
+  ],
+  "dependencies": {}
+}
