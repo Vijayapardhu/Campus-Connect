@@ -158,6 +158,19 @@ mistypes it.
 
 ## Installing
 
+### One command
+
+If you have Node installed:
+
+```bash
+npx campus-connect
+```
+
+That works out which of the four builds belongs on your machine, downloads it,
+checks it against the `sha512` published with the release, and runs it. The
+package is a few kilobytes — [`cli/`](cli) — and contains no application code;
+the app itself stays in GitHub releases where it belongs.
+
 ### From an installer
 
 Grab the latest build for your platform from the

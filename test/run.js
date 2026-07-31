@@ -46,6 +46,12 @@ const { ChunkAssembler, splitIntoChunks } = require(path.join(ROOT, 'transfer.js
 const net = require(path.join(ROOT, 'network.js'));
 const { FrameDecoder, encodeFrame, HEADER_BYTES } = require(path.join(ROOT, 'framing.js'));
 
+// The npx installer. Plain JavaScript rather than compiled output, and it holds
+// no Electron or app state, so it is required straight from source.
+const { target, pickAsset, pickManifest, sha512For } = require(
+  path.join(__dirname, '..', 'cli', 'lib', 'select.js')
+);
+
 let passed = 0;
 let failed = 0;
 
@@ -1872,6 +1878,99 @@ test('sweeping removes only what has actually lapsed', () => {
   assert.strictEqual(s.verify(stale), false);
   assert.strictEqual(s.verify(fresh), true);
   assert.strictEqual(s.sweep(), false, 'a second sweep has nothing to do');
+});
+
+console.log('\n-- npx installer --');
+
+/* Shaped like a real GitHub release, trimmed to the fields the CLI reads. */
+const RELEASE_ASSETS = [
+  { name: 'CampusConnect-0.4.0-linux-x86_64.AppImage', size: 115000000, browser_download_url: 'https://x/linux' },
+  { name: 'CampusConnect-0.4.0-mac-universal.dmg', size: 196000000, browser_download_url: 'https://x/mac' },
+  { name: 'CampusConnect-0.4.0-mac-universal.dmg.blockmap', size: 200000, browser_download_url: 'https://x/macbm' },
+  { name: 'CampusConnect-0.4.0-win-x64.exe', size: 87000000, browser_download_url: 'https://x/win' },
+  { name: 'CampusConnect-0.4.0-win-x64.exe.blockmap', size: 90000, browser_download_url: 'https://x/winbm' },
+  { name: 'latest.yml', size: 400, browser_download_url: 'https://x/latest' },
+  { name: 'latest-mac.yml', size: 400, browser_download_url: 'https://x/latest-mac' },
+  { name: 'latest-linux.yml', size: 400, browser_download_url: 'https://x/latest-linux' }
+];
+
+test('every platform the app ships for resolves to a build', () => {
+  assert.strictEqual(target('win32', 'x64').suffix, '-win-x64.exe');
+  assert.strictEqual(target('darwin', 'x64').suffix, '-mac-universal.dmg');
+  assert.strictEqual(target('linux', 'x64').suffix, '-linux-x86_64.AppImage');
+});
+
+test('Apple silicon and Intel both take the universal build', () => {
+  assert.strictEqual(target('darwin', 'arm64').suffix, target('darwin', 'x64').suffix);
+});
+
+test('a platform with no build is refused, not given the wrong one', () => {
+  // Windows on ARM would happily download an x64 installer and fail later.
+  assert.throws(() => target('win32', 'arm64'), /no Campus Connect build/);
+  assert.throws(() => target('linux', 'arm64'), /no Campus Connect build/);
+  assert.throws(() => target('aix', 'ppc64'), /no Campus Connect build/);
+});
+
+test('the refusal says where to go instead', () => {
+  assert.throws(() => target('win32', 'arm64'), /from source/);
+});
+
+test('the installer is picked, not the blockmap beside it', () => {
+  // Both end in the platform suffix as a substring; only one *ends* with it.
+  assert.strictEqual(pickAsset(RELEASE_ASSETS, '-win-x64.exe').name, 'CampusConnect-0.4.0-win-x64.exe');
+  assert.strictEqual(pickAsset(RELEASE_ASSETS, '-mac-universal.dmg').name, 'CampusConnect-0.4.0-mac-universal.dmg');
+});
+
+test('a release still uploading is reported rather than half-installed', () => {
+  assert.throws(() => pickAsset([{ name: 'latest.yml' }], '-win-x64.exe'), /still be uploading/);
+  assert.throws(() => pickAsset([], '-win-x64.exe'), /still be uploading/);
+  assert.throws(() => pickAsset(undefined, '-win-x64.exe'), /still be uploading/);
+});
+
+test('each platform reads its own update manifest', () => {
+  assert.strictEqual(pickManifest(RELEASE_ASSETS, 'win32').name, 'latest.yml');
+  assert.strictEqual(pickManifest(RELEASE_ASSETS, 'darwin').name, 'latest-mac.yml');
+  assert.strictEqual(pickManifest(RELEASE_ASSETS, 'linux').name, 'latest-linux.yml');
+});
+
+test('a release with no manifest yields null rather than throwing', () => {
+  // Older releases predate them; that costs the checksum, not the install.
+  assert.strictEqual(pickManifest([], 'win32'), null);
+  assert.strictEqual(pickManifest(RELEASE_ASSETS, 'sunos'), null);
+});
+
+/* The shape electron-builder actually writes. */
+const MANIFEST = [
+  'version: 0.4.0',
+  'files:',
+  '  - url: CampusConnect-0.4.0-win-x64.exe',
+  '    sha512: WINSHA512VALUE==',
+  '    size: 87000000',
+  '  - url: CampusConnect-0.4.0-win-arm64.exe',
+  '    sha512: ARMSHA512VALUE==',
+  '    size: 88000000',
+  'path: CampusConnect-0.4.0-win-x64.exe',
+  'sha512: WINSHA512VALUE==',
+  'releaseDate: \'2026-07-31T01:58:00.000Z\''
+].join('\n');
+
+test('the checksum belongs to the file being downloaded', () => {
+  assert.strictEqual(sha512For(MANIFEST, 'CampusConnect-0.4.0-win-x64.exe'), 'WINSHA512VALUE==');
+});
+
+test('a manifest listing several builds does not hand back the first', () => {
+  // The x64 entry comes first, so a naive parser returns it for every query.
+  assert.strictEqual(sha512For(MANIFEST, 'CampusConnect-0.4.0-win-arm64.exe'), 'ARMSHA512VALUE==');
+});
+
+test('a file the manifest does not list has no checksum', () => {
+  assert.strictEqual(sha512For(MANIFEST, 'CampusConnect-0.4.0-mac-universal.dmg'), null);
+  assert.strictEqual(sha512For('', 'anything'), null);
+});
+
+test('quoted manifest values are unwrapped', () => {
+  const quoted = 'files:\n  - url: "a.exe"\n    sha512: "ABC=="';
+  assert.strictEqual(sha512For(quoted, 'a.exe'), 'ABC==');
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
