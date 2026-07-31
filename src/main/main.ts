@@ -1,6 +1,8 @@
 import {
   app,
   BrowserWindow,
+  desktopCapturer,
+  globalShortcut,
   dialog,
   ipcMain,
   Menu,
@@ -30,6 +32,15 @@ import {
 import { getSystemDeviceName } from './systemInfo';
 import { RoomManager } from './roomManager';
 import { HistoryManager } from './historyManager';
+import { CallManager } from './callManager';
+import { SnippetManager } from './snippetManager';
+import { QuickPaste } from './quickPaste';
+import { PhoneServer, PHONE_PORT } from './phoneServer';
+import type { PhonePairing } from './phoneSession';
+import { RemoteSessionManager } from './remoteSession';
+import { createDisplayInjector, getPasteAction, getRemoteCapabilities } from './remoteInput';
+import { parseRemoteInput, type Injector } from './remoteControl';
+import { migrateUserData } from './migrate';
 import { ChunkAssembler, splitIntoChunks } from './transfer';
 import { TcpTransport, probeTcp } from './tcp';
 import { Updater } from './updater';
@@ -43,6 +54,8 @@ import {
 import {
   createProof,
   deriveRoomKey,
+  generateJoinCode,
+  generateSalt,
   normalizeJoinCode,
   openJson,
   sealJson,
@@ -50,12 +63,17 @@ import {
 } from './crypto';
 import {
   APP_INFO,
+  MAX_CALL_PARTICIPANTS,
   MAX_FONT_SCALE,
   MIN_FONT_SCALE,
   PROTOCOL_VERSION,
   type ActionResult,
   type AppSettings,
   type AppState,
+  type BlockedDevice,
+  type CallMode,
+  type CallRinging,
+  type CallSignal,
   type ChatMessage,
   type ChatReplyTo,
   type ClipboardHistoryEntry,
@@ -65,11 +83,21 @@ import {
   type PeerInfo,
   type RoomInfo,
   type RoomInvite,
+  type RemoteCapabilities,
+  type RemoteGrant,
+  type RemoteRequest,
+  type RemoteSignal,
   type RoomType,
+  type SearchHit,
+  type PhoneAccess,
+  type Snippet,
+  type RoomUpdate,
   type StorageStats,
   type UpdateStatus,
   type WireMessage
 } from '../shared/types';
+import type { CallSignalEvent, CallStartResult, ScreenSource } from '../shared/bridge';
+import { isOpenableUrl } from '../shared/contentType';
 
 type AppStore = {
   deviceId: string;
@@ -82,6 +110,9 @@ type AppStore = {
   roomKeys: Record<string, string>;
   clipboardHistory: ClipboardHistoryEntry[];
   chatHistory: ChatMessage[];
+  blocked: BlockedDevice[];
+  snippets: Snippet[];
+  phonePairings: PhonePairing[];
 };
 
 const BROADCAST_PORT = 37777;
@@ -183,7 +214,12 @@ const DEFAULT_SETTINGS: AppSettings = {
   fontScale: 1,
   fontFamily: '',
   notifications: true,
+  notificationSound: true,
   sendReceipts: true,
+  ringOnCalls: true,
+  startCallsMuted: false,
+  quickPasteShortcut: 'Control+Shift+V',
+  quickPasteAutoPaste: true,
   retainMediaDays: 7,
   maxStorageMb: 100,
   autoUpdate: true
@@ -191,6 +227,20 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 /** How often the stored history is swept for attachments to drop. */
 const COMPACT_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * Directory names this app's data has lived under before now. Electron derives
+ * the data directory from the application name, so the rename to Campus Connect
+ * moved it; the first run under the new name brings the old one across.
+ *
+ * This has to happen before the store below is constructed, which is why it is
+ * here at module scope rather than in `whenReady`.
+ */
+const migration = migrateUserData({
+  appData: app.getPath('appData'),
+  userData: app.getPath('userData'),
+  legacyNames: ['shared-clipboard-desktop', 'Shared Clipboard']
+});
 
 const store = new Store<AppStore>({
   defaults: {
@@ -203,7 +253,10 @@ const store = new Store<AppStore>({
     rooms: [],
     roomKeys: {},
     clipboardHistory: [],
-    chatHistory: []
+    chatHistory: [],
+    blocked: [],
+    snippets: [],
+    phonePairings: []
   }
 });
 
@@ -302,11 +355,34 @@ const historyManager = new HistoryManager({
   writeChat: (messages) => write('chatHistory', messages)
 });
 
+const snippetManager = new SnippetManager({
+  read: () => read('snippets'),
+  write: (snippets) => write('snippets', snippets)
+});
+
+/**
+ * Phone access. Off until somebody turns it on, and never restored on startup —
+ * a machine that came back up already serving a room to the network is not
+ * something anyone intends.
+ */
+let phoneServer: PhoneServer | null = null;
+
+/** Live calls, in memory only. A call cannot outlive the run it happened in. */
+const callManager = new CallManager();
+
+/**
+ * Remote desktop sessions. Also memory-only, and emphatically so: a session
+ * that survived a restart would mean a machine coming back up already agreeing
+ * to be driven by someone, which nobody ever intends.
+ */
+const remoteSessions = new RemoteSessionManager();
+
 let mainWindow: BrowserWindow | null = null;
 let udpSocket: dgram.Socket | null = null;
 let announceTimer: NodeJS.Timeout | null = null;
 let clipboardPollTimer: NodeJS.Timeout | null = null;
 let transferSweepTimer: NodeJS.Timeout | null = null;
+let callSweepTimer: NodeJS.Timeout | null = null;
 let compactTimer: NodeJS.Timeout | null = null;
 let tcp: TcpTransport | null = null;
 let updater: Updater | null = null;
@@ -321,6 +397,7 @@ const diagnostics = {
   tcpFramesSent: 0,
   tcpFramesReceived: 0
 };
+let quickPaste: QuickPaste | null = null;
 let tray: Tray | null = null;
 let lastLocalClipboardHash = '';
 let lastRemoteClipboardHash = '';
@@ -390,6 +467,12 @@ function getAppState(): AppState {
       .map((room) => room.roomId),
     invites: listReceivedInvites(),
     invitedDeviceIds: pendingInviteIds(),
+    activeCalls: callManager.list(),
+    blocked: [...read('blocked')].sort((a, b) => b.blockedAt - a.blockedAt),
+    snippets: snippetManager.list(),
+    phone: phoneAccessState(),
+    remote: remoteSessions.current ?? undefined,
+    remoteCapabilities: getRemoteCapabilities(),
     storage: historyManager.stats(),
     update: updater?.getStatus() ?? { state: 'idle', currentVersion: app.getVersion() },
     diagnostics: {
@@ -424,7 +507,8 @@ function notifyHistoryChanged(roomId: string) {
  * looking at.
  */
 function notify(title: string, body: string, onClick?: () => void): void {
-  if (!getSettings().notifications || !Notification.isSupported()) {
+  const settings = getSettings();
+  if (!settings.notifications || !Notification.isSupported()) {
     return;
   }
 
@@ -433,7 +517,7 @@ function notify(title: string, body: string, onClick?: () => void): void {
     return;
   }
 
-  const notification = new Notification({ title, body, silent: false });
+  const notification = new Notification({ title, body, silent: !settings.notificationSound });
   notification.on('click', () => {
     showMainWindow();
     onClick?.();
@@ -815,6 +899,25 @@ function sweepTransfers(): void {
     const host = getPeerHost(pending.senderId);
     sendDatagram(nack, targetList(host ? [host] : [], !host));
   }
+}
+
+// --- blocking ----------------------------------------------------------------
+
+/**
+ * Devices this one refuses to deal with.
+ *
+ * Kept as a set beside the stored list because it is consulted for every single
+ * packet that arrives — during a large transfer that is thousands of times a
+ * second, and a linear scan of an array there would be felt.
+ */
+let blockedIds = new Set<string>();
+
+function loadBlocked(): void {
+  blockedIds = new Set(read('blocked').map((entry) => entry.deviceId));
+}
+
+function isBlocked(deviceId: string): boolean {
+  return blockedIds.has(deviceId);
 }
 
 function getPeerHost(targetDeviceId: string): string | undefined {
@@ -1309,12 +1412,57 @@ function handleRoomLeave(message: WireMessage) {
   sendStatus(`${message.deviceName} left ${room.name}`, 'info');
 }
 
+/**
+ * The owner changed the room's credentials.
+ *
+ * The notice is sealed with the key the room had *before* the change, so only
+ * devices that were already in the room can read it — and it deliberately does
+ * not carry the new key. Everyone has to enter the new password. That is what
+ * makes changing a password a way of shutting someone out rather than a way of
+ * renaming the lock while leaving every old copy of the key working.
+ */
+function handleRoomRekey(message: WireMessage) {
+  const room = message.roomId ? roomManager.getRoom(message.roomId) : undefined;
+  if (!room || room.ownerId !== message.deviceId || room.ownerId === deviceId()) {
+    return;
+  }
+
+  let next: RoomInfo | undefined;
+  if (room.encrypted) {
+    const key = roomManager.getKey(room.roomId);
+    if (!key) {
+      return; // Already locked here; there is nothing to drop.
+    }
+    next = openJson<{ room: RoomInfo }>(key, message.sealed)?.room;
+  } else {
+    next = message.room;
+  }
+
+  if (!next || next.roomId !== room.roomId || next.ownerId !== room.ownerId) {
+    return;
+  }
+
+  roomManager.saveRoom(next);
+  roomManager.dropKey(next.roomId);
+  endCallsForRoom(next.roomId);
+
+  sendStateToRenderer();
+
+  if (next.encrypted) {
+    sendStatus(`${next.name} has a new password — enter it to carry on.`, 'warning');
+    notify('Room password changed', `${message.deviceName} changed the password for ${next.name}.`);
+  } else {
+    sendStatus(`${next.name} no longer has a password.`, 'warning');
+  }
+}
+
 function handleRoomClosed(message: WireMessage) {
   const room = message.roomId ? roomManager.getRoom(message.roomId) : undefined;
   if (!room || room.ownerId !== message.deviceId || room.ownerId === deviceId()) {
     return;
   }
 
+  endCallsForRoom(room.roomId);
   roomManager.deleteRoom(room.roomId);
   historyManager.clearRoom(room.roomId);
   if (read('currentRoomId') === room.roomId) {
@@ -1643,6 +1791,598 @@ function handleChatReceipt(message: WireMessage) {
   }
 }
 
+// --- calls -------------------------------------------------------------------
+
+/**
+ * Call setup, relayed rather than interpreted.
+ *
+ * WebRTC lives in the renderer, because that is where a media engine exists at
+ * all; the main process is the postbox. It does three things and no more: it
+ * refuses to carry a signal for a room the two devices are not both in, it seals
+ * the signal with the room key when the room is encrypted, and it keeps a note
+ * of who is in which call so a room can show a call in progress.
+ *
+ * The media never comes through here. Once the two peers have each other's
+ * candidates they talk directly, SRTP-encrypted, over the local network — which
+ * is why a call works with the internet unplugged and why a 1080p stream does
+ * not go anywhere near the chunked transfer path.
+ */
+
+/** How often a participant re-announces itself, and stale ones are swept. */
+const CALL_HEARTBEAT_MS = 5000;
+/** A ring nobody picks up stops being offered. */
+const RING_TIMEOUT_MS = 45000;
+/**
+ * How long a call is allowed to have nobody but us in it. Long enough for a
+ * ring to be answered; short enough that a call whose other end vanished does
+ * not sit there looking live.
+ */
+const CALL_ALONE_GRACE_MS = 60000;
+
+/** Rings offered to this device and not yet answered, keyed by call. */
+const ringing = new Map<string, CallRinging>();
+
+/** The call this device is in. Only ever one; a second would fight for the mic. */
+let localCall: { callId: string; roomId: string; mode: CallMode } | null = null;
+/** Whether anyone else has ever been in it, which is what "nobody answered" means. */
+let localCallHadCompany = false;
+
+function callSignalTarget(signal: CallSignal): string | undefined {
+  return 'to' in signal ? signal.to : undefined;
+}
+
+/**
+ * Puts a signal on the wire. Addressed signals go to that device alone when we
+ * know its address — which for ICE, the chattiest of them, is almost always.
+ *
+ * Deliberately not gated on the `online` setting. Switching the network off
+ * writes that setting first and closes the sockets second, and in between this
+ * has to be able to say goodbye — otherwise the far end sits looking at a
+ * participant that has already gone until the sweep notices twenty seconds
+ * later. `deliver` refuses once the socket is actually closed, which is the
+ * honest test; everything that *starts* a call goes through `requireOnline`
+ * before it ever reaches here.
+ */
+function sendCallSignal(roomId: string, signal: CallSignal): boolean {
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return false;
+  }
+
+  const message = baseMessage('call');
+  message.roomId = roomId;
+  if (!attachRoomBody(message, room, { call: signal })) {
+    return false;
+  }
+
+  const to = callSignalTarget(signal);
+  if (to) {
+    const host = getPeerHost(to);
+    // No known address: fall back to the room, where the body's `to` still
+    // means only the intended device acts on it.
+    return host ? sendUdpMessage(message, host) : deliverToRoom(message, roomId);
+  }
+
+  return deliverToRoom(message, roomId);
+}
+
+function forwardCallSignal(message: WireMessage, signal: CallSignal): void {
+  mainWindow?.webContents.send('call:signal', {
+    roomId: message.roomId!,
+    fromDeviceId: message.deviceId,
+    fromDeviceName: message.deviceName,
+    signal
+  } satisfies CallSignalEvent);
+}
+
+/** Stops offering a ring, and tells the window to take the prompt down. */
+function clearRing(callId: string): void {
+  if (ringing.delete(callId)) {
+    mainWindow?.webContents.send('call:ring-cancelled', callId);
+  }
+}
+
+/** Ends this device's participation, locally and to everyone else. */
+function endLocalCall(announce: boolean): void {
+  const call = localCall;
+  if (!call) {
+    return;
+  }
+
+  localCall = null;
+  localCallHadCompany = false;
+  if (announce) {
+    sendCallSignal(call.roomId, { kind: 'leave', callId: call.callId });
+  }
+  callManager.leave(call.callId, deviceId());
+  mainWindow?.webContents.send('call:ended', call.callId);
+  sendStateToRenderer();
+}
+
+/**
+ * Forgets every call in a room, for when the room itself goes — left, closed, or
+ * the key withdrawn. Announcing our departure would be pointless: either we no
+ * longer have the key to seal it with, or there is nobody left entitled to read
+ * it.
+ */
+function endCallsForRoom(roomId: string): void {
+
+  /*
+   * A remote session belongs to a room too, and loses its justification the
+   * moment the room does. Announcing would be pointless: either the key needed
+   * to seal it is gone, or there is nobody left entitled to read it.
+   */
+  if (remoteSessions.current?.roomId === roomId) {
+    endRemoteSession('The room this remote session belonged to is gone.', false);
+  }
+  remoteSessions.clearRoom(roomId);
+
+  if (localCall?.roomId === roomId) {
+    endLocalCall(false);
+  }
+
+  for (const [callId, ring] of Array.from(ringing)) {
+    if (ring.roomId === roomId) {
+      clearRing(callId);
+    }
+  }
+
+  callManager.clearRoom(roomId);
+}
+
+function handleCallRing(message: WireMessage, room: RoomInfo, signal: CallSignal & { kind: 'ring' }): void {
+  // Ringing means the caller is in the call as well as asking for company.
+  callManager.join(signal.callId, room.roomId, signal.mode, message.deviceId, message.deviceName);
+
+  if (localCall?.callId === signal.callId) {
+    sendStateToRenderer();
+    return; // Already in it; the ring is a late arrival.
+  }
+
+  /*
+   * Already on another call. The caller is told so rather than left listening to
+   * a ring nobody will ever answer.
+   */
+  if (localCall) {
+    sendCallSignal(room.roomId, { kind: 'decline', callId: signal.callId });
+    sendStateToRenderer();
+    return;
+  }
+
+  const ring: CallRinging = {
+    callId: signal.callId,
+    roomId: room.roomId,
+    roomName: room.name,
+    mode: signal.mode,
+    fromDeviceId: message.deviceId,
+    fromDeviceName: message.deviceName,
+    at: Date.now()
+  };
+
+  const wasRinging = ringing.has(signal.callId);
+  ringing.set(signal.callId, ring);
+  sendStateToRenderer();
+
+  if (wasRinging) {
+    return; // A repeat of a ring already on screen.
+  }
+
+  mainWindow?.webContents.send('call:ring', ring);
+  const kind = signal.mode === 'video' ? 'video call' : 'voice call';
+  sendStatus(`${message.deviceName} is calling ${room.name}`, 'warning');
+  notify(`Incoming ${kind}`, `${message.deviceName} is calling ${room.name}`);
+}
+
+function handleCall(message: WireMessage): void {
+  const signal = handleRoomPayload(message)?.call;
+  if (!signal || typeof signal.kind !== 'string' || typeof signal.callId !== 'string' || !signal.callId) {
+    return;
+  }
+
+  const roomId = message.roomId!;
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return;
+  }
+
+  // An addressed signal is acted on by its target and nobody else.
+  const to = callSignalTarget(signal);
+  if (to !== undefined && to !== deviceId()) {
+    return;
+  }
+
+  switch (signal.kind) {
+    case 'ring':
+      return handleCallRing(message, room, signal);
+
+    case 'join':
+    case 'here': {
+      const isNews = callManager.join(
+        signal.callId,
+        roomId,
+        signal.mode,
+        message.deviceId,
+        message.deviceName
+      );
+
+      if (localCall?.callId === signal.callId) {
+        /*
+         * Answer a newcomer so it learns we are here too. Heartbeats from a
+         * device we already know about are not answered, or every participant
+         * would reply to every other one every few seconds.
+         */
+        if (signal.kind === 'join' && isNews) {
+          sendCallSignal(roomId, {
+            kind: 'here',
+            callId: signal.callId,
+            mode: localCall.mode,
+            to: message.deviceId
+          });
+        }
+        forwardCallSignal(message, signal);
+      }
+
+      if (isNews) {
+        sendStateToRenderer();
+      }
+      return;
+    }
+
+    case 'leave': {
+      const changed = callManager.leave(signal.callId, message.deviceId);
+      if (!callManager.getCall(signal.callId)) {
+        clearRing(signal.callId);
+      }
+      if (localCall?.callId === signal.callId) {
+        forwardCallSignal(message, signal);
+      }
+      if (changed) {
+        sendStateToRenderer();
+      }
+      return;
+    }
+
+    case 'decline':
+      if (localCall?.callId === signal.callId) {
+        forwardCallSignal(message, signal);
+        sendStatus(`${message.deviceName} declined the call`, 'info');
+      }
+      return;
+
+    case 'sdp':
+    case 'ice':
+    case 'device':
+      if (localCall?.callId !== signal.callId) {
+        return; // Not our call; nothing to negotiate.
+      }
+      callManager.touch(signal.callId, message.deviceId);
+      forwardCallSignal(message, signal);
+      return;
+
+    default:
+      return;
+  }
+}
+
+// --- remote desktop ----------------------------------------------------------
+
+/**
+ * Remote desktop, from the main process's point of view.
+ *
+ * The screen travels over WebRTC and the input over a data channel, so neither
+ * passes through here. What this owns is the part that must not be got wrong:
+ * who is allowed to ask, who has to say yes, and the single gate every input
+ * event passes through before it reaches the mouse.
+ *
+ * The rule that shapes the rest is that **approval is per session and given by a
+ * human on the machine being shared**. There is no stored consent to leak, no
+ * setting that leaves a machine permanently open, and no path by which a message
+ * arriving off the network starts a session on its own.
+ */
+
+/** Injects into the host's own desktop while a session with control is live. */
+let remoteInjector: Injector | null = null;
+/** The `desktopCapturer` display id being shared, needed to aim the injector. */
+let remoteDisplayId = '';
+/** Held down while hosting, so the session can be killed without the window. */
+const REMOTE_PANIC_SHORTCUT = 'Control+Alt+Shift+X';
+
+/**
+ * The display behind a `desktopCapturer` source id.
+ *
+ * The id looks like `screen:0:0`, whose middle field is the display id the
+ * `screen` module knows it by — which is what the pointer has to be mapped
+ * into. `getSources` also reports it directly, but only when it feels like it,
+ * so the id is parsed as a fallback.
+ */
+function displayIdFor(sourceId: string): string {
+  return sourceId.split(':')[1] ?? '';
+}
+
+function sendRemoteSignal(roomId: string, signal: RemoteSignal): boolean {
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return false;
+  }
+
+  const message = baseMessage('remote');
+  message.roomId = roomId;
+  if (!attachRoomBody(message, room, { remote: signal })) {
+    return false;
+  }
+
+  const host = getPeerHost(signal.to);
+  return host ? sendUdpMessage(message, host) : deliverToRoom(message, roomId);
+}
+
+/**
+ * The one place a remote session stops, whatever stopped it.
+ *
+ * Everything funnels through here so that the two things which must always
+ * happen together always do: the keys the controller was holding are released,
+ * and the panic shortcut is handed back. A path that ended a session without
+ * releasing would leave the host with a stuck modifier and no idea why.
+ */
+function endRemoteSession(reason: string, announce: boolean): void {
+  const session = remoteSessions.end();
+
+  remoteInjector?.releaseAll();
+  remoteInjector = null;
+  remoteDisplayId = '';
+  releasePanicShortcut();
+
+  if (!session) {
+    return;
+  }
+
+  if (announce) {
+    sendRemoteSignal(session.roomId, {
+      kind: 'end',
+      sessionId: session.sessionId,
+      to: session.peerId,
+      reason
+    });
+  }
+
+  mainWindow?.webContents.send('remote:ended', { sessionId: session.sessionId, reason });
+  sendStateToRenderer();
+
+  if (reason) {
+    sendStatus(reason, 'warning');
+  }
+}
+
+/**
+ * A way out that does not depend on reaching the window.
+ *
+ * While someone else is moving the mouse, clicking a button in this app is
+ * exactly the thing that might not be possible. A global shortcut is registered
+ * for the duration of a hosted session and given back the moment it ends.
+ */
+function claimPanicShortcut(): void {
+  try {
+    const registered = globalShortcut.register(REMOTE_PANIC_SHORTCUT, () => {
+      endRemoteSession('You ended the remote session from the keyboard.', true);
+      showMainWindow();
+    });
+
+    if (!registered) {
+      log.warn(`Could not register ${REMOTE_PANIC_SHORTCUT}; another application holds it`);
+    }
+  } catch (error) {
+    log.warn(`Could not register the remote panic shortcut: ${(error as Error).message}`);
+  }
+}
+
+function releasePanicShortcut(): void {
+  try {
+    globalShortcut.unregister(REMOTE_PANIC_SHORTCUT);
+  } catch {
+    // Nothing to give back. Not worth reporting.
+  }
+}
+
+function handleRemote(message: WireMessage): void {
+  const signal = handleRoomPayload(message)?.remote;
+  if (!signal || typeof signal.kind !== 'string' || typeof signal.sessionId !== 'string' || !signal.sessionId) {
+    return;
+  }
+
+  // Every remote signal is addressed. One that is not, or is for somebody else,
+  // is not ours to act on.
+  if (signal.to !== deviceId()) {
+    return;
+  }
+
+  const roomId = message.roomId!;
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return;
+  }
+
+  switch (signal.kind) {
+    case 'request': {
+      /*
+       * Somebody wants to see this screen. Nothing at all happens beyond putting
+       * the question on screen — no capture starts, no connection is negotiated,
+       * and a refusal is the default if nobody answers.
+       */
+      if (remoteSessions.busy) {
+        sendRemoteSignal(roomId, {
+          kind: 'deny',
+          sessionId: signal.sessionId,
+          to: message.deviceId,
+          reason: `${deviceName()} is already in a remote session.`
+        });
+        return;
+      }
+
+      const added = remoteSessions.addRequest({
+        sessionId: signal.sessionId,
+        roomId,
+        fromDeviceId: message.deviceId,
+        fromDeviceName: message.deviceName,
+        at: Date.now()
+      });
+      if (!added) {
+        return;
+      }
+
+      const request: RemoteRequest = {
+        sessionId: signal.sessionId,
+        roomId,
+        roomName: room.name,
+        fromDeviceId: message.deviceId,
+        fromDeviceName: message.deviceName,
+        at: Date.now()
+      };
+
+      mainWindow?.webContents.send('remote:request', request);
+      sendStatus(`${message.deviceName} is asking to see your screen`, 'warning');
+      notify(
+        'Screen access requested',
+        `${message.deviceName} wants to view your screen in ${room.name}. Nothing is shared until you allow it.`
+      );
+      return;
+    }
+
+    case 'grant': {
+      // Our own request was allowed. We become the controller.
+      const started = remoteSessions.start({
+        sessionId: signal.sessionId,
+        roomId,
+        role: 'controller',
+        peerId: message.deviceId,
+        peerName: message.deviceName,
+        grant: signal.grant === 'control' ? 'control' : 'view',
+        screenLabel: String(signal.screenLabel ?? '')
+      });
+
+      if (!started) {
+        return;
+      }
+
+      mainWindow?.webContents.send('remote:started', remoteSessions.current);
+      sendStateToRenderer();
+      sendStatus(
+        signal.grant === 'control'
+          ? `${message.deviceName} gave you control of their screen.`
+          : `${message.deviceName} shared their screen with you.`,
+        'success'
+      );
+      return;
+    }
+
+    case 'deny':
+      sendStatus(String(signal.reason || `${message.deviceName} declined.`), 'warning');
+      return;
+
+    case 'grant-changed': {
+      if (!remoteSessions.ownsSession(signal.sessionId, message.deviceId)) {
+        return;
+      }
+
+      const grant: RemoteGrant = signal.grant === 'control' ? 'control' : 'view';
+      remoteSessions.setGrant(signal.sessionId, grant);
+      mainWindow?.webContents.send('remote:grant-changed', grant);
+      sendStateToRenderer();
+      sendStatus(
+        grant === 'control'
+          ? `${message.deviceName} gave you control.`
+          : `${message.deviceName} took back control. You can still watch.`,
+        'info'
+      );
+      return;
+    }
+
+    case 'end':
+      if (!remoteSessions.ownsSession(signal.sessionId, message.deviceId)) {
+        return;
+      }
+      endRemoteSession(String(signal.reason || `${message.deviceName} ended the remote session.`), false);
+      return;
+
+    case 'sdp':
+    case 'ice':
+      if (!remoteSessions.ownsSession(signal.sessionId, message.deviceId)) {
+        return;
+      }
+      mainWindow?.webContents.send('remote:signal', {
+        roomId,
+        fromDeviceId: message.deviceId,
+        fromDeviceName: message.deviceName,
+        signal
+      });
+      return;
+
+    default:
+      return;
+  }
+}
+
+/** Requests nobody answered are refused rather than left hanging. */
+function sweepRemoteRequests(): void {
+  for (const sessionId of remoteSessions.sweepRequests()) {
+    mainWindow?.webContents.send('remote:request-expired', sessionId);
+  }
+}
+
+/**
+ * Keeps the picture of who is in a call honest.
+ *
+ * A device that loses power, or WiFi, mid-call never says goodbye. So each
+ * participant re-announces itself on a timer and anyone who stops is dropped —
+ * which is what lets a call end when the last person's laptop lid closes rather
+ * than staying on screen until the app is restarted.
+ */
+function sweepCalls(): void {
+  if (localCall) {
+    callManager.join(
+      localCall.callId,
+      localCall.roomId,
+      localCall.mode,
+      deviceId(),
+      deviceName()
+    );
+    sendCallSignal(localCall.roomId, {
+      kind: 'join',
+      callId: localCall.callId,
+      mode: localCall.mode
+    });
+  }
+
+  sweepRemoteRequests();
+  if (phoneServer?.sessions.sweep()) {
+    sendStateToRenderer();
+  }
+  let changed = callManager.sweep();
+
+  for (const [callId, ring] of Array.from(ringing)) {
+    if (!callManager.getCall(callId) || Date.now() - ring.at > RING_TIMEOUT_MS) {
+      clearRing(callId);
+      changed = true;
+    }
+  }
+
+  if (localCall) {
+    const others = callManager.countParticipants(localCall.callId) - 1;
+    if (others > 0) {
+      localCallHadCompany = true;
+    } else if (Date.now() - (callManager.getCall(localCall.callId)?.startedAt ?? 0) > CALL_ALONE_GRACE_MS) {
+      sendStatus(
+        localCallHadCompany ? 'Everyone else left the call.' : 'Nobody answered the call.',
+        'info'
+      );
+      endLocalCall(true);
+      return;
+    }
+  }
+
+  if (changed) {
+    sendStateToRenderer();
+  }
+}
+
 function handleWireMessage(message: WireMessage, host: string) {
   if (message.deviceId === deviceId()) {
     return; // Our own broadcast, looped back.
@@ -1669,6 +2409,8 @@ function handleWireMessage(message: WireMessage, host: string) {
       return handleRoomRoster(message);
     case 'room-leave':
       return handleRoomLeave(message);
+    case 'room-rekey':
+      return handleRoomRekey(message);
     case 'room-closed':
       return handleRoomClosed(message);
     case 'clipboard':
@@ -1695,6 +2437,10 @@ function handleWireMessage(message: WireMessage, host: string) {
       return handleChatReaction(message);
     case 'chat-typing':
       return handleChatTyping(message);
+    case 'call':
+      return handleCall(message);
+    case 'remote':
+      return handleRemote(message);
     default:
       return;
   }
@@ -1723,12 +2469,12 @@ function reportVersionMismatch(message: WireMessage, host: string): void {
     diagnostics.otherVersions.push(message.v);
     log.warn(`${message.deviceName} speaks protocol v${message.v}; this app speaks v${PROTOCOL_VERSION}`);
     sendStatus(
-      `${message.deviceName || 'A device'} is running a different version of Shared Clipboard (protocol v${message.v} against this app's v${PROTOCOL_VERSION}), so the two cannot talk to each other. Install the same version on both.`,
+      `${message.deviceName || 'A device'} is running a different version of Campus Connect (protocol v${message.v} against this app's v${PROTOCOL_VERSION}), so the two cannot talk to each other. Install the same version on both.`,
       'error'
     );
     notify(
       'Different version detected',
-      `${message.deviceName || 'A device'} is running another version of Shared Clipboard. Install the same version on both machines.`
+      `${message.deviceName || 'A device'} is running another version of Campus Connect. Install the same version on both machines.`
     );
   }
   sendStateToRenderer();
@@ -1739,6 +2485,18 @@ function receiveMessage(raw: string, host: string, viaTcp: boolean): void {
   try {
     const message = JSON.parse(raw) as WireMessage;
     if (!message?.type || !message.deviceId) {
+      return;
+    }
+
+    /*
+     * A blocked device is dealt with here and nowhere else.
+     *
+     * One check, before anything is counted, stored, shown or answered — which
+     * is the only way a block can be relied on. Spreading the decision across
+     * the individual handlers is how one of them ends up forgotten, and a block
+     * that leaks in one place is not a block.
+     */
+    if (isBlocked(message.deviceId)) {
       return;
     }
 
@@ -1813,6 +2571,7 @@ function startUdpService() {
     }, ANNOUNCE_INTERVAL_MS);
     clipboardPollTimer = setInterval(pollLocalClipboard, CLIPBOARD_POLL_MS);
     transferSweepTimer = setInterval(sweepTransfers, TRANSFER_SWEEP_MS);
+    callSweepTimer = setInterval(sweepCalls, CALL_HEARTBEAT_MS);
     compactTimer = setInterval(() => {
       if (compactStorage() > 0) {
         sendStateToRenderer();
@@ -1847,14 +2606,27 @@ function setNetworkEnabled(next: boolean): void {
     startUdpService();
     startTcpService();
     updater?.start(getSettings().autoUpdate);
-    sendStatus('Shared clipboard is on.', 'success');
+    sendStatus('Campus Connect is on.', 'success');
     return;
+  }
+
+  /*
+   * A call cannot survive the network going away, and the far side has to be
+   * told before the socket closes under it — so this happens first.
+   */
+  phoneServer?.stop();
+  endRemoteSession('Campus Connect was switched off, so the remote session ended.', true);
+  remoteSessions.clear();
+  endLocalCall(true);
+  callManager.clear();
+  for (const callId of Array.from(ringing.keys())) {
+    clearRing(callId);
   }
 
   stopUdpService();
   write('peers', []);
   roomManager.clearAdverts();
-  sendStatus('Shared clipboard is off. Nothing is shared or received.', 'warning');
+  sendStatus('Campus Connect is off. Nothing is shared or received.', 'warning');
   sendStateToRenderer();
 }
 
@@ -1862,7 +2634,7 @@ function setNetworkEnabled(next: boolean): void {
 function requireOnline(): ActionResult | null {
   return getSettings().online
     ? null
-    : fail('Shared clipboard is off. Turn it on from the header to use this.');
+    : fail('Campus Connect is off. Turn it on from the header to use this.');
 }
 
 function stopUdpService() {
@@ -1878,6 +2650,10 @@ function stopUdpService() {
     clearInterval(transferSweepTimer);
     transferSweepTimer = null;
   }
+  if (callSweepTimer) {
+    clearInterval(callSweepTimer);
+    callSweepTimer = null;
+  }
   if (compactTimer) {
     clearInterval(compactTimer);
     compactTimer = null;
@@ -1891,17 +2667,21 @@ function stopUdpService() {
 }
 
 /**
- * The tray mark, matching the app icon but simplified: at 16px the content
- * lines and the drop shadow turn to mush, so only the clipboard silhouette and
- * the tick survive.
+ * The tray mark, matching the app icon but simplified.
+ *
+ * At 16px the gradient, the corner radius and the stand under the screen all
+ * turn to mush, so only the two arcs and the screen survive — and they are drawn
+ * heavier than in the full icon, because a hairline disappears entirely once
+ * Windows has scaled it.
  */
 function createTrayIcon() {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
 <rect width="64" height="64" rx="15" fill="#4f46e5"/>
-<rect x="19" y="18" width="26" height="31" rx="5" fill="#ffffff"/>
-<rect x="26" y="14" width="12" height="8" rx="4" fill="#ffffff"/>
-<path d="M25 34.5 30 39.5 41 28" fill="none" stroke="#4f46e5" stroke-width="5"
-  stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="18" y="35" width="28" height="19" rx="4" fill="#ffffff"/>
+<g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-width="5">
+  <path d="M23 27a13 13 0 0 1 18 0"/>
+  <path d="M16 20a23 23 0 0 1 32 0"/>
+</g>
 </svg>`;
 
   const icon = nativeImage.createFromDataURL(
@@ -1925,7 +2705,7 @@ function showMainWindow() {
 
 function setupTray() {
   tray = new Tray(createTrayIcon());
-  tray.setToolTip('Shared Clipboard');
+  tray.setToolTip('Campus Connect');
   refreshTrayMenu();
   tray.on('click', () => showMainWindow());
 }
@@ -1934,9 +2714,9 @@ function refreshTrayMenu() {
   const settings = getSettings();
   tray?.setContextMenu(
     Menu.buildFromTemplate([
-      { label: 'Open Shared Clipboard', click: () => showMainWindow() },
+      { label: 'Open Campus Connect', click: () => showMainWindow() },
       {
-        label: 'Shared clipboard on',
+        label: 'Campus Connect on',
         type: 'checkbox',
         checked: settings.online,
         click: (item) => updateSettings({ online: item.checked })
@@ -1954,13 +2734,70 @@ function refreshTrayMenu() {
   );
 }
 
+/** Where the interface is loaded from: the dev server, or the packaged files. */
+function rendererDevServerUrl(): string | undefined {
+  return process.env.VITE_DEV_SERVER_URL ?? (app.isPackaged ? undefined : 'http://localhost:5173');
+}
+
+/**
+ * Brings up the quick-paste overlay and its global hotkey.
+ *
+ * Deliberately independent of the main window: the whole point is that it works
+ * while the main window is closed, which — for an app that lives in the tray —
+ * is most of the time.
+ */
+function setupQuickPaste(): void {
+  quickPaste = new QuickPaste({
+    preloadPath: path.join(__dirname, 'preload.js'),
+    devServerUrl: rendererDevServerUrl(),
+    paste: getPasteAction(),
+    isQuitting: () => isQuiting,
+    onOpened: () => quickPaste?.send('quick-paste:opened', quickPasteItems())
+  });
+
+  quickPaste.warmUp();
+
+  const problem = quickPaste.setShortcut(getSettings().quickPasteShortcut);
+  if (problem) {
+    sendStatus(problem, 'warning');
+  }
+}
+
+/**
+ * What the overlay shows: this device's clipboard history across every room,
+ * plus the snippet library.
+ *
+ * Across every room on purpose. The overlay is opened from inside another
+ * application, where the question is "what did I copy", not "which room was I
+ * in when I copied it" — the room is shown on each entry, but it does not
+ * filter.
+ */
+function quickPasteItems(): { clips: ClipboardHistoryEntry[]; snippets: Snippet[]; roomNames: Record<string, string> } {
+  const roomNames: Record<string, string> = {};
+  for (const room of roomManager.getRooms()) {
+    roomNames[room.roomId] = room.name;
+  }
+
+  return {
+    clips: historyManager.getClipboardHistory().slice(0, 60),
+    snippets: snippetManager.list(),
+    roomNames
+  };
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
-    width: 1180,
-    height: 780,
-    minWidth: 940,
-    minHeight: 620,
-    title: 'Shared Clipboard',
+    /*
+     * Sized for the screens this actually runs on. The old 1180x780 left the
+     * content column half empty on a 1080p laptop while still being tight
+     * enough that the members list wrapped; this fills the space it is given
+     * without ever exceeding a 1366x768 display.
+     */
+    width: 1320,
+    height: 880,
+    minWidth: 1040,
+    minHeight: 680,
+    title: 'Campus Connect',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0f1115' : '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -1991,8 +2828,7 @@ function createWindow(): BrowserWindow {
     }
   });
 
-  const devServerUrl =
-    process.env.VITE_DEV_SERVER_URL ?? (app.isPackaged ? undefined : 'http://localhost:5173');
+  const devServerUrl = rendererDevServerUrl();
 
   if (devServerUrl) {
     window.loadURL(devServerUrl);
@@ -2029,6 +2865,23 @@ process.on('unhandledRejection', (reason) => {
 });
 
 /*
+ * Let WebRTC see the machine's real address on this network.
+ *
+ * Chromium hides local IPs behind generated `*.local` mDNS hostnames in ICE
+ * candidates, which is the right default for a browser: it stops a web page
+ * learning your internal addresses. Here it is the one thing that must not
+ * happen. Every call in this app is between two machines on the same LAN, and
+ * their host candidates *are* the connection — there is no STUN or TURN server
+ * to fall back on. Leaving the obfuscation in place makes a call depend on mDNS
+ * resolution succeeding on both ends, which on a campus network is exactly the
+ * kind of multicast traffic that gets filtered.
+ *
+ * Nothing is exposed by this that the app does not already broadcast: it
+ * announces its own address on the LAN every three seconds by design.
+ */
+app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
+
+/*
  * One copy of the app per machine.
  *
  * It starts with the system and then lives in the tray, so opening it from the
@@ -2038,7 +2891,7 @@ process.on('unhandledRejection', (reason) => {
  * exactly like the network sending everything twice.
  */
 if (!app.requestSingleInstanceLock()) {
-  log.info('Another copy of Shared Clipboard is already running; handing over to it');
+  log.info('Another copy of Campus Connect is already running; handing over to it');
   app.quit();
 }
 
@@ -2054,12 +2907,26 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true });
 
-  // The font picker reads the list of installed fonts. Nothing else is granted;
-  // everything unrecognised is denied rather than allowed by default.
-  // 'local-fonts' is not in Electron's permission union yet, so compare as text.
+  /*
+   * What the window is allowed to ask the system for. Everything unrecognised is
+   * denied rather than allowed by default.
+   *
+   *  - 'local-fonts' lets the font picker read the installed list.
+   *  - 'media' is the microphone and the camera, for calls. There is no browsing
+   *    here and no remote content: the only page ever loaded is this app's own,
+   *    so a grant cannot reach anything but the call UI.
+   *  - 'display-capture' is screen sharing, which additionally goes through the
+   *    picker below — a grant here does not by itself hand over a screen.
+   */
+  const GRANTED_PERMISSIONS = new Set(['local-fonts', 'media', 'display-capture']);
   session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => {
-    callback(String(permission) === 'local-fonts');
+    callback(GRANTED_PERMISSIONS.has(String(permission)));
   });
+  session.defaultSession.setPermissionCheckHandler((_contents, permission) =>
+    GRANTED_PERMISSIONS.has(String(permission))
+  );
+
+  loadBlocked();
 
   // Drop a stale current room left over from a previous run.
   const currentRoomId = read('currentRoomId');
@@ -2067,21 +2934,37 @@ app.whenReady().then(() => {
     write('currentRoomId', undefined);
   }
 
-  // Windows attributes notifications by app id; without this they show as
-  // coming from "electron.app.Electron".
+  /*
+   * Windows attributes notifications by app id; without this they show as coming
+   * from "electron.app.Electron".
+   *
+   * Still the old id, on purpose, and it has to stay that way. It is the same
+   * string as `build.appId`, which is what the installer registers the app under
+   * — so changing it would make the next release install alongside the previous
+   * one instead of upgrading it, and leave everyone running two copies fighting
+   * over the port. The id is internal; the name people see comes from
+   * productName.
+   */
   app.setAppUserModelId('com.vijayapardhu.sharedclipboard');
+
+  if (migration.migrated) {
+    log.info(`Brought forward the previous install's data from ${migration.from}`);
+  } else if (migration.error) {
+    log.warn(`Could not bring forward data from ${migration.from}: ${migration.error}`);
+  }
 
   compactStorage();
 
   mainWindow = createWindow();
   setupTray();
+  setupQuickPaste();
 
   // Left off last time means still off now; the switch survives a restart.
   if (getSettings().online) {
     startUdpService();
     startTcpService();
   } else {
-    log.info('Starting with the shared clipboard switched off');
+    log.info('Starting with Campus Connect switched off');
   }
 
   updater = new Updater({
@@ -2092,7 +2975,7 @@ app.whenReady().then(() => {
       if (status.state === 'ready' && status.availableVersion) {
         notify(
           `Version ${status.availableVersion} is ready`,
-          'Restart Shared Clipboard to finish updating. Both machines need the same version to talk to each other.'
+          'Restart Campus Connect to finish updating. Both machines need the same version to talk to each other.'
         );
       }
     }
@@ -2110,12 +2993,19 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   isQuiting = true;
+  // Say goodbye while the socket is still open, or the room is left staring at
+  // a participant that is never coming back.
+  phoneServer?.stop();
+  endRemoteSession('', true);
+  endLocalCall(true);
   historyManager.flush();
   persist('peers');
   stopUdpService();
+  quickPaste?.destroy();
+  quickPaste = null;
   tray?.destroy();
   tray = null;
-  log.info('Shutting down Shared Clipboard');
+  log.info('Shutting down Campus Connect');
 });
 
 app.on('window-all-closed', () => {
@@ -2138,6 +3028,13 @@ function updateSettings(patch: Partial<AppSettings>): AppState {
   if (patch.online !== undefined) {
     setNetworkEnabled(patch.online);
   }
+  if (patch.quickPasteShortcut !== undefined) {
+    const problem = quickPaste?.setShortcut(next.quickPasteShortcut) ?? '';
+    sendStatus(
+      problem || (next.quickPasteShortcut ? `Quick paste is on ${next.quickPasteShortcut}.` : 'Quick paste shortcut removed.'),
+      problem ? 'error' : 'success'
+    );
+  }
   refreshTrayMenu();
   sendStateToRenderer();
   return getAppState();
@@ -2151,16 +3048,34 @@ function fail(message: string): ActionResult {
   return { ok: false, message };
 }
 
-ipcMain.handle('app:get-state', () => getAppState());
+/**
+ * Registers a request handler once, reachable two ways.
+ *
+ * The desktop calls these over Electron IPC; a paired phone calls them over
+ * HTTP. Registering both from one place is what keeps them honest — there is a
+ * single implementation of "approve this member" or "send this message", with a
+ * single set of checks, and no second code path for phones to drift away from.
+ *
+ * The phone route is additionally gated by an allowlist (`PHONE_METHODS`), so
+ * being reachable here does not make something reachable from a phone.
+ */
+const rpcHandlers = new Map<string, (event: unknown, ...args: any[]) => unknown>();
 
-ipcMain.handle('app:update-device-name', (_event, name: string) => {
+function handle(channel: string, listener: (event: any, ...args: any[]) => unknown): void {
+  rpcHandlers.set(channel, listener);
+  ipcMain.handle(channel, listener as never);
+}
+
+handle('app:get-state', () => getAppState());
+
+handle('app:update-device-name', (_event, name: string) => {
   write('deviceName', name.trim() || getSystemDeviceName());
   sendStateToRenderer();
   broadcastPresence();
   return getAppState();
 });
 
-ipcMain.handle('app:update-settings', (_event, patch: Partial<AppSettings>) => updateSettings(patch));
+handle('app:update-settings', (_event, patch: Partial<AppSettings>) => updateSettings(patch));
 
 /**
  * Opens one of the project's own links in the system browser. Restricted to an
@@ -2173,7 +3088,7 @@ const EXTERNAL_LINKS: readonly string[] = [
   `${APP_INFO.repositoryUrl}/issues`
 ];
 
-ipcMain.handle('app:open-external', (_event, url: string): ActionResult => {
+handle('app:open-external', (_event, url: string): ActionResult => {
   if (!EXTERNAL_LINKS.includes(url)) {
     log.warn(`Refused to open an unrecognised URL: ${url}`);
     return fail('That link could not be opened.');
@@ -2183,9 +3098,31 @@ ipcMain.handle('app:open-external', (_event, url: string): ActionResult => {
   return ok('Opened in your browser.');
 });
 
-ipcMain.handle('app:connect-peer', (_event, host: string, port: number, name: string) => {
+/**
+ * Opens a link that came out of the clipboard.
+ *
+ * Separate from the allowlisted handler above, because the set of links here is
+ * by definition unknowable — and correspondingly stricter about *scheme*. A
+ * clipboard can hold `file://`, `javascript:`, or any custom scheme some other
+ * installed application has registered, and "open the thing the user copied"
+ * must never become "launch whatever this string happens to name". Only http
+ * and https ever leave this function.
+ */
+handle('app:open-link', (_event, url: string): ActionResult => {
+  const value = String(url ?? '').trim();
+
+  if (!isOpenableUrl(value)) {
+    log.warn(`Refused to open a link that is not http(s): ${value.slice(0, 120)}`);
+    return fail('Only http and https links can be opened.');
+  }
+
+  shell.openExternal(value);
+  return ok('Opened in your browser.');
+});
+
+handle('app:connect-peer', (_event, host: string, port: number, name: string) => {
   if (!getSettings().online) {
-    sendStatus('Shared clipboard is off. Turn it on from the header first.', 'warning');
+    sendStatus('Campus Connect is off. Turn it on from the header first.', 'warning');
     return getAppState();
   }
 
@@ -2204,7 +3141,7 @@ ipcMain.handle('app:connect-peer', (_event, host: string, port: number, name: st
   return getAppState();
 });
 
-ipcMain.handle(
+handle(
   'room:create',
   (_event, name: string, type: RoomType, password: string): ActionResult => {
     const trimmedName = name.trim();
@@ -2240,7 +3177,7 @@ ipcMain.handle(
  * Ask a room's owner to let this device in. Nothing is trusted locally: the
  * device only becomes a member when the owner sends back a signed-off roster.
  */
-ipcMain.handle(
+handle(
   'room:request-join',
   (_event, roomId: string, password: string, joinCode: string): ActionResult => {
     const offline = requireOnline();
@@ -2297,7 +3234,7 @@ ipcMain.handle(
 );
 
 /** Join a private room by code alone, without seeing it in the discovered list. */
-ipcMain.handle(
+handle(
   'room:join-by-code',
   (_event, joinCode: string, password: string): ActionResult => {
     const offline = requireOnline();
@@ -2352,7 +3289,7 @@ ipcMain.handle(
 );
 
 /** Supply the password for an encrypted room we are already a member of. */
-ipcMain.handle('room:unlock', (_event, roomId: string, password: string): ActionResult => {
+handle('room:unlock', (_event, roomId: string, password: string): ActionResult => {
   const room = roomManager.getRoom(roomId);
   if (!room) {
     return fail('Room not found.');
@@ -2383,13 +3320,13 @@ ipcMain.handle('room:unlock', (_event, roomId: string, password: string): Action
  * theme, because that is what scanners expect. The password is deliberately
  * not included — a QR code is something you hold up in a room full of people.
  */
-ipcMain.handle('room:qr-code', async (_event, roomId: string): Promise<string | null> => {
+handle('room:qr-code', async (_event, roomId: string): Promise<string | null> => {
   const room = roomManager.getRoom(roomId);
   if (!room?.joinCode) {
     return null;
   }
 
-  const uri = `sharedclipboard://join?code=${room.joinCode}&room=${encodeURIComponent(room.name)}`;
+  const uri = `campusconnect://join?code=${room.joinCode}&room=${encodeURIComponent(room.name)}`;
 
   try {
     return await QRCode.toDataURL(uri, {
@@ -2409,7 +3346,7 @@ ipcMain.handle('room:qr-code', async (_event, roomId: string): Promise<string | 
  * room advert already publishes — never the join code, never the password —
  * so it is safe even though it travels the same broadcast as everything else.
  */
-ipcMain.handle('room:invite', (_event, roomId: string, targetDeviceId: string): ActionResult => {
+handle('room:invite', (_event, roomId: string, targetDeviceId: string): ActionResult => {
   const offline = requireOnline();
   if (offline) {
     return offline;
@@ -2446,7 +3383,7 @@ ipcMain.handle('room:invite', (_event, roomId: string, targetDeviceId: string): 
 });
 
 /** Answer an invitation. Accepting only puts you in the owner's queue. */
-ipcMain.handle('room:respond-invite', (_event, roomId: string, accept: boolean): ActionResult => {
+handle('room:respond-invite', (_event, roomId: string, accept: boolean): ActionResult => {
   const offline = requireOnline();
   if (offline) {
     return offline;
@@ -2477,7 +3414,7 @@ ipcMain.handle('room:respond-invite', (_event, roomId: string, accept: boolean):
   );
 });
 
-ipcMain.handle('room:switch', (_event, roomId: string): ActionResult => {
+handle('room:switch', (_event, roomId: string): ActionResult => {
   const room = roomManager.getRoom(roomId);
   if (!room) {
     return fail('Room not found.');
@@ -2488,7 +3425,7 @@ ipcMain.handle('room:switch', (_event, roomId: string): ActionResult => {
   return ok(`Now sharing to ${room.name}`);
 });
 
-ipcMain.handle('room:approve-member', (_event, roomId: string, memberId: string): ActionResult => {
+handle('room:approve-member', (_event, roomId: string, memberId: string): ActionResult => {
   if (!roomManager.isOwner(roomId, deviceId())) {
     return fail('Only the room owner can approve members.');
   }
@@ -2505,7 +3442,7 @@ ipcMain.handle('room:approve-member', (_event, roomId: string, memberId: string)
   return ok(`${member?.deviceName ?? 'Device'} can now use ${room.name}.`);
 });
 
-ipcMain.handle('room:reject-member', (_event, roomId: string, memberId: string): ActionResult => {
+handle('room:reject-member', (_event, roomId: string, memberId: string): ActionResult => {
   if (!roomManager.isOwner(roomId, deviceId())) {
     return fail('Only the room owner can decline requests.');
   }
@@ -2525,7 +3462,7 @@ ipcMain.handle('room:reject-member', (_event, roomId: string, memberId: string):
   return ok(`Declined ${member?.deviceName ?? 'the request'}.`);
 });
 
-ipcMain.handle('room:remove-member', (_event, roomId: string, memberId: string): ActionResult => {
+handle('room:remove-member', (_event, roomId: string, memberId: string): ActionResult => {
   if (!roomManager.isOwner(roomId, deviceId())) {
     return fail('Only the room owner can remove members.');
   }
@@ -2541,17 +3478,135 @@ ipcMain.handle('room:remove-member', (_event, roomId: string, memberId: string):
   return ok(`${member?.deviceName ?? 'Device'} was removed from ${room.name}.`);
 });
 
-ipcMain.handle('room:leave', (_event, roomId: string): ActionResult => {
+/** Longest a room name may be. Enough to be descriptive, short enough to fit. */
+const MAX_ROOM_NAME = 48;
+
+/**
+ * Changing a room after it exists — the owner's job, and only the owner's.
+ *
+ * Name, type and join code are ordinary edits: they go out with the roster,
+ * which for an encrypted room is already sealed with the room key, so only
+ * members ever see them.
+ *
+ * The password is different. Setting, changing or clearing it re-keys the room,
+ * and every other member is locked out until they enter the new one. That is
+ * disruptive by design: a password change that left existing devices reading
+ * would be no use for the one thing it is for, which is shutting out a device
+ * that should not have been given the old password.
+ */
+handle('room:update', (_event, roomId: string, patch: RoomUpdate): ActionResult => {
+  const offline = requireOnline();
+  if (offline) {
+    return offline;
+  }
+
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return fail('Room not found.');
+  }
+  if (room.ownerId !== deviceId()) {
+    return fail('Only the room owner can change a room.');
+  }
+  // Re-keying has to be sealed with the key the room has now, so a room this
+  // device cannot read is a room it cannot re-key either.
+  if (room.encrypted && !roomManager.getKey(roomId)) {
+    return fail(`${room.name} is locked on this device — unlock it before changing it.`);
+  }
+
+  const name = patch.name?.trim();
+  if (patch.name !== undefined) {
+    if (!name) {
+      return fail('A room needs a name.');
+    }
+    if (name.length > MAX_ROOM_NAME) {
+      return fail(`Room names are limited to ${MAX_ROOM_NAME} characters.`);
+    }
+  }
+
+  const changingPassword = patch.password !== undefined;
+  const password = typeof patch.password === 'string' ? patch.password : '';
+  if (changingPassword && patch.password !== null && !password) {
+    return fail('Enter a password, or choose to remove it instead.');
+  }
+
+  const previousKey = roomManager.getKey(roomId);
+  const wasEncrypted = room.encrypted;
+
+  const next: RoomInfo = {
+    ...room,
+    name: name ?? room.name,
+    type: patch.type ?? room.type,
+    joinCode: patch.regenerateJoinCode ? generateJoinCode() : room.joinCode
+  };
+
+  if (changingPassword) {
+    next.encrypted = password.length > 0;
+    // A new salt with every new password, so the same password twice over never
+    // produces the same key twice over.
+    next.keySalt = next.encrypted ? generateSalt() : room.keySalt;
+  }
+
+  roomManager.saveRoom(next);
+
+  if (changingPassword) {
+    if (next.encrypted) {
+      roomManager.setKey(roomId, deriveRoomKey(password, next.keySalt));
+    } else {
+      roomManager.dropKey(roomId);
+    }
+
+    /*
+     * Told under the old key, not the new one. Members learn that the room
+     * changed and that their key is stale; they do not learn the new key,
+     * because the point is that they have to be given the new password.
+     */
+    const notice = baseMessage('room-rekey');
+    notice.roomId = roomId;
+    if (wasEncrypted && previousKey) {
+      notice.sealed = sealJson(previousKey, { room: next });
+    } else {
+      notice.room = next;
+    }
+    fanOut(notice, memberHosts(roomId));
+
+    // A call cannot survive the room changing its key underneath it.
+    endCallsForRoom(roomId);
+  } else {
+    broadcastRoster(next);
+  }
+
+  advertiseOwnedRooms();
+  sendStateToRenderer();
+
+  if (changingPassword) {
+    return ok(
+      next.encrypted
+        ? `${next.name} has a new password. Everyone else has to enter it before they can read the room again.`
+        : `${next.name} no longer has a password. Anything sent there is now readable by anyone who joins.`
+    );
+  }
+
+  return ok(patch.regenerateJoinCode ? `${next.name} has a new join code.` : `${next.name} updated.`);
+});
+
+handle('room:leave', (_event, roomId: string): ActionResult => {
   const room = roomManager.getRoom(roomId);
   if (!room) {
     return fail('Room not found.');
   }
 
   const isOwner = room.ownerId === deviceId();
+  // Leave the call before leaving the room, while we still hold the key needed
+  // to tell anyone.
+  if (localCall?.roomId === roomId) {
+    endLocalCall(true);
+  }
+
   const message = baseMessage(isOwner ? 'room-closed' : 'room-leave');
   message.roomId = roomId;
   fanOut(message, memberHosts(roomId));
 
+  endCallsForRoom(roomId);
   roomManager.deleteRoom(roomId);
   historyManager.clearRoom(roomId);
   if (read('currentRoomId') === roomId) {
@@ -2562,13 +3617,13 @@ ipcMain.handle('room:leave', (_event, roomId: string): ActionResult => {
   return ok(isOwner ? `${room.name} was closed.` : `You left ${room.name}.`);
 });
 
-ipcMain.handle('history:get-clipboard', (_event, roomId?: string) =>
+handle('history:get-clipboard', (_event, roomId?: string) =>
   historyManager.getClipboardHistory(roomId)
 );
 
-ipcMain.handle('history:get-chat', (_event, roomId?: string) => historyManager.getChatHistory(roomId));
+handle('history:get-chat', (_event, roomId?: string) => historyManager.getChatHistory(roomId));
 
-ipcMain.handle('history:delete-entry', (_event, entryId: string) => {
+handle('history:delete-entry', (_event, entryId: string) => {
   const entry = historyManager.getClipboardHistory().find((candidate) => candidate.id === entryId);
   historyManager.deleteClipboardEntry(entryId);
   if (entry) {
@@ -2577,7 +3632,7 @@ ipcMain.handle('history:delete-entry', (_event, entryId: string) => {
   return ok('Removed from history.');
 });
 
-ipcMain.handle('history:toggle-pin', (_event, entryId: string): ActionResult => {
+handle('history:toggle-pin', (_event, entryId: string): ActionResult => {
   const entry = historyManager.getClipboardHistory().find((candidate) => candidate.id === entryId);
   const pinned = historyManager.togglePin(entryId);
   if (pinned === undefined) {
@@ -2590,7 +3645,7 @@ ipcMain.handle('history:toggle-pin', (_event, entryId: string): ActionResult => 
   return ok(pinned ? 'Pinned — it will not be cleared out.' : 'Unpinned.');
 });
 
-ipcMain.handle('history:clear-room', (_event, roomId: string) => {
+handle('history:clear-room', (_event, roomId: string) => {
   historyManager.clearRoom(roomId);
   notifyHistoryChanged(roomId);
   return ok('History cleared for this room.');
@@ -2681,7 +3736,7 @@ function isActionResult<T extends object>(value: T | ActionResult): value is Act
   return 'ok' in value;
 }
 
-ipcMain.handle(
+handle(
   'chat:send',
   (
     _event,
@@ -2727,7 +3782,7 @@ function roomForMessage(messageId: string): { message: ChatMessage; room: RoomIn
   return isActionResult(room) ? room : { message, room };
 }
 
-ipcMain.handle('chat:edit', (_event, messageId: string, content: string): ActionResult => {
+handle('chat:edit', (_event, messageId: string, content: string): ActionResult => {
   const text = content.trim();
   if (!text) {
     return fail('An edited message cannot be empty — delete it instead.');
@@ -2756,7 +3811,7 @@ ipcMain.handle('chat:edit', (_event, messageId: string, content: string): Action
  * it only clears this device, which stays available even when the app is
  * switched off, because it touches nothing but local history.
  */
-ipcMain.handle('chat:delete', (_event, messageId: string, forEveryone: boolean): ActionResult => {
+handle('chat:delete', (_event, messageId: string, forEveryone: boolean): ActionResult => {
   const existing = historyManager.findChatMessage(messageId);
   if (!existing) {
     return fail('That message is no longer in history.');
@@ -2784,7 +3839,7 @@ ipcMain.handle('chat:delete', (_event, messageId: string, forEveryone: boolean):
 });
 
 /** Toggles this device's reaction to a message. */
-ipcMain.handle('chat:react', (_event, messageId: string, emoji: string): ActionResult => {
+handle('chat:react', (_event, messageId: string, emoji: string): ActionResult => {
   const found = roomForMessage(messageId);
   if (isActionResult(found)) {
     return found;
@@ -2805,7 +3860,7 @@ ipcMain.handle('chat:react', (_event, messageId: string, emoji: string): ActionR
  * dropped when there is no room to send it to — a typing indicator is never
  * worth an error message.
  */
-ipcMain.handle('chat:typing', (_event, roomId: string, typing: boolean): void => {
+handle('chat:typing', (_event, roomId: string, typing: boolean): void => {
   const room = roomManager.getRoom(roomId);
   if (!room || !getSettings().online || roomManager.isLocked(roomId)) {
     return;
@@ -2818,7 +3873,7 @@ ipcMain.handle('chat:typing', (_event, roomId: string, typing: boolean): void =>
 });
 
 /** Pick a file with the native dialog and send it into the room. */
-ipcMain.handle('chat:send-file', async (_event, roomId: string): Promise<ActionResult> => {
+handle('chat:send-file', async (_event, roomId: string): Promise<ActionResult> => {
   const room = requireWritableRoom(roomId);
   if (isActionResult(room)) {
     return room;
@@ -2880,7 +3935,7 @@ ipcMain.handle('chat:send-file', async (_event, roomId: string): Promise<ActionR
  * Write a received file wherever the user chooses. Deliberately never opens it
  * — running something that arrived over the network is the user's decision.
  */
-ipcMain.handle('chat:save-file', async (_event, messageId: string): Promise<ActionResult> => {
+handle('chat:save-file', async (_event, messageId: string): Promise<ActionResult> => {
   const message = historyManager.getChatHistory().find((candidate) => candidate.id === messageId);
   if (!message) {
     return fail('That message is no longer in history.');
@@ -2912,7 +3967,7 @@ ipcMain.handle('chat:save-file', async (_event, messageId: string): Promise<Acti
 });
 
 /** The chat for this room is on screen, so acknowledge everything in it. */
-ipcMain.handle('chat:mark-seen', (_event, roomId: string): ActionResult => {
+handle('chat:mark-seen', (_event, roomId: string): ActionResult => {
   const room = roomManager.getRoom(roomId);
   if (!room) {
     return fail('Room not found.');
@@ -2933,6 +3988,766 @@ ipcMain.handle('chat:mark-seen', (_event, roomId: string): ActionResult => {
   return ok('Marked as seen.');
 });
 
+// --- phone access ------------------------------------------------------------
+
+/**
+ * Serving one room to a phone browser on the same network.
+ *
+ * The honest framing: a phone cannot hold the room key, so everything it is
+ * shown has already been decrypted here. That is why this is opt-in, one room at
+ * a time, PIN-gated, and never on by default — and why the interface says so
+ * rather than leaving it to be discovered.
+ */
+function phoneAccessState(): PhoneAccess {
+  const sessions = phoneServer?.sessions;
+  const active = Boolean(phoneServer?.running && sessions?.isOpen);
+
+  return {
+    active,
+    url: active ? `http://${getLocalIpAddress()}:${PHONE_PORT}` : '',
+    /*
+     * The pairing key is deliberately not exposed as text anywhere. It only ever
+     * leaves this process inside the QR image below, which is what makes
+     * "scanning is the only way in" true rather than merely encouraged.
+     */
+    pairUrl: active ? `http://${getLocalIpAddress()}:${PHONE_PORT}/?k=${sessions?.currentKey ?? ''}` : '',
+    clients: sessions?.list() ?? [],
+    lockedUntil: sessions?.lockedOutUntil ?? 0
+  };
+}
+
+/** Formats an entry for the phone, which wants text and not much else. */
+function toPhoneItem(item: {
+  text: string;
+  deviceId: string;
+  deviceName: string;
+  timestamp: number;
+  kind?: string;
+}) {
+  return {
+    text: item.text,
+    who: item.deviceId === deviceId() ? 'You' : item.deviceName,
+    when: new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    kind: item.kind ?? '',
+    mine: item.deviceId === deviceId()
+  };
+}
+
+function startPhoneAccess(): ActionResult {
+  const offline = requireOnline();
+  if (offline) {
+    return offline;
+  }
+
+  if (!phoneServer) {
+    phoneServer = new PhoneServer(
+      {
+        /*
+         * One method, run exactly as the desktop would run it. The deny list in
+         * phoneServer decides what may get here; there is nothing else in the
+         * way, because a paired phone is the same person at the same laptop.
+         */
+        call: async (method: string, args: unknown[]) => {
+          const listener = rpcHandlers.get(method);
+          if (!listener) {
+            throw new Error(`No handler for ${method}`);
+          }
+          return await listener(null, ...args);
+        },
+
+        rendererRoot: () => path.join(__dirname, '../renderer'),
+        onClientsChanged: () => sendStateToRenderer()
+      },
+      {
+        read: () => read('phonePairings'),
+        write: (pairings) => write('phonePairings', pairings)
+      }
+    );
+  }
+
+  const problem = phoneServer.start();
+  if (problem) {
+    return fail(problem);
+  }
+
+  phoneServer.sessions.open();
+  sendStateToRenderer();
+
+  return ok('Phone access is on. Scan the code with your phone.');
+}
+
+handle('phone:start', (): ActionResult => startPhoneAccess());
+
+/**
+ * The phone's own clipboard, straight to and from this machine.
+ *
+ * Deliberately **not** through the room. Copying a password or a one-time code
+ * between your own two devices is the commonest thing anyone wants this app for,
+ * and routing it through a room would broadcast it to everybody else in that
+ * room. These two go nowhere but here.
+ */
+handle('phone:pull-clipboard', (): { text: string } => ({ text: readClipboardText() }));
+
+handle('phone:push-clipboard', (_event, text: string): ActionResult => {
+  const value = String(text ?? '');
+  if (!value.trim()) {
+    return fail('Nothing to send.');
+  }
+
+  lastClipboardImageFingerprint = '';
+  writeClipboardText(value);
+
+  /*
+   * The poller must not see this as a fresh local copy and share it with the
+   * room — which would undo the whole point of a private channel.
+   */
+  const hash = hashClipboardPayload({
+    kind: 'text',
+    text: value,
+    sourceId: deviceId(),
+    sourceName: deviceName(),
+    timestamp: Date.now()
+  });
+  lastLocalClipboardHash = hash;
+  lastRemoteClipboardHash = hash;
+
+  return ok('Sent to this computer. Press Ctrl+V there.');
+});
+
+handle('phone:stop', (): ActionResult => {
+  if (!phoneServer?.running) {
+    return ok('Phone access is already off.');
+  }
+
+  phoneServer.stop();
+  sendStateToRenderer();
+  return ok('Phone access is off. Any connected phone has been cut off.');
+});
+
+handle('phone:revoke', (_event, pairedAt: number): ActionResult => {
+  if (!phoneServer?.sessions.unpair(pairedAt)) {
+    return fail('That phone is not paired.');
+  }
+
+  sendStateToRenderer();
+  return ok('That phone is unpaired. It has to enter the PIN again to come back.');
+});
+
+/** A scannable version of the address, so nobody has to type an IP on a phone. */
+handle('phone:qr-code', async (): Promise<string | null> => {
+  const state = phoneAccessState();
+  if (!state.active) {
+    return null;
+  }
+
+  try {
+    return await QRCode.toDataURL(state.pairUrl, { errorCorrectionLevel: 'M', margin: 1, width: 320 });
+  } catch (error) {
+    log.warn(`Could not build the phone QR code: ${(error as Error).message}`);
+    return null;
+  }
+});
+
+// --- productivity IPC --------------------------------------------------------
+
+/**
+ * The overlay asking for what to show. Also called when it is already open and
+ * something changed underneath it.
+ */
+handle('quick-paste:items', () => quickPasteItems());
+
+/**
+ * Something was picked from the overlay.
+ *
+ * The clipboard write happens here, synchronously, before the window is hidden —
+ * so by the time focus has gone back to the other application the content is
+ * already there waiting for the paste keystroke.
+ */
+handle('quick-paste:pick', (_event, kind: 'clip' | 'snippet', id: string): ActionResult => {
+  let text = '';
+  let isImage = false;
+
+  if (kind === 'snippet') {
+    const snippet = snippetManager.markUsed(id);
+    if (!snippet) {
+      return fail('That snippet is gone.');
+    }
+    text = snippet.content;
+  } else {
+    const entry = historyManager.getClipboardHistory().find((candidate) => candidate.id === id);
+    if (!entry) {
+      return fail('That item is no longer in history.');
+    }
+
+    if (entry.kind === 'image' && entry.dataUrl) {
+      lastClipboardImageFingerprint = writeClipboardImage(entry.dataUrl) ?? '';
+      isImage = true;
+    } else {
+      text = entry.text;
+    }
+  }
+
+  if (!isImage) {
+    lastClipboardImageFingerprint = '';
+    writeClipboardText(text);
+  }
+
+  /*
+   * The poller must not treat this as a fresh copy and re-share it. Without
+   * this, using the overlay would rebroadcast an old item to the room every
+   * time — which is both noise and, for something copied in a different room,
+   * a leak.
+   */
+  const hash = hashClipboardPayload({
+    kind: isImage ? 'image' : 'text',
+    text,
+    sourceId: deviceId(),
+    sourceName: deviceName(),
+    timestamp: Date.now()
+  });
+  lastLocalClipboardHash = hash;
+  lastRemoteClipboardHash = hash;
+
+  if (getSettings().quickPasteAutoPaste) {
+    quickPaste?.pasteAndHide();
+  } else {
+    quickPaste?.hide();
+  }
+
+  sendStateToRenderer();
+  return ok('Copied.');
+});
+
+handle('quick-paste:close', () => quickPaste?.hide());
+
+handle('snippet:save', (_event, input: { id?: string; label: string; content: string }): ActionResult => {
+  const snippet = snippetManager.save(input);
+  if (!snippet) {
+    return fail('A snippet needs some content.');
+  }
+
+  sendStateToRenderer();
+  quickPaste?.send('quick-paste:opened', quickPasteItems());
+  return ok(input.id ? 'Snippet updated.' : `Saved "${snippetLabel(snippet)}".`);
+});
+
+handle('snippet:delete', (_event, id: string): ActionResult => {
+  if (!snippetManager.remove(id)) {
+    return fail('That snippet is already gone.');
+  }
+
+  sendStateToRenderer();
+  quickPaste?.send('quick-paste:opened', quickPasteItems());
+  return ok('Snippet deleted.');
+});
+
+/** Puts a snippet on this machine's clipboard without going through the overlay. */
+handle('snippet:copy', (_event, id: string): ActionResult => {
+  const snippet = snippetManager.markUsed(id);
+  if (!snippet) {
+    return fail('That snippet is gone.');
+  }
+
+  lastClipboardImageFingerprint = '';
+  writeClipboardText(snippet.content);
+
+  const hash = hashText(`text:${snippet.content}:`);
+  lastLocalClipboardHash = hash;
+  lastRemoteClipboardHash = hash;
+
+  sendStateToRenderer();
+  return ok('Copied — press Ctrl+V to paste.');
+});
+
+function snippetLabel(snippet: Snippet): string {
+  return snippet.label || truncateForNotice(snippet.content);
+}
+
+/**
+ * Searching clipboard history and chat across every room at once.
+ *
+ * Room names are resolved here rather than in the renderer because the room may
+ * have been left since the message arrived, and "a room you have left" is a far
+ * more useful answer than a bare id.
+ */
+handle('search:all', (_event, query: string): SearchHit[] => {
+  const roomNames = new Map(roomManager.getRooms().map((room) => [room.roomId, room.name]));
+  return historyManager.search(query, roomNames);
+});
+
+// --- remote desktop IPC ------------------------------------------------------
+
+/** Asks another device for its screen. Nothing happens until a human agrees. */
+handle('remote:request', (_event, roomId: string, targetDeviceId: string): ActionResult => {
+  const room = requireWritableRoom(roomId);
+  if (isActionResult(room)) {
+    return room;
+  }
+
+  if (remoteSessions.busy) {
+    return fail('You are already in a remote session. End it before starting another.');
+  }
+  if (targetDeviceId === deviceId()) {
+    return fail('That is this device.');
+  }
+  if (!roomManager.isAcceptedMember(roomId, targetDeviceId)) {
+    return fail('That device is not a member of this room.');
+  }
+
+  const target = roomManager
+    .getMembers(roomId, 'accepted')
+    .find((member) => member.deviceId === targetDeviceId);
+
+  const sessionId = randomUUID();
+  if (!sendRemoteSignal(roomId, { kind: 'request', sessionId, to: targetDeviceId })) {
+    return fail('The request could not be sent — that device could not be reached.');
+  }
+
+  return ok(
+    `Asked ${target?.deviceName ?? 'that device'} for access. They have to allow it before anything is shared.`
+  );
+});
+
+/**
+ * The host's answer.
+ *
+ * This is the only path by which a screen starts being shared, and it can only
+ * be reached by someone clicking a button on the machine in question. `grant`
+ * says whether the far side may only watch or may also drive; `screenId` is the
+ * display they chose, because sharing all of them by default is not a decision
+ * this app should make on anyone's behalf.
+ */
+handle(
+  'remote:respond',
+  (
+    _event,
+    sessionId: string,
+    allow: boolean,
+    grant: RemoteGrant,
+    screenId: string,
+    screenLabel: string
+  ): ActionResult => {
+    const request = remoteSessions.takeRequest(sessionId);
+    if (!request) {
+      return fail('That request is no longer waiting.');
+    }
+
+    if (!allow) {
+      sendRemoteSignal(request.roomId, {
+        kind: 'deny',
+        sessionId,
+        to: request.fromDeviceId,
+        reason: `${deviceName()} declined.`
+      });
+      sendStateToRenderer();
+      return ok('Declined.');
+    }
+
+    const room = requireWritableRoom(request.roomId);
+    if (isActionResult(room)) {
+      return room;
+    }
+    // The asker must still be a member. Between asking and being answered they
+    // may have been removed, or blocked.
+    if (!roomManager.isAcceptedMember(request.roomId, request.fromDeviceId)) {
+      return fail('That device is no longer a member of this room.');
+    }
+
+    /*
+     * Control is only ever granted when this machine can actually deliver it.
+     * Promising control and then silently dropping every event — which is what
+     * Wayland and an unticked macOS Accessibility box both do — is worse than
+     * saying up front that only viewing is available.
+     */
+    let effectiveGrant: RemoteGrant = grant === 'control' ? 'control' : 'view';
+    let note = '';
+    if (effectiveGrant === 'control') {
+      const capabilities = getRemoteCapabilities(true);
+      if (!capabilities.canControl) {
+        effectiveGrant = 'view';
+        note = ` ${capabilities.reason}`;
+      }
+    }
+
+    const started = remoteSessions.start({
+      sessionId,
+      roomId: request.roomId,
+      role: 'host',
+      peerId: request.fromDeviceId,
+      peerName: request.fromDeviceName,
+      grant: effectiveGrant,
+      screenLabel: screenLabel || 'your screen'
+    });
+    if (!started) {
+      return fail('A remote session is already running.');
+    }
+
+    remoteDisplayId = displayIdFor(screenId);
+    if (effectiveGrant === 'control') {
+      remoteInjector = createDisplayInjector(remoteDisplayId);
+      if (!remoteInjector) {
+        remoteSessions.setGrant(sessionId, 'view');
+        effectiveGrant = 'view';
+        note = ' Control could not be started on this machine, so it is view only.';
+      }
+    }
+
+    claimPanicShortcut();
+
+    sendRemoteSignal(request.roomId, {
+      kind: 'grant',
+      sessionId,
+      to: request.fromDeviceId,
+      grant: effectiveGrant,
+      screenLabel: screenLabel || 'a screen'
+    });
+
+    mainWindow?.webContents.send('remote:started', remoteSessions.current);
+    sendStateToRenderer();
+
+    return ok(
+      `${request.fromDeviceName} can now ${effectiveGrant === 'control' ? 'see and control' : 'see'} ${screenLabel || 'your screen'}.${note}`
+    );
+  }
+);
+
+/** The host taking control back, or handing it over, without ending the session. */
+handle('remote:set-grant', (_event, grant: RemoteGrant): ActionResult => {
+  const session = remoteSessions.current;
+  if (!session || session.role !== 'host') {
+    return fail('You are not sharing your screen.');
+  }
+
+  const next: RemoteGrant = grant === 'control' ? 'control' : 'view';
+  if (next === 'control' && !getRemoteCapabilities(true).canControl) {
+    return fail(getRemoteCapabilities().reason);
+  }
+
+  remoteSessions.setGrant(session.sessionId, next);
+
+  if (next === 'control') {
+    remoteInjector = remoteInjector ?? createDisplayInjector(remoteDisplayId);
+  } else {
+    // Let go of anything the controller was holding at the moment it lost
+    // control, rather than leaving a key down on a machine it can no longer
+    // release it from.
+    remoteInjector?.releaseAll();
+  }
+
+  sendRemoteSignal(session.roomId, {
+    kind: 'grant-changed',
+    sessionId: session.sessionId,
+    to: session.peerId,
+    grant: next
+  });
+
+  sendStateToRenderer();
+  return ok(next === 'control' ? `${session.peerName} now has control.` : 'Control taken back. They can still watch.');
+});
+
+handle('remote:end', (): ActionResult => {
+  if (!remoteSessions.current) {
+    return ok('No remote session is running.');
+  }
+
+  endRemoteSession('', true);
+  return ok('Remote session ended.');
+});
+
+handle('remote:signal', (_event, signal: RemoteSignal): boolean => {
+  const session = remoteSessions.current;
+  if (!session || !signal?.sessionId || signal.sessionId !== session.sessionId) {
+    return false;
+  }
+
+  return sendRemoteSignal(session.roomId, { ...signal, to: session.peerId });
+});
+
+/**
+ * The gate.
+ *
+ * Every input event from another machine arrives here, and this is the only
+ * place that decides whether it happens. `mayInject` requires all of: a live
+ * session, this device being the host rather than the controller, the session
+ * matching, the sender matching, and control — not merely viewing — being
+ * granted. The event is then validated on its own terms before anything moves.
+ */
+handle('remote:input', (_event, sessionId: string, fromDeviceId: string, raw: unknown): boolean => {
+  if (!remoteSessions.mayInject(sessionId, fromDeviceId)) {
+    return false;
+  }
+
+  const event = parseRemoteInput(raw);
+  if (!event || !remoteInjector) {
+    return false;
+  }
+
+  try {
+    return remoteInjector.apply(event);
+  } catch (error) {
+    log.warn(`Remote input could not be applied: ${(error as Error).message}`);
+    return false;
+  }
+});
+
+/**
+ * The screens this machine can offer.
+ *
+ * Only whole displays, never individual windows. A window can be moved, resized
+ * or hidden behind another at any moment, so there is no honest way to map a
+ * click on a picture of it back to a point on the desktop — offering it would
+ * mean the pointer landing somewhere other than where the controller aimed.
+ * Windows remain shareable in a call, where nobody is clicking on them.
+ */
+handle('remote:screens', async (): Promise<ScreenSource[]> => {
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: 320, height: 200 },
+    fetchWindowIcons: false
+  });
+
+  return sources.map((source) => ({
+    id: source.id,
+    name: source.name,
+    kind: 'screen' as const,
+    thumbnail: source.thumbnail.toDataURL()
+  }));
+});
+
+handle('remote:capabilities', (): RemoteCapabilities => getRemoteCapabilities());
+
+// --- blocking IPC ------------------------------------------------------------
+
+/**
+ * Blocking a device.
+ *
+ * Refusing to listen is only half of it. If the device is in a room this one
+ * owns, it can still read everything sent there, and a block that leaves the
+ * blocked party reading your messages is not worth having — so blocking also
+ * removes them from every room this device owns.
+ *
+ * Rooms owned by somebody else are not ours to police: we stop reading anything
+ * that device sends, but we cannot throw it out of someone else's room. The UI
+ * says so rather than implying a guarantee that is not there.
+ */
+handle('privacy:block', (_event, targetDeviceId: string, name: string): ActionResult => {
+  if (!targetDeviceId) {
+    return fail('No device was given.');
+  }
+  if (targetDeviceId === deviceId()) {
+    return fail('You cannot block this device from itself.');
+  }
+  if (isBlocked(targetDeviceId)) {
+    return ok('That device is already blocked.');
+  }
+
+  const known = read('peers').find((peer) => peer.id === targetDeviceId);
+  const deviceName = (name || known?.name || 'Unknown device').trim();
+
+  write('blocked', [
+    { deviceId: targetDeviceId, deviceName, blockedAt: Date.now() },
+    ...read('blocked').filter((entry) => entry.deviceId !== targetDeviceId)
+  ]);
+  loadBlocked();
+
+  // Out of every room we own, and out of anything currently in flight.
+  let removedFrom = 0;
+  for (const room of roomManager.getRooms()) {
+    if (room.ownerId !== deviceId()) {
+      continue;
+    }
+    const updated = roomManager.removeMember(room.roomId, targetDeviceId);
+    if (updated) {
+      broadcastRoster(updated);
+      removedFrom += 1;
+    }
+  }
+
+  callManager.leaveAll(targetDeviceId);
+  // A remote session with the device being blocked ends at once — a block that
+  // left someone still driving the mouse would be worth nothing at all.
+  if (remoteSessions.current?.peerId === targetDeviceId) {
+    endRemoteSession(`${deviceName} was blocked, so the remote session ended.`, true);
+  }
+  remoteSessions.clearDevice(targetDeviceId);
+
+  // Invitations are held by room, so the ones to drop are those whose owner is
+  // the device being blocked.
+  for (const [roomId, invite] of Array.from(receivedInvites)) {
+    if (invite.ownerId === targetDeviceId) {
+      receivedInvites.delete(roomId);
+    }
+  }
+  for (const invites of sentInvites.values()) {
+    invites.delete(targetDeviceId);
+  }
+  write(
+    'peers',
+    read('peers').filter((peer) => peer.id !== targetDeviceId)
+  );
+  roomManager.clearAdverts();
+
+  sendStateToRenderer();
+  return ok(
+    removedFrom > 0
+      ? `${deviceName} is blocked, and was removed from ${removedFrom} of your ${removedFrom === 1 ? 'room' : 'rooms'}.`
+      : `${deviceName} is blocked. Nothing from that device will reach this one.`
+  );
+});
+
+handle('privacy:unblock', (_event, targetDeviceId: string): ActionResult => {
+  const entry = read('blocked').find((candidate) => candidate.deviceId === targetDeviceId);
+  if (!entry) {
+    return fail('That device is not blocked.');
+  }
+
+  write(
+    'blocked',
+    read('blocked').filter((candidate) => candidate.deviceId !== targetDeviceId)
+  );
+  loadBlocked();
+  sendStateToRenderer();
+
+  return ok(
+    `${entry.deviceName} is unblocked. It will reappear on the network, but it is not back in any room — invite it again if you want it there.`
+  );
+});
+
+// --- call IPC ----------------------------------------------------------------
+
+/**
+ * Everything below decides *whether* a call may happen and who is told about it.
+ * None of it touches media: the renderer holds the peer connections, and the only
+ * thing it can ask for here is that a signal be carried to a room it is already
+ * an approved member of.
+ */
+
+handle('call:start', (_event, roomId: string, mode: CallMode): CallStartResult => {
+  const room = requireWritableRoom(roomId);
+  if (isActionResult(room)) {
+    return room;
+  }
+
+  if (localCall) {
+    return fail('You are already on a call. Leave it before starting another.');
+  }
+
+  const others = roomManager.getMembers(roomId, 'accepted').filter((m) => m.deviceId !== deviceId());
+  if (others.length === 0) {
+    return fail(`Nobody else is in ${room.name} yet, so there is no one to call.`);
+  }
+
+  const callId = randomUUID();
+  localCall = { callId, roomId, mode };
+  localCallHadCompany = false;
+  callManager.join(callId, roomId, mode, deviceId(), deviceName());
+
+  if (!sendCallSignal(roomId, { kind: 'ring', callId, mode })) {
+    localCall = null;
+    callManager.leave(callId, deviceId());
+    return fail('The call could not be placed — nothing on this network could be reached.');
+  }
+
+  sendStateToRenderer();
+  return { ok: true, message: `Calling ${room.name}…`, callId, roomId, mode };
+});
+
+/** Answers a ring, or joins a call already under way in a room. */
+handle('call:join', (_event, callId: string): CallStartResult => {
+  const existing = callManager.getCall(callId);
+  const ring = ringing.get(callId);
+  const roomId = existing?.roomId ?? ring?.roomId;
+  if (!roomId) {
+    return fail('That call has already ended.');
+  }
+
+  const room = requireWritableRoom(roomId);
+  if (isActionResult(room)) {
+    return room;
+  }
+
+  if (localCall?.callId === callId) {
+    return { ok: true, message: 'Already in this call.', callId, roomId, mode: localCall.mode };
+  }
+  if (localCall) {
+    return fail('You are already on a call. Leave it before joining another.');
+  }
+  if (callManager.countParticipants(callId) >= MAX_CALL_PARTICIPANTS) {
+    return fail(
+      `This call is full — ${MAX_CALL_PARTICIPANTS} devices is as many as one call can carry.`
+    );
+  }
+
+  const mode = existing?.mode ?? ring?.mode ?? 'audio';
+  clearRing(callId);
+  localCall = { callId, roomId, mode };
+  localCallHadCompany = callManager.countParticipants(callId) > 0;
+  callManager.join(callId, roomId, mode, deviceId(), deviceName());
+  sendCallSignal(roomId, { kind: 'join', callId, mode });
+
+  sendStateToRenderer();
+  return { ok: true, message: `Joined the call in ${room.name}.`, callId, roomId, mode };
+});
+
+handle('call:leave', (): ActionResult => {
+  if (!localCall) {
+    return ok('You are not on a call.');
+  }
+
+  endLocalCall(true);
+  return ok('You left the call.');
+});
+
+handle('call:decline', (_event, callId: string): ActionResult => {
+  const ring = ringing.get(callId);
+  clearRing(callId);
+
+  if (ring) {
+    sendCallSignal(ring.roomId, { kind: 'decline', callId });
+  }
+
+  sendStateToRenderer();
+  return ok('Declined.');
+});
+
+/**
+ * Carries one negotiation step out to the room.
+ *
+ * The call id is checked against the call this device is actually in, so the
+ * renderer cannot be talked into signalling on behalf of a call it never joined.
+ */
+handle('call:signal', (_event, signal: CallSignal): boolean => {
+  if (!localCall || !signal?.callId || signal.callId !== localCall.callId) {
+    return false;
+  }
+
+  return sendCallSignal(localCall.roomId, signal);
+});
+
+/**
+ * The screens and windows available to share.
+ *
+ * Deliberately a list handed to the UI rather than a stream: nothing is captured
+ * by asking, and the user picks the one window they mean instead of the whole
+ * desktop being taken by default.
+ */
+handle('call:screen-sources', async (): Promise<ScreenSource[]> => {
+  const sources = await desktopCapturer.getSources({
+    types: ['screen', 'window'],
+    thumbnailSize: { width: 320, height: 200 },
+    fetchWindowIcons: false
+  });
+
+  return sources
+    .filter((source) => !source.thumbnail.isEmpty())
+    .map((source) => ({
+      id: source.id,
+      name: source.name,
+      kind: source.id.startsWith('screen:') ? ('screen' as const) : ('window' as const),
+      thumbnail: source.thumbnail.toDataURL()
+    }));
+});
+
 /**
  * Tests a specific address and reports which transports survive the network.
  *
@@ -2941,7 +4756,7 @@ ipcMain.handle('chat:mark-seen', (_event, roomId: string): ActionResult => {
  * broadcast filtered but direct traffic fine, UDP filtered but TCP fine, or
  * client isolation, where nothing gets through and no application can help.
  */
-ipcMain.handle('network:test', async (_event, host: string): Promise<ConnectivityResult> => {
+handle('network:test', async (_event, host: string): Promise<ConnectivityResult> => {
   const target = host.trim();
 
   if (!getSettings().online) {
@@ -2950,7 +4765,7 @@ ipcMain.handle('network:test', async (_event, host: string): Promise<Connectivit
       tcpReachable: false,
       udpReplied: false,
       verdict: 'unreachable',
-      detail: 'The shared clipboard is switched off on this device, so nothing can be tested. Turn it on from the header and run this again.'
+      detail: 'Campus Connect is switched off on this device, so nothing can be tested. Turn it on from the header and run this again.'
     };
   }
 
@@ -3017,19 +4832,19 @@ ipcMain.handle('network:test', async (_event, host: string): Promise<Connectivit
   };
 });
 
-ipcMain.handle('update:check', async (): Promise<UpdateStatus> => {
+handle('update:check', async (): Promise<UpdateStatus> => {
   const status = (await updater?.check(true)) ?? { state: 'idle' as const, currentVersion: app.getVersion() };
   sendStateToRenderer();
   return status;
 });
 
-ipcMain.handle('update:download', async (): Promise<UpdateStatus> => {
+handle('update:download', async (): Promise<UpdateStatus> => {
   const status = (await updater?.download()) ?? { state: 'idle' as const, currentVersion: app.getVersion() };
   sendStateToRenderer();
   return status;
 });
 
-ipcMain.handle('update:install', (): ActionResult => {
+handle('update:install', (): ActionResult => {
   if (!Updater.canSelfInstall) {
     shell.openExternal(`${APP_INFO.repositoryUrl}/releases/latest`);
     return ok('Opened the download page — macOS needs the update installed by hand.');
@@ -3064,9 +4879,9 @@ ipcMain.handle('update:install', (): ActionResult => {
   return ok('Restarting to finish the update…');
 });
 
-ipcMain.handle('storage:stats', (): StorageStats => historyManager.stats());
+handle('storage:stats', (): StorageStats => historyManager.stats());
 
-ipcMain.handle('storage:compact', (): ActionResult => {
+handle('storage:compact', (): ActionResult => {
   const settings = getSettings();
   const cleared = compactStorage();
   sendStateToRenderer();
@@ -3078,10 +4893,10 @@ ipcMain.handle('storage:compact', (): ActionResult => {
   );
 });
 
-ipcMain.handle('clipboard:read', () => readClipboardText());
+handle('clipboard:read', () => readClipboardText());
 
 /** Copy a history entry back onto this machine's clipboard. */
-ipcMain.handle('clipboard:apply', (_event, entryId: string): ActionResult => {
+handle('clipboard:apply', (_event, entryId: string): ActionResult => {
   const entry = historyManager.getClipboardHistory().find((candidate) => candidate.id === entryId);
   if (!entry) {
     return fail('That item is no longer in history.');
@@ -3109,7 +4924,7 @@ ipcMain.handle('clipboard:apply', (_event, entryId: string): ActionResult => {
 });
 
 /** Share whatever is on the clipboard right now, without waiting for the poller. */
-ipcMain.handle('clipboard:share-now', (): ActionResult => {
+handle('clipboard:share-now', (): ActionResult => {
   const offline = requireOnline();
   if (offline) {
     return offline;

@@ -1,8 +1,8 @@
-# Shared Clipboard — Architecture & Developer Guide
+# Campus Connect — Architecture & Developer Guide
 
 ## 1. Overview
 
-**Shared Clipboard** is a cross-platform desktop application (Electron + TypeScript + React) that
+**Campus Connect** is a cross-platform desktop application (Electron + TypeScript + React) that
 synchronises the clipboard and a chat channel between laptops on the same local network. Copy on one
 machine, press `Ctrl+V` on another.
 
@@ -18,6 +18,12 @@ without the password cannot read it even though they receive the same broadcast 
 | Rooms | Public (open) and private (join code **or** password, plus owner approval) |
 | Security | AES-256-GCM per room, key derived from the password with scrypt |
 | Membership | Owner-authoritative roster, approval queue, remove member, leave/close room |
+| Room admin | Owner can rename, retype, reissue the join code, and re-key the room |
+| Calls | Voice, video and screen sharing over WebRTC, full mesh, up to 6 devices |
+| Remote desktop | View or drive another member's screen, approved per session on the host |
+| Privacy | Per-device blocking, applied before anything arriving is acted on |
+| Phone access | One room served to a phone browser on the LAN, PIN-gated and opt-in |
+| Productivity | Global quick-paste overlay, command palette, snippets, cross-room search |
 | History | Per-room clipboard history and chat, persisted across restarts |
 | Discovery | UDP broadcast on the LAN, plus direct TCP connections by address |
 | Desktop | System tray, start on login, light/dark theming |
@@ -34,6 +40,7 @@ without the password cannot read it even though they receive the same broadcast 
 | Bundler | Vite 6 (renderer), `tsc` (main process) |
 | Transport | Node.js `dgram` (UDP) and `net` (TCP), no external networking library |
 | Cryptography | Node.js `crypto` — scrypt + AES-256-GCM, no external crypto library |
+| Input injection | `@jitsi/robotjs` — N-API, loaded lazily and optional (see §6.10) |
 | Persistence | electron-store |
 | Packaging | electron-builder (NSIS / DMG / AppImage) |
 
@@ -42,7 +49,7 @@ without the password cannot read it even though they receive the same broadcast 
 ## 3. Directory structure
 
 ```
-shared-clipboard-desktop/
+campus-connect-desktop/
 ├── src/
 │   ├── main/                     # Electron main process (Node context)
 │   │   ├── main.ts               # App lifecycle, UDP protocol, IPC handlers
@@ -53,7 +60,7 @@ shared-clipboard-desktop/
 │   │   ├── historyManager.ts     # Clipboard/chat history with per-room caps
 │   │   ├── clipboardStore.ts     # Electron clipboard read/write
 │   │   ├── systemInfo.ts         # Device name from the OS
-│   │   └── global.d.ts           # window.sharedClipboard typing
+│   │   └── global.d.ts           # window.campusConnect typing
 │   ├── renderer/                 # React UI
 │   │   ├── main.tsx              # React entry point
 │   │   ├── App.tsx               # Root component, state, events, routing
@@ -100,7 +107,7 @@ globals. `src/shared` is compiled into both.
                                    │  contextBridge (preload.ts)
 ┌──────────────────────────────────┼───────────────────────────────────┐
 │                      Renderer process (Chromium)                     │
-│   App.tsx ── sidebar / panels / modals ── window.sharedClipboard     │
+│   App.tsx ── sidebar / panels / modals ── window.campusConnect       │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -176,6 +183,10 @@ proof = AES-256-GCM(roomKey, "shared-clipboard:proof:<roomId>")
 The owner opens it with its own key and compares against the expected plaintext using
 `timingSafeEqual`. Only a device holding the right key can produce an envelope the owner can open,
 so the owner learns "this device knows the password" without the password ever crossing the wire.
+
+That constant still carries the project's former name. It is deliberately frozen: it is never shown
+to anyone, it exists only to keep a proof from being confused with any other sealed value, and
+changing it would break every device that has not been updated yet in exchange for nothing.
 Binding the proof to the `roomId` stops a proof captured from one room being replayed at another.
 
 ### 5.5 The admission gate
@@ -248,6 +259,7 @@ behaviour, so the app now says so explicitly and Settings → Network explains i
 | `room-reject` | owner → joiner | Refused; carries a human-readable reason |
 | `room-roster` | owner → members | Authoritative roster after any change |
 | `room-leave` | member → owner | Voluntary departure |
+| `room-rekey` | owner → members | Credentials changed; drop the key you hold |
 | `room-closed` | owner → members | Room deleted |
 | `clipboard` | member → room | Clipboard payload |
 | `chat` | member → room | Chat message |
@@ -257,6 +269,8 @@ behaviour, so the app now says so explicitly and Settings → Network explains i
 | `room-invite-accept` | invitee → owner | Accepted; the owner still has to approve |
 | `room-invite-decline` | invitee → owner | Declined |
 | `chat-receipt` | recipient → sender | Delivered and seen acknowledgements |
+| `call` | member → room, or one device | Every call setup step (see §6.7) |
+| `remote` | member → one device | Remote desktop setup. Always addressed (see §6.10) |
 
 ### 6.2 The advert is deliberately thin
 
@@ -400,6 +414,171 @@ transfers (24), and chunk count (4096). A transfer that would breach a limit is 
 evicting someone else's. Completed transfer ids are remembered briefly, because chunks are broadcast
 *and* unicast — without that, the duplicate set would reassemble and deliver the same message twice.
 
+### 6.7 Calls
+
+Calls are the one feature where this protocol carries only the *setup*. The media travels over
+WebRTC, directly between the two machines.
+
+```
+Device A                                            Device B
+   │  user clicks call
+   │  main assigns a callId, records itself a participant
+   ├──── call { kind: 'ring', callId, mode } ──────────▶│   rings
+   │                                                    │
+   │                        ◀──── call { kind: 'join' } ┤   answered
+   │                                                    │
+   │  both create an RTCPeerConnection with two         │
+   │  transceivers (audio + video), then negotiate:     │
+   │                                                    │
+   ├──── call { kind: 'sdp', to, offer } ──────────────▶│
+   │◀─── call { kind: 'sdp', to, answer } ──────────────┤
+   │◀─── call { kind: 'ice', to, candidate } ──────────▶│
+   │                                                    │
+   ╞════════ SRTP audio / video, peer to peer ══════════╡
+```
+
+Every signal is a `call` wire message carrying one `CallSignal`, and travels through exactly the
+same gate as a chat message: `handleRoomPayload` refuses it unless both devices are accepted members
+of the room, and in an encrypted room the body is sealed with the room key like everything else. A
+signal with a `to` field is unicast to that device when its address is known, which for ICE — much
+the chattiest of them — it almost always is.
+
+The sender's identity always comes from the enclosing wire message, never from the signal body, so
+no signal can be sent on another device's behalf.
+
+**Signal kinds**
+
+| Kind | Meaning |
+|------|---------|
+| `ring` | The sender is in the call and wants the room to ring |
+| `join` | The sender is in the call. Also the heartbeat, re-sent every 5 s |
+| `here` | Sent back to a newcomer by everyone already in, so it learns the roster |
+| `leave` | The sender is out |
+| `decline` | The ring was refused |
+| `sdp` | An offer or an answer, addressed to one device |
+| `ice` | One ICE candidate, addressed to one device |
+| `device` | What the sender is currently sending: mic, camera, screen |
+
+**No ICE servers.** `iceServers` is deliberately empty. STUN exists to discover your address as seen
+from outside a NAT and TURN exists to relay when no direct path can be found; on the same network
+neither problem exists, so connections are made from host candidates alone. That is what lets a call
+work with the internet unplugged.
+
+For the same reason the app starts Chromium with `--disable-features=WebRtcHideLocalIpsWithMdns`.
+Chromium otherwise replaces local IPs in ICE candidates with generated `*.local` mDNS hostnames —
+correct for a browser, fatal here, because it would make every call depend on mDNS resolution
+working on both ends, and multicast is exactly what a campus network filters. Nothing is exposed by
+this that the app does not already broadcast every three seconds by design.
+
+**Both transceivers up front.** Each connection is created with an audio *and* a video transceiver,
+even for a voice call. An empty video transceiver costs nothing while no track is attached, and
+having it there means turning the camera on, or starting a screen share, is a `replaceTrack` on a
+sender that already exists — no new m-line, no renegotiation, and no chance of the two ends
+disagreeing about the shape of the session mid-call.
+
+**Glare** is handled with the standard *perfect negotiation* pattern. Politeness is decided by
+comparing the two device ids, so both ends reach the same answer without exchanging a word about it,
+and two people joining at the same moment — the normal way a collision happens — resolves itself.
+
+**Liveness.** A laptop whose lid closes mid-call never says goodbye. Each participant re-announces
+itself every 5 seconds and anyone who stops is dropped after 20; a call left with nobody in it ends
+by itself. `CallManager` (main process, Electron-free, unit-tested) holds that picture and nothing
+else — it never touches media.
+
+### 6.8 Blocking
+
+Blocking is enforced in exactly one place: `receiveMessage`, before the packet is counted, stored,
+shown or answered.
+
+```ts
+if (isBlocked(message.deviceId)) {
+  return;
+}
+```
+
+One check rather than a condition in each handler, because spreading the decision across twenty
+handlers is how one of them ends up forgotten — and a block that leaks in one place is not a block.
+
+Blocking also removes the device from every room **this** device owns, since refusing to listen
+while the blocked party carries on reading your messages would be worth very little. Rooms owned by
+someone else are outside this device's authority, and the UI says so rather than implying a
+guarantee that does not exist.
+
+### 6.9 Re-keying a room
+
+`room-rekey` exists because the roster cannot say the one thing that matters when a password
+changes: *the key you are holding is no longer the room's key*.
+
+The notice is sealed with the key the room had **before** the change, so only devices already in the
+room can read it — and it deliberately does not carry the new key. Every member has to be given the
+new password. That is what makes changing a password a way of shutting someone out, rather than a
+way of renaming the lock while every old copy of the key keeps working.
+
+On receipt a member keeps the room and its history, drops its key, and the room reports as locked
+until the new password is entered.
+
+### 6.10 Remote desktop
+
+Structurally a one-to-one call whose camera is a screen, plus a data channel carrying input. It is
+kept separate from the call engine because almost every decision differs: one peer instead of a
+mesh, video in one direction, a codec profile tuned for text rather than faces, and a permission
+model where one side is doing something to the other.
+
+```
+Controller                                        Host
+   │  clicks "Screen" next to a member
+   ├──── remote { kind: 'request', sessionId } ──────▶│
+   │                                                  │  dialog: who is asking,
+   │                                                  │  which screen, view or control
+   │                                                  │  ── a person answers ──
+   │◀─── remote { kind: 'grant', grant, screen } ─────┤
+   │                                                  │  captures the chosen screen
+   │◀─── remote { kind: 'sdp', offer } ───────────────┤
+   ├──── remote { kind: 'sdp', answer } ─────────────▶│
+   │◀─── remote { kind: 'ice' } ─────────────────────▶│
+   │                                                  │
+   │◀════════ screen video (SRTP) ════════════════════╡
+   ╞════════ input (DTLS data channel) ══════════════▶│
+                                                      │
+                                          main process gate → robotjs
+```
+
+**Approval is per session and given by a person.** There is no stored consent, no setting that
+leaves a machine open, and — deliberately — no code path from a message arriving on the network to
+screen capture starting. `remote:respond` is reachable only from the dialog.
+
+**One gate.** `RemoteSessionManager.mayInject` is the single decision between an event arriving and
+the mouse moving. It requires all of: a live session, this device being the *host* rather than the
+controller, the session id matching, the sender matching, and `grant === 'control'`. It is written
+as one expression of positives so that a later condition cannot accidentally widen it, and it is the
+most heavily tested function in the codebase.
+
+**Normalised coordinates.** Pointer positions cross as fractions of the shared screen, never pixels.
+The controller does not know the host's resolution, the host may change it mid-session, and the
+viewer is almost certainly scaled to fit a window. On arrival they are clamped into the shared
+display's bounds — a hostile or simply buggy controller must not be able to fling the pointer onto
+another monitor.
+
+**Held keys are tracked and released.** A session ending while Ctrl is down — the controller's window
+losing focus mid Ctrl+C is enough — would otherwise leave the host with a permanently held modifier
+and no idea why the keyboard had stopped working. Every session end funnels through one function
+that releases before anything else.
+
+**Getting out.** A global shortcut (`Ctrl+Alt+Shift+X`) is registered for the duration of a hosted
+session and given back when it ends. This is the case that matters: while someone else is moving the
+mouse, clicking a button in this app may be exactly what cannot be done.
+
+**Whole screens only.** A window can be moved or covered at any moment, so a click on a picture of
+one cannot honestly be mapped back to a point on the desktop. Windows stay shareable in a call,
+where nobody is clicking on them.
+
+**The native module.** Input injection is the one thing Electron does not provide. `@jitsi/robotjs`
+is N-API, which is ABI-stable across Node *and* Electron, and ships prebuilt binaries via
+`prebuildify` — so there is no `electron-rebuild` step and no node-gyp toolchain in CI. It is
+`require`d lazily inside a `try`, the first time control is wanted rather than at startup, and a
+failure degrades to view-only rather than breaking anything. Wayland (which refuses synthetic input
+outright) and macOS without Accessibility are both detected and reported in words, not swallowed.
+
 ---
 
 ## 7. Core modules
@@ -439,12 +618,84 @@ would otherwise hit disk every second. Images larger than 256 KB stay in memory 
 to disk. Consecutive identical clipboard entries are suppressed, which is what stops the polled
 clipboard producing duplicates.
 
+### `callManager.ts`
+Who is in which call — and nothing else. No media, no Electron imports, no persistence: a call
+cannot survive a restart, and a stale one would be worse than none. Participants that stop
+announcing themselves are swept after 20 s, and a call left empty ends itself. Unit-tested against
+an injected clock.
+
+### `migrate.ts`
+Electron names the per-user data directory after the application, so renaming the app to Campus
+Connect moved it. On first run under the new name this copies the previous directory across —
+device identity, rooms, derived keys and history — so the rename does not read as a fresh install.
+It only ever runs when the new directory has no settings file of its own, it leaves the old
+directory in place so the previous build still works, and a failure is logged rather than fatal.
+
+### `remoteSession.ts`
+Who may drive what. One session at a time in either role, the per-session approval queue, and
+`mayInject` — the single gate every input event passes. No Electron, no native module, exhaustively
+tested.
+
+### `remoteControl.ts`
+Key translation, coordinate mapping, event validation, and the injector itself. The injector is
+built by dependency injection — `createInjector(robot, getBounds)` — so the whole path can be tested
+against a fake that records what it was asked to do. Given this is the code that lets another
+machine type on your keyboard, being able to test it exhaustively is worth the indirection.
+
+### `remoteInput.ts`
+The only place the native module is touched. Lazy `require`, capability detection (Wayland, macOS
+Accessibility, load failure), and display bounds read fresh on every event so a screen being resized
+or unplugged mid-session cannot leave the pointer mapped into a rectangle that no longer exists.
+
+### `phoneSession.ts`
+The whole security boundary of phone access: PIN generation, constant-time
+comparison, brute-force lockout, token issue and expiry, per-room scoping. The
+rate limit is the load-bearing part — a six-digit PIN is a million possibilities,
+which an unthrottled attacker on the same WiFi exhausts in seconds, so the PIN is
+only meaningful because guessing is made slow. Electron-free and heavily tested.
+
+### `phoneServer.ts`
+A small HTTP server on port 37778, off unless switched on. Serves one
+self-contained page and four JSON endpoints. The token travels in an
+`Authorization` header rather than a cookie, so there is no CSRF surface at all;
+bodies are bounded before they are buffered; failures pause before answering.
+
+**This is the one place the app hands out plaintext.** A browser cannot hold the
+room key, so the desktop decrypts and serves. That is documented in the interface
+rather than hidden, and the exposure is bounded by being opt-in, single-room,
+PIN-gated, expiring and revocable.
+
+### `snippetManager.ts`
+The snippet library and, more to the point, its ranking: recently used first, then
+most used, then newest. A library that always shows the same alphabetical list is
+one you stop opening. Electron-free and tested against an injected clock.
+
+### `quickPaste.ts`
+The overlay window and its global hotkey. A second `BrowserWindow` rather than a
+panel in the first, because the requirement that shapes everything else is that
+it works while the main window is closed. Built hidden at startup — creating it
+lazily would put the cost of starting a renderer between the keypress and the
+first frame, which for a feature whose whole value is being instant is the wrong
+trade.
+
+### `contentType.ts` (shared)
+Works out what a copied string actually is — link, colour, code, JSON, email,
+number — so it can be rendered and acted on accordingly. Deliberately
+conservative: every pattern is anchored to the whole string, because a wrong
+guess puts an "Open" button on a sentence. `isOpenableUrl` is the gate on the
+link action and permits `http` and `https` only.
+
+### `callEngine.ts` (renderer)
+The media half of a call: `RTCPeerConnection` per participant, perfect negotiation, mic and camera
+capture, mute and camera toggles, screen share by `replaceTrack`, and cleanup that actually releases
+the camera. Lives in the renderer because that is the only process with a media engine.
+
 ---
 
 ## 8. IPC API
 
-Declared once in `src/shared/bridge.ts` as `SharedClipboardApi`, implemented in `preload.ts`, and
-used by the renderer as `window.sharedClipboard`. One contract, three consumers, no drift.
+Declared once in `src/shared/bridge.ts` as `CampusConnectApi`, implemented in `preload.ts`, and
+used by the renderer as `window.campusConnect`. One contract, three consumers, no drift.
 
 **State** — `getState`, `updateDeviceName`, `updateSettings`, `connectPeer`
 
@@ -560,7 +811,7 @@ The default Electron menu bar is removed (`Menu.setApplicationMenu(null)`); DevT
 
 ## 10. Data persistence
 
-electron-store, at `%APPDATA%/shared-clipboard-desktop/config.json` on Windows:
+electron-store, at `%APPDATA%/campus-connect-desktop/config.json` on Windows:
 
 ```jsonc
 {

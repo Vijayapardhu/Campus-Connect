@@ -207,10 +207,22 @@ jobs:
         id: notes
         run: |
           VERSION="${{ github.event.inputs.tag || github.ref_name }}"
+          PROTOCOL=$(grep -oP 'PROTOCOL_VERSION\s*=\s*\K[0-9]+' src/shared/types.ts)
+          PREVIOUS=$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)
+
+          # Whether the wire protocol moved since the last release. If it did,
+          # devices on the old version cannot talk to this one at all, and that
+          # has to be the first thing anybody reads — not a line in a changelog.
+          BREAKING=""
+          if [ -n "$PREVIOUS" ] && git show "${PREVIOUS}:src/shared/types.ts" > /tmp/prev-types.ts 2>/dev/null; then
+            PREVIOUS_PROTOCOL=$(grep -oP 'PROTOCOL_VERSION\s*=\s*\K[0-9]+' /tmp/prev-types.ts || echo "$PROTOCOL")
+            [ "$PROTOCOL" != "$PREVIOUS_PROTOCOL" ] && BREAKING="$PREVIOUS_PROTOCOL"
+          fi
+
           {
-            echo "## Shared Clipboard ${VERSION}"
+            echo "## Campus Connect ${VERSION}"
             echo
-            echo "Copy on one machine, paste on another. Encrypted, room-based, and entirely on your own network."
+            echo "Clipboard, chat, files, calls and remote desktop between the devices on your own network. No cloud, no account, no internet required."
             echo
             echo "### Download"
             echo
@@ -223,12 +235,25 @@ jobs:
             echo "Install it on **both** machines you want to sync, then create a room on one and join it from the other."
             echo
             echo "> The installers are not code-signed, so Windows SmartScreen shows a warning — choose **More info → Run anyway**. On macOS, right-click the app and choose **Open** the first time. On Ubuntu, \`chmod +x\` the AppImage before running it."
-            echo
-            echo "### What changed"
           } > notes.md
 
+          if [ -n "$BREAKING" ]; then
+            {
+              echo
+              echo "### ⚠️ Every device has to be updated"
+              echo
+              echo "This release changes the network protocol (v${BREAKING} → v${PROTOCOL}). A device still on the previous version **cannot see or talk to** a device on this one — it will report a version mismatch rather than half-working."
+              echo
+              echo "Install this on every machine before expecting any of them to find each other."
+            } >> notes.md
+          fi
+
+          {
+            echo
+            echo "### What changed"
+          } >> notes.md
+
           # Everything since the previous tag, minus the noise.
-          PREVIOUS=$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)
           if [ -n "$PREVIOUS" ]; then
             echo >> notes.md
             git log --no-merges --pretty='- %s' "${PREVIOUS}..${VERSION}" >> notes.md
@@ -252,7 +277,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          name: Shared Clipboard ${{ github.event.inputs.tag || github.ref_name }}
+          name: Campus Connect ${{ github.event.inputs.tag || github.ref_name }}
           body_path: notes.md
           files: installers/*
           draft: false

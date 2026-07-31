@@ -9,8 +9,10 @@ import type {
 import { REACTION_CHOICES } from '../shared/types';
 import { Badge, Button, Callout, EmptyState } from './ui';
 import { clockTime, formatBytes, initials, relativeTime, truncate } from './format';
+import { detectContent, isOpenableUrl, type ContentInfo } from '../shared/contentType';
 import {
   AlertIcon,
+  BookmarkIcon,
   ChatIcon,
   CheckAllIcon,
   CheckIcon,
@@ -21,7 +23,10 @@ import {
   ExitIcon,
   FileIcon,
   ImageIcon,
+  GlobeIcon,
   LockIcon,
+  MailIcon,
+  MonitorIcon,
   PaperclipIcon,
   PencilIcon,
   PinIcon,
@@ -46,6 +51,9 @@ export function ClipboardPanel({
   onCopy,
   onDelete,
   onTogglePin,
+  onSaveSnippet,
+  onOpenUrl,
+  quickPasteShortcut,
   onShareNow,
   onClear
 }: {
@@ -57,6 +65,12 @@ export function ClipboardPanel({
   onCopy: (entryId: string) => void;
   onDelete: (entryId: string) => void;
   onTogglePin: (entryId: string) => void;
+  /** Keeps this text permanently, out of the way of the retention sweep. */
+  onSaveSnippet: (text: string) => void;
+  /** Opens a copied link in the system browser. http/https only. */
+  onOpenUrl: (url: string) => void;
+  /** Shown as a hint. Empty when the global shortcut is switched off. */
+  quickPasteShortcut: string;
   onShareNow: () => void;
   onClear: () => void;
 }) {
@@ -119,11 +133,23 @@ export function ClipboardPanel({
         </Button>
       </div>
 
-      <span className="text-sm text-secondary">
-        {needle
-          ? `${visible.length} of ${entries.length} ${entries.length === 1 ? 'item' : 'items'}`
-          : `${entries.length} ${entries.length === 1 ? 'item' : 'items'}`}
-      </span>
+      <div className="row">
+        <span className="text-sm text-secondary">
+          {needle
+            ? `${visible.length} of ${entries.length} ${entries.length === 1 ? 'item' : 'items'}`
+            : `${entries.length} ${entries.length === 1 ? 'item' : 'items'}`}
+        </span>
+        <span className="spacer" />
+        {/* The shortcut is the fastest way to use any of this and is invisible
+            until someone happens to read the settings. It sits here, quietly,
+            where the eye already is. */}
+        {quickPasteShortcut ? (
+          <span className="hint-inline">
+            <BookmarkIcon size={13} />
+            Press <kbd>{quickPasteShortcut.replace(/\+/g, ' + ')}</kbd> anywhere to paste from here
+          </span>
+        ) : null}
+      </div>
 
       {visible.length === 0 ? (
         <EmptyState
@@ -135,13 +161,27 @@ export function ClipboardPanel({
       ) : (
         <div className="feed">
           {visible.map((entry) => (
-            <article
+            <ClipCard
               key={entry.id}
-              className={entry.pinned ? 'clip is-pinned is-clickable' : 'clip is-clickable'}
+              className={[
+                'clip is-clickable',
+                entry.pinned ? 'is-pinned' : '',
+                // An image needs the full width; a line of text does not.
+                entry.kind === 'image' ? 'has-image' : ''
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              data-kind={entry.kind === 'image' ? 'image' : detectContent(entry.text).kind}
               // The most common action by far, so the whole card does it rather
               // than a small button you have to hover for.
               onClick={() => onCopy(entry.id)}
               onKeyDown={(event) => {
+                // Only when the card itself has focus. Otherwise pressing Enter
+                // on one of the action buttons would copy the card as well as
+                // doing whatever the button does.
+                if (event.target !== event.currentTarget) {
+                  return;
+                }
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault();
                   onCopy(entry.id);
@@ -151,49 +191,6 @@ export function ClipboardPanel({
               tabIndex={0}
               title="Click to copy"
             >
-              <header className="clip__head">
-                <span className={entry.deviceId === deviceId ? 'clip__author is-me' : 'clip__author'}>
-                  {entry.deviceId === deviceId ? 'You' : entry.deviceName}
-                </span>
-                <span className="clip__time">{relativeTime(entry.timestamp)}</span>
-                {entry.pinned ? (
-                  <Badge tone="accent">
-                    <PinIcon size={10} />
-                    Pinned
-                  </Badge>
-                ) : null}
-                {entry.kind === 'image' ? <Badge>Image</Badge> : null}
-                <span className="spacer" />
-                <div
-                  className={entry.pinned ? 'clip__actions is-visible' : 'clip__actions'}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <Button
-                    size="sm"
-                    icon
-                    variant={entry.pinned ? 'primary' : 'default'}
-                    onClick={() => onTogglePin(entry.id)}
-                    aria-label={entry.pinned ? 'Unpin' : 'Pin so it is never cleared out'}
-                    title={entry.pinned ? 'Unpin' : 'Pin'}
-                  >
-                    <PinIcon size={14} />
-                  </Button>
-                  <Button size="sm" icon onClick={() => onCopy(entry.id)} aria-label="Copy to clipboard" title="Copy">
-                    <CopyIcon size={14} />
-                  </Button>
-                  <Button
-                    size="sm"
-                    icon
-                    variant="ghost"
-                    onClick={() => onDelete(entry.id)}
-                    aria-label="Remove from history"
-                    title="Remove"
-                  >
-                    <TrashIcon size={14} />
-                  </Button>
-                </div>
-              </header>
-
               {entry.kind === 'image' ? (
                 entry.dataUrl ? (
                   <img className="clip__image" src={entry.dataUrl} alt="Shared clipboard image" />
@@ -204,14 +201,295 @@ export function ClipboardPanel({
                   </div>
                 )
               ) : (
-                <pre className="clip__text">{truncate(entry.text, 2000)}</pre>
+                <ClipBody text={entry.text} onOpenUrl={onOpenUrl} />
               )}
-            </article>
+
+              {/*
+                * Metadata and actions sit at the foot and stay out of the way
+                * until wanted. The content is what you came to read; who copied
+                * it and when is almost never the question, and a row of buttons
+                * on every card turns a list into a control panel.
+                */}
+              <footer className="clip__foot" onClick={(event) => event.stopPropagation()}>
+                <span className="clip__meta">
+                  {entry.pinned ? <PinIcon size={11} /> : null}
+                  {entry.deviceId === deviceId ? 'You' : entry.deviceName}
+                  <span aria-hidden="true">·</span>
+                  {relativeTime(entry.timestamp)}
+                </span>
+                <span className="spacer" />
+                <div className="clip__actions">
+                  <Button
+                    size="sm"
+                    icon
+                    variant="ghost"
+                    onClick={() => onTogglePin(entry.id)}
+                    aria-label={entry.pinned ? 'Unpin' : 'Pin so it is never cleared out'}
+                    title={entry.pinned ? 'Unpin' : 'Pin'}
+                  >
+                    <PinIcon size={15} />
+                  </Button>
+                  {entry.kind === 'text' && entry.text ? (
+                    <Button
+                      size="sm"
+                      icon
+                      variant="ghost"
+                      onClick={() => onSaveSnippet(entry.text)}
+                      aria-label="Keep as a snippet"
+                      title="Keep as a snippet"
+                    >
+                      <BookmarkIcon size={15} />
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    icon
+                    variant="ghost"
+                    onClick={() => onDelete(entry.id)}
+                    aria-label="Remove from history"
+                    title="Remove"
+                  >
+                    <TrashIcon size={15} />
+                  </Button>
+                  <Button
+                    size="sm"
+                    icon
+                    variant="ghost"
+                    onClick={() => onCopy(entry.id)}
+                    aria-label="Copy to clipboard"
+                    title="Copy"
+                  >
+                    <CopyIcon size={15} />
+                  </Button>
+                </div>
+              </footer>
+            </ClipCard>
           ))}
         </div>
       )}
     </div>
   );
+}
+
+/** Grid rows the masonry is built from. Small enough to be invisible. */
+const ROW_PX = 8;
+/** Space between cards, added to each span rather than as a row gap. */
+const CARD_GAP_PX = 12;
+
+/**
+ * One card, with a footprint that does not depend on its contents.
+ *
+ * This is what stops hovering from throwing the page around. The visible surface
+ * is absolutely positioned, so when it grows it grows *over* its neighbours; the
+ * article behind it keeps a height measured while collapsed, and the grid row
+ * span is computed from that. Nothing below ever moves.
+ *
+ * The earlier attempt made the surface absolute without giving the article a
+ * height, so the article had no in-flow content left and collapsed to zero the
+ * instant you hovered it — taking every card below it upwards.
+ */
+function ClipCard({
+  className,
+  children,
+  ...rest
+}: React.HTMLAttributes<HTMLElement> & { className: string }) {
+  const innerRef = React.useRef<HTMLDivElement>(null);
+  const [span, setSpan] = React.useState(1);
+  /** Measurements taken while expanded would freeze the expanded size in. */
+  const hovering = React.useRef(false);
+
+  React.useLayoutEffect(() => {
+    const element = innerRef.current;
+    if (!element) {
+      return;
+    }
+
+    const measure = () => {
+      if (hovering.current) {
+        return;
+      }
+      const height = element.getBoundingClientRect().height;
+      setSpan(Math.max(1, Math.ceil((height + CARD_GAP_PX) / ROW_PX)));
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <article
+      {...rest}
+      className={className}
+      style={{ gridRowEnd: `span ${span}` }}
+      onMouseEnter={() => {
+        hovering.current = true;
+      }}
+      onMouseLeave={() => {
+        hovering.current = false;
+      }}
+    >
+      <div className="clip__inner" ref={innerRef}>
+        {children}
+      </div>
+    </article>
+  );
+}
+
+/** The type of an entry, in a word. Shown at the top of every card. */
+function kindLabel(entry: ClipboardHistoryEntry): string {
+  if (entry.kind === 'image') {
+    return 'Image';
+  }
+  const info = detectContent(entry.text);
+  return info.kind === 'text' ? 'Text' : info.label;
+}
+
+/**
+ * The leading icon. A colour swatch for a colour, because there is no word for
+ * "#4f46e5" that is faster to read than the colour itself.
+ */
+function ClipKindIcon({ entry }: { entry: ClipboardHistoryEntry }) {
+  if (entry.kind === 'image') {
+    return <ImageIcon size={13} />;
+  }
+
+  const info = detectContent(entry.text);
+  if (info.kind === 'color' && info.value) {
+    return <span className="clip__swatch" style={{ background: info.value }} aria-hidden="true" />;
+  }
+  if (info.kind === 'url') return <GlobeIcon size={13} />;
+  if (info.kind === 'email') return <MailIcon size={13} />;
+  if (info.kind === 'code' || info.kind === 'json') return <FileIcon size={13} />;
+  return <ClipboardIcon size={13} />;
+}
+
+/**
+ * What kind of thing this entry is, said in a badge.
+ *
+ * A colour gets the colour itself rather than the word — a swatch is the one
+ * label that is faster to read than any text could be.
+ */
+function ContentBadge({ info }: { info: ContentInfo }) {
+  if (info.kind === 'text') {
+    return null; // Labelling plain text "Text" tells nobody anything.
+  }
+
+  if (info.kind === 'color' && info.value) {
+    return (
+      <Badge>
+        <span className="clip__swatch" style={{ background: info.value }} aria-hidden="true" />
+        {info.value}
+      </Badge>
+    );
+  }
+
+  return <Badge tone={info.kind === 'url' ? 'accent' : 'neutral'}>{info.label}</Badge>;
+}
+
+/**
+ * The body of a text entry, rendered according to what it turned out to be.
+ *
+ * Code gets a monospace block because whitespace is meaningful in it; a link
+ * gets an action, because the thing you want to do with a copied link is
+ * usually to follow it rather than to paste it somewhere.
+ */
+/**
+ * How tall a clipped entry stands before it is cut.
+ *
+ * Measured against `scrollHeight` rather than `clientHeight`, so the answer does
+ * not change when the entry expands — comparing against the live height would
+ * flip the flag off the moment it grew and flicker the fade in and out.
+ */
+const CLIP_COLLAPSED_PX = 140;
+
+/**
+ * A block of copied text that says when there is more of it.
+ *
+ * The old behaviour cut anything past ~six lines with nothing to indicate it —
+ * so a truncated command looked exactly like a complete one, which is worse than
+ * useless for something you are about to paste. Now the tail fades out, and
+ * hovering (or focusing, for anyone not using a mouse) opens it up.
+ */
+function ClipText({ text, code }: { text: string; code: boolean }) {
+  const ref = React.useRef<HTMLPreElement>(null);
+  const [full, setFull] = React.useState(0);
+
+  React.useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) {
+      return;
+    }
+
+    /*
+     * The full height is measured, not guessed.
+     *
+     * Animating `max-height` to an arbitrary large number is what made this look
+     * broken: the browser eases towards 520px, so a 200px block reaches its real
+     * size a fifth of the way through and then appears to hang. Easing towards
+     * the height the content actually has makes the motion match the distance.
+     */
+    const measure = () => setFull(element.scrollHeight);
+    measure();
+
+    // The same text wraps to a different number of lines as the column width
+    // changes, so the measurement has to follow the layout.
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [text]);
+
+  const clipped = full > CLIP_COLLAPSED_PX + 2;
+
+  return (
+    <div
+      className={clipped ? 'clip__body is-clipped' : 'clip__body'}
+      style={clipped ? ({ ['--clip-full' as string]: `${full}px` } as React.CSSProperties) : undefined}
+    >
+      <pre ref={ref} className={code ? 'clip__text is-code' : 'clip__text'}>
+        {text}
+      </pre>
+      {clipped ? <span className="clip__more">more</span> : null}
+    </div>
+  );
+}
+
+function ClipBody({ text, onOpenUrl }: { text: string; onOpenUrl: (url: string) => void }) {
+  const info = detectContent(text);
+  // Generous now that the block scrolls when open; the cap is only a guard
+  // against rendering a multi-megabyte paste into the DOM.
+  const body = truncate(text, 6000);
+
+  if (info.kind === 'url' && info.value && isOpenableUrl(info.value)) {
+    const url = info.value;
+    return (
+      <div className="clip__link">
+        <span className="clip__link-text">{body}</span>
+        <Button
+          size="sm"
+          onClick={(event) => {
+            // The card itself copies on click; opening is a different intent.
+            event.stopPropagation();
+            onOpenUrl(url);
+          }}
+        >
+          Open
+        </Button>
+      </div>
+    );
+  }
+
+  if (info.kind === 'color' && info.value) {
+    return (
+      <div className="clip__color">
+        <span className="clip__color-chip" style={{ background: info.value }} aria-hidden="true" />
+        <code className="clip__text is-inline">{body}</code>
+      </div>
+    );
+  }
+
+  return <ClipText text={body} code={info.kind === 'code' || info.kind === 'json'} />;
 }
 
 // ----------------------------------------------------------------------- chat
@@ -832,6 +1110,9 @@ export function MembersPanel({
   onApprove,
   onReject,
   onRemove,
+  onBlock,
+  onRemoteRequest,
+  onEdit,
   onLeave,
   onCopyCode,
   onRequestQr,
@@ -848,6 +1129,12 @@ export function MembersPanel({
   onApprove: (memberId: string) => void;
   onReject: (memberId: string) => void;
   onRemove: (memberId: string) => void;
+  /** Refuses this device everywhere, not just in this room. */
+  onBlock: (memberId: string, memberName: string) => void;
+  /** Asks that device for its screen. They still have to allow it. */
+  onRemoteRequest: (memberId: string, memberName: string) => void;
+  /** Owner only. Opens the dialog for renaming, re-typing or re-keying. */
+  onEdit: () => void;
   onLeave: () => void;
   onCopyCode: (code: string) => void;
   onRequestQr: (roomId: string) => Promise<string | null>;
@@ -991,11 +1278,33 @@ export function MembersPanel({
               </div>
               <div className="member__meta">Joined {relativeTime(member.joinedAt)}</div>
             </div>
-            {isOwner && member.deviceId !== deviceId && (
+            {member.deviceId !== deviceId && (
               <div className="member__actions">
-                <Button size="sm" variant="danger" onClick={() => onRemove(member.deviceId)}>
-                  Remove
+                {/* Asking is always allowed; it is answering that is guarded,
+                    and that happens on the other machine. */}
+                <Button
+                  size="sm"
+                  onClick={() => onRemoteRequest(member.deviceId, member.deviceName)}
+                  title={`Ask ${member.deviceName} to share their screen`}
+                >
+                  <MonitorIcon size={14} />
+                  Screen
                 </Button>
+                {/* Blocking is a decision about a device, not about this room,
+                    so anyone can make it about anyone — unlike removal, which
+                    is the owner's to do. */}
+                <Button
+                  size="sm"
+                  onClick={() => onBlock(member.deviceId, member.deviceName)}
+                  title={`Stop dealing with ${member.deviceName} entirely`}
+                >
+                  Block
+                </Button>
+                {isOwner && (
+                  <Button size="sm" variant="danger" onClick={() => onRemove(member.deviceId)}>
+                    Remove
+                  </Button>
+                )}
               </div>
             )}
           </div>
@@ -1008,6 +1317,12 @@ export function MembersPanel({
             <h3 className="card__title">Security</h3>
             <p className="card__desc">How this room is protected on the network.</p>
           </div>
+          {isOwner && (
+            <Button size="sm" onClick={onEdit}>
+              <PencilIcon size={14} />
+              Edit room
+            </Button>
+          )}
         </div>
 
         <div className="stack">
@@ -1071,12 +1386,25 @@ export function MembersPanel({
             </div>
           )}
 
-          <div className="row row--end">
-            <Button variant="danger" onClick={onLeave}>
-              <ExitIcon size={15} />
-              {isOwner ? 'Close this room' : 'Leave room'}
-            </Button>
-          </div>
+          {/* Closing takes the room away from everyone in it; leaving only
+              takes it away from here. The distinction is worth spelling out
+              next to the button rather than only in the confirmation. */}
+          <Callout
+            tone="warning"
+            icon={<AlertIcon size={18} />}
+            title={isOwner ? 'Closing this room ends it for everyone' : 'Leaving removes it from this device'}
+            text={
+              isOwner
+                ? `${room.name} disappears from every device in it, and its history here is deleted. There is no way to undo it or to reopen the same room.`
+                : `You stop receiving anything shared in ${room.name} and its history on this device is deleted. You can rejoin later with the code and password.`
+            }
+            action={
+              <Button variant="danger" onClick={onLeave}>
+                <ExitIcon size={15} />
+                {isOwner ? 'Close room' : 'Leave room'}
+              </Button>
+            }
+          />
         </div>
       </section>
     </div>

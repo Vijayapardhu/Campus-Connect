@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 
-import type { SharedClipboardApi } from '../shared/bridge';
+import type { CampusConnectApi } from '../shared/bridge';
 
 declare global {
   interface Window {
-    sharedClipboard: SharedClipboardApi;
+    campusConnect: CampusConnectApi;
   }
 }
 

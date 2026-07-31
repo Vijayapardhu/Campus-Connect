@@ -1,6 +1,6 @@
-# Contributing to Shared Clipboard
+# Contributing to Campus Connect
 
-Thanks for being here. Shared Clipboard is open source because moving something
+Thanks for being here. Campus Connect is open source because moving something
 between two machines you already own is a problem plenty of people have, and
 very few good, private, offline answers exist for.
 

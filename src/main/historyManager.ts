@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import type { ChatMessage, ChatReplyTo, ClipboardHistoryEntry, StorageStats } from '../shared/types';
+import type {
+  ChatMessage,
+  ChatReplyTo,
+  ClipboardHistoryEntry,
+  SearchHit,
+  StorageStats
+} from '../shared/types';
 
 const MAX_CLIPBOARD_PER_ROOM = 100;
 const MAX_CHAT_PER_ROOM = 500;
@@ -244,6 +250,72 @@ export class HistoryManager {
     return roomId ? this.chat.filter((message) => message.roomId === roomId) : this.chat;
   }
 
+  /**
+   * Searching everything at once.
+   *
+   * Clipboard entries and chat messages are kept apart everywhere else, and when
+   * you are trying to find something that distinction is precisely what you do
+   * not want to have to make before you can start looking. So this searches both
+   * across every room and returns one list, newest first.
+   *
+   * Case-insensitive substring rather than anything cleverer: the things people
+   * look for here are URLs, commands and error messages, where a literal match
+   * is what is wanted and fuzzy matching mostly produces noise.
+   */
+  search(query: string, roomNames: Map<string, string>, limit = 200): SearchHit[] {
+    const needle = query.trim().toLowerCase();
+    if (needle.length === 0) {
+      return [];
+    }
+
+    const hits: SearchHit[] = [];
+
+    for (const entry of this.clipboard) {
+      const found = findExcerpt(entry.text, needle);
+      if (!found) {
+        continue;
+      }
+
+      hits.push({
+        kind: 'clipboard',
+        id: entry.id,
+        roomId: entry.roomId,
+        roomName: roomNames.get(entry.roomId) ?? 'A room you have left',
+        deviceName: entry.deviceName,
+        timestamp: entry.timestamp,
+        ...found,
+        hasMedia: Boolean(entry.dataUrl)
+      });
+    }
+
+    for (const message of this.chat) {
+      // A withdrawn message has no content to find, and surfacing it in a search
+      // would undo the withdrawal.
+      if (message.deleted) {
+        continue;
+      }
+
+      const found = findExcerpt(`${message.content} ${message.fileName ?? ''}`, needle);
+      if (!found) {
+        continue;
+      }
+
+      hits.push({
+        kind: 'chat',
+        id: message.id,
+        roomId: message.roomId,
+        roomName: roomNames.get(message.roomId) ?? 'A room you have left',
+        deviceName: message.deviceName,
+        timestamp: message.timestamp,
+        ...found,
+        fileName: message.fileName,
+        hasMedia: Boolean(message.dataUrl)
+      });
+    }
+
+    return hits.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
+  }
+
   deleteClipboardEntry(entryId: string): void {
     this.clipboard = this.clipboard.filter((entry) => entry.id !== entryId);
     this.scheduleFlush();
@@ -388,4 +460,40 @@ function stripHeavyDataUrl<T extends { dataUrl?: string }>(item: T): T {
     return { ...item, dataUrl: undefined };
   }
   return item;
+}
+
+/** How much of the surrounding line a hit carries, so a result reads in context. */
+const EXCERPT_BEFORE = 40;
+const EXCERPT_AFTER = 120;
+
+/**
+ * Finds a match and trims the value down to the part it is actually in.
+ *
+ * A clipboard entry can be a whole file, and showing its first line when the
+ * match is two thousand characters further down tells the reader nothing.
+ * Whitespace is flattened before searching rather than after, so the offsets
+ * come back correct for the string that is actually displayed — the match can
+ * then be highlighted rather than merely being somewhere in the excerpt.
+ */
+function findExcerpt(
+  text: string,
+  needle: string
+): { excerpt: string; matchStart: number; matchLength: number } | null {
+  const flattened = text.replace(/\s+/g, ' ').trim();
+  const at = flattened.toLowerCase().indexOf(needle);
+  if (at === -1) {
+    return null;
+  }
+
+  const start = Math.max(0, at - EXCERPT_BEFORE);
+  const end = Math.min(flattened.length, at + needle.length + EXCERPT_AFTER);
+
+  const head = start > 0 ? '…' : '';
+  const tail = end < flattened.length ? '…' : '';
+
+  return {
+    excerpt: `${head}${flattened.slice(start, end)}${tail}`,
+    matchStart: head.length + (at - start),
+    matchLength: needle.length
+  };
 }

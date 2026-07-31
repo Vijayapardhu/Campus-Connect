@@ -126,6 +126,20 @@ export class RoomManager {
     this.persist();
   }
 
+  /**
+   * Forgets a room's key without leaving the room.
+   *
+   * What happens on this device when the owner changes the password: the room
+   * stays, its history stays, and it reports as locked until the new password is
+   * entered. That is the whole point of changing a password — a device that
+   * carried on reading would make the change meaningless.
+   */
+  dropKey(roomId: string): void {
+    if (this.keys.delete(roomId)) {
+      this.persist();
+    }
+  }
+
   /** True when the room needs a key we do not hold — i.e. we cannot read it. */
   isLocked(roomId: string): boolean {
     const room = this.rooms.get(roomId);

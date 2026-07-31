@@ -6,39 +6,56 @@ import type {
   ChatMessage,
   ClipboardHistoryEntry,
   DiscoveredRoom,
+  RoomInfo,
   RoomInvite,
-  RoomType
+  RoomType,
+  SearchHit
 } from '../shared/types';
 import type { StatusTone } from '../shared/bridge';
 import { Sidebar } from './sidebar';
 import { ChatPanel, ClipboardPanel, MembersPanel } from './panels';
-import { CreateRoomModal, InviteModal, JoinRoomModal, UnlockRoomModal } from './modals';
+import { CreateRoomModal, EditRoomModal, InviteModal, JoinRoomModal, UnlockRoomModal } from './modals';
 import { SettingsPage } from './settings';
 import { Badge, Button, ConfirmModal, EmptyState } from './ui';
+import {
+  CallInProgressBanner,
+  CallStage,
+  IncomingCallModal,
+  ScreenPickerModal,
+  useCall
+} from './callui';
+import { RemoteHostBar, RemoteRequestModal, RemoteViewer, useRemote } from './remoteui';
+import { CommandPalette, type Command, type PaletteMode } from './palette';
 import { toFontStack } from './fonts';
 import {
   AlertIcon,
   ChatIcon,
   CheckCircleIcon,
+  ChevronLeftIcon,
   ClipboardIcon,
   GlobeIcon,
   InfoIcon,
   KeyIcon,
   LockIcon,
   MoonIcon,
+  BookmarkIcon,
+  MonitorIcon,
+  PhoneIcon,
   PlusIcon,
   PowerIcon,
   ShieldIcon,
   SignalIcon,
   SunIcon,
   UsersIcon,
+  VideoIcon,
   XCircleIcon,
   XIcon
 } from './icons';
 
-const api = window.sharedClipboard;
-
-type Tab = 'clipboard' | 'chat' | 'members';
+import { api } from './api';
+import { PhoneHome } from './phonehome';
+import { isPhoneClient } from './httpApi';
+type Tab = 'clipboard' | 'chat' | 'members' | 'call' | 'remote';
 type View = 'room' | 'settings';
 
 type Toast = { id: number; message: string; tone: StatusTone };
@@ -47,6 +64,7 @@ type ModalState =
   | { kind: 'create' }
   | { kind: 'join'; target: DiscoveredRoom | null }
   | { kind: 'unlock'; roomId: string }
+  | { kind: 'edit'; room: RoomInfo }
   | { kind: 'invite'; invite: RoomInvite }
   | { kind: 'confirm'; title: string; description: string; confirmLabel: string; action: () => void }
   | null;
@@ -95,7 +113,33 @@ export default function App() {
   const [view, setView] = React.useState<View>('room');
   const [modal, setModal] = React.useState<ModalState>(null);
   const [typing, setTyping] = React.useState<Record<string, { name: string; at: number }>>({});
+  const [screenPicker, setScreenPicker] = React.useState(false);
+  const [palette, setPalette] = React.useState<PaletteMode | null>(null);
+  /**
+   * Narrow screens cannot show the rail and the room at once, so they show one
+   * at a time and navigate between them. Anything wide enough ignores this
+   * entirely and keeps both on screen.
+   */
+  const [narrow, setNarrow] = React.useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 760px)').matches
+  );
+  const [showRooms, setShowRooms] = React.useState(true);
+
+  React.useEffect(() => {
+    const query = window.matchMedia('(max-width: 760px)');
+    const update = () => setNarrow(query.matches);
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
   const { toasts, push, dismiss } = useToasts();
+
+  const call = useCall({
+    deviceId: state?.deviceId ?? '',
+    startCallsMuted: state?.settings.startCallsMuted ?? false,
+    push
+  });
+
+  const remote = useRemote({ push });
 
   // Keep the room id in a ref so event handlers registered once still know
   // which room is on screen.
@@ -202,6 +246,37 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [typing]);
 
+  /*
+   * A call takes the screen when it starts and gives it back when it ends. It is
+   * the one thing in the app that is time-critical: leaving it in a tab the user
+   * has to go and find is how a call gets missed after it was answered.
+   */
+  const callId = call.session?.callId;
+  React.useEffect(() => {
+    if (callId) {
+      setView('room');
+      setTab('call');
+    } else {
+      setTab((current) => (current === 'call' ? 'chat' : current));
+    }
+  }, [callId]);
+
+  /*
+   * The controller's end of a remote session takes the screen the same way, and
+   * for the same reason. The host's end deliberately does not: its window is not
+   * the point, and taking it over would be one more thing in the way of someone
+   * trying to stop the session.
+   */
+  const remoteSessionId = remote.session?.role === 'controller' ? remote.session.sessionId : '';
+  React.useEffect(() => {
+    if (remoteSessionId) {
+      setView('room');
+      setTab('remote');
+    } else {
+      setTab((current) => (current === 'remote' ? 'members' : current));
+    }
+  }, [remoteSessionId]);
+
   // Acknowledge a room's messages while its chat is actually on screen.
   const chatVisible = view === 'room' && tab === 'chat' && Boolean(roomId);
   React.useEffect(() => {
@@ -250,7 +325,8 @@ export default function App() {
   // suppressed while a dialog is open or the caret is in a field, so they can
   // never fire mid-password.
   const roomIds = state?.rooms.map((candidate) => candidate.roomId).join(',') ?? '';
-  const modalOpen = modal !== null;
+  const modalOpen = modal !== null || palette !== null;
+  const controllingRemote = remote.session?.role === 'controller' && remote.session.grant === 'control';
   React.useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (!event.ctrlKey && !event.metaKey) {
@@ -259,12 +335,36 @@ export default function App() {
       if (modalOpen) {
         return;
       }
+      // While driving another machine every keystroke belongs to it, including
+      // the ones this app would otherwise claim.
+      if (controllingRemote) {
+        return;
+      }
 
       const target = event.target as HTMLElement | null;
       const typing =
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
         target?.isContentEditable === true;
+
+      /*
+       * Ctrl+K is the way in to everything. It works from a text field too —
+       * unlike the shortcuts below — because the whole point is that it is
+       * always available, including mid-sentence in the composer.
+       */
+      if (event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPalette('commands');
+        return;
+      }
+
+      // Ctrl+Shift+F searches every room; plain Ctrl+F filters the room you are
+      // looking at, which is the older and narrower behaviour.
+      if (event.key.toLowerCase() === 'f' && event.shiftKey) {
+        event.preventDefault();
+        setPalette('search');
+        return;
+      }
 
       if (event.key.toLowerCase() === 'f') {
         event.preventDefault();
@@ -302,7 +402,7 @@ export default function App() {
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [roomIds, modalOpen]);
+  }, [roomIds, modalOpen, controllingRemote]);
 
   async function run(action: Promise<ActionResult>): Promise<boolean> {
     const result = await action;
@@ -314,7 +414,7 @@ export default function App() {
     return (
       <div className="splash">
         <span className="splash__dot" />
-        <span>Starting Shared Clipboard…</span>
+        <span>Starting Campus Connect…</span>
       </div>
     );
   }
@@ -329,6 +429,207 @@ export default function App() {
     : 0;
   const memberCount = room?.members.filter((member) => member.status === 'accepted').length ?? 0;
 
+  /**
+   * Everything the palette can do.
+   *
+   * Built from the current state rather than a static list, so it only ever
+   * offers what is actually possible right now — no entry that fails when you
+   * pick it, which is the thing that makes a palette stop being trusted.
+   */
+  function buildCommands(): Command[] {
+    const list: Command[] = [];
+    const room = state!.rooms.find((candidate) => candidate.roomId === state!.currentRoomId);
+    const unlocked = room && !lockedRoomIds.has(room.roomId);
+    const online = state!.settings.online !== false;
+
+    for (const candidate of state!.rooms) {
+      if (candidate.roomId === state!.currentRoomId) {
+        continue;
+      }
+      list.push({
+        id: `room:${candidate.roomId}`,
+        label: `Switch to ${candidate.name}`,
+        hint: candidate.encrypted ? 'Encrypted room' : 'Room',
+        keywords: 'go open room switch',
+        icon: candidate.type === 'private' ? <LockIcon size={14} /> : <GlobeIcon size={14} />,
+        group: 'Rooms',
+        run: () => {
+          setView('room');
+          api.roomSwitch(candidate.roomId).then(() => setTab('clipboard'));
+        }
+      });
+    }
+
+    list.push(
+      {
+        id: 'room:new',
+        label: 'Create a room',
+        keywords: 'new add make',
+        icon: <PlusIcon size={14} />,
+        group: 'Rooms',
+        run: () => setModal({ kind: 'create' })
+      },
+      {
+        id: 'room:join',
+        label: 'Join a room with a code',
+        keywords: 'enter password invite',
+        icon: <KeyIcon size={14} />,
+        group: 'Rooms',
+        run: () => setModal({ kind: 'join', target: null })
+      }
+    );
+
+    if (room && unlocked && online) {
+      list.push(
+        {
+          id: 'clip:share',
+          label: 'Share my clipboard now',
+          hint: `To ${room.name}`,
+          keywords: 'send paste copy push',
+          icon: <ClipboardIcon size={14} />,
+          group: 'Clipboard',
+          run: () => run(api.clipboardShareNow())
+        },
+        {
+          id: 'chat:file',
+          label: 'Send a file',
+          hint: `To ${room.name}`,
+          keywords: 'attach upload document image',
+          icon: <ChatIcon size={14} />,
+          group: 'Chat',
+          run: () => run(api.chatSendFile(room.roomId))
+        }
+      );
+
+      if (memberCount > 1 && !call.session) {
+        list.push(
+          {
+            id: 'call:audio',
+            label: 'Start a voice call',
+            hint: room.name,
+            keywords: 'ring phone audio talk',
+            icon: <PhoneIcon size={14} />,
+            group: 'Calls',
+            run: () => call.start(room.roomId, 'audio')
+          },
+          {
+            id: 'call:video',
+            label: 'Start a video call',
+            hint: room.name,
+            keywords: 'ring camera face',
+            icon: <VideoIcon size={14} />,
+            group: 'Calls',
+            run: () => call.start(room.roomId, 'video')
+          }
+        );
+      }
+
+      if (call.session) {
+        list.push(
+          {
+            id: 'call:share',
+            label: call.session.local.sharing ? 'Stop sharing your screen' : 'Share your screen',
+            keywords: 'present monitor display',
+            icon: <MonitorIcon size={14} />,
+            group: 'Calls',
+            run: () => (call.session!.local.sharing ? call.stopSharing() : setScreenPicker(true))
+          },
+          {
+            id: 'call:leave',
+            label: 'Leave the call',
+            keywords: 'hang up end',
+            icon: <PhoneIcon size={14} />,
+            group: 'Calls',
+            run: () => call.leave()
+          }
+        );
+      }
+
+      for (const member of room.members) {
+        if (member.status !== 'accepted' || member.deviceId === state!.deviceId) {
+          continue;
+        }
+        list.push({
+          id: `remote:${member.deviceId}`,
+          label: `Ask ${member.deviceName} for their screen`,
+          hint: 'They have to allow it',
+          keywords: 'remote desktop control view',
+          icon: <MonitorIcon size={14} />,
+          group: 'Remote desktop',
+          run: () => remote.ask(room.roomId, member.deviceId)
+        });
+      }
+    }
+
+    if (remote.session) {
+      list.push({
+        id: 'remote:end',
+        label: 'End the remote session',
+        keywords: 'stop disconnect screen',
+        icon: <XIcon size={14} />,
+        group: 'Remote desktop',
+        run: () => remote.end()
+      });
+    }
+
+    for (const snippet of state!.snippets.slice(0, 12)) {
+      list.push({
+        id: `snippet:${snippet.id}`,
+        label: `Copy “${snippet.label || snippet.content.slice(0, 40)}”`,
+        hint: 'Snippet',
+        keywords: `snippet ${snippet.content}`,
+        icon: <BookmarkIcon size={14} />,
+        group: 'Snippets',
+        run: () => run(api.snippetCopy(snippet.id))
+      });
+    }
+
+    list.push(
+      {
+        id: 'app:online',
+        label: online ? 'Switch Campus Connect off' : 'Switch Campus Connect on',
+        hint: online ? 'Stops all sharing and discovery' : 'Start sharing and discovery',
+        keywords: 'network toggle power offline',
+        icon: <PowerIcon size={14} />,
+        group: 'App',
+        run: () => api.updateSettings({ online: !online }).then(setState)
+      },
+      {
+        id: 'app:theme',
+        label: 'Change the theme',
+        hint: `Currently ${theme}`,
+        keywords: 'dark light appearance',
+        icon: theme === 'dark' ? <MoonIcon size={14} /> : <SunIcon size={14} />,
+        group: 'App',
+        run: toggleTheme
+      },
+      {
+        id: 'app:settings',
+        label: 'Open settings',
+        keywords: 'preferences options config',
+        icon: <ShieldIcon size={14} />,
+        group: 'App',
+        run: () => setView('settings')
+      }
+    );
+
+    return list;
+  }
+
+  /** Takes a search hit back to where it came from. */
+  function openHit(hit: SearchHit) {
+    setView('room');
+    api.roomSwitch(hit.roomId).then(() => setTab(hit.kind === 'chat' ? 'chat' : 'clipboard'));
+  }
+
+  const session = call.session;
+  const callRoom = session ? state.rooms.find((r) => r.roomId === session.roomId) : undefined;
+  /** A call under way in the room on screen that this device has not joined. */
+  const roomCall = room
+    ? state.activeCalls.find((active) => active.roomId === room.roomId && active.callId !== session?.callId)
+    : undefined;
+  const canCall = online && room && !isLocked && memberCount > 1;
+
   function toggleTheme() {
     const next: AppSettings['theme'] =
       theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark';
@@ -336,19 +637,30 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div
+      className={['app', narrow ? 'is-narrow' : '', narrow && !showRooms ? 'is-room-open' : '']
+        .filter(Boolean)
+        .join(' ')}
+    >
+      {/* On a phone the rail is the home screen, so the two things you actually
+          picked up the phone to do lead it. */}
       <Sidebar
+        header={isPhoneClient() ? <PhoneHome push={push} /> : undefined}
         state={state}
         lockedRoomIds={lockedRoomIds}
         onSelectRoom={(id) => {
           setView('room');
+          setShowRooms(false);
           api.roomSwitch(id).then(() => setTab('clipboard'));
         }}
         onCreateRoom={() => setModal({ kind: 'create' })}
         onJoinByCode={() => setModal({ kind: 'join', target: null })}
         onJoinDiscovered={(target) => setModal({ kind: 'join', target })}
         onOpenInvite={(invite) => setModal({ kind: 'invite', invite })}
-        onOpenSettings={() => setView((current) => (current === 'settings' ? 'room' : 'settings'))}
+        onOpenSettings={() => {
+          setShowRooms(false);
+          setView((current) => (current === 'settings' ? 'room' : 'settings'));
+        }}
         settingsOpen={view === 'settings'}
       />
 
@@ -359,13 +671,33 @@ export default function App() {
               <div className="topbar__title">
                 <span className="topbar__name">Settings</span>
               </div>
-              <Button size="sm" variant="ghost" onClick={() => setView('room')}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setView('room');
+                  if (narrow && !room) {
+                    setShowRooms(true);
+                  }
+                }}
+              >
                 <XIcon size={14} />
                 Close
               </Button>
             </>
           ) : room ? (
             <>
+              {narrow ? (
+                <Button
+                  variant="ghost"
+                  icon
+                  onClick={() => setShowRooms(true)}
+                  aria-label="Back to rooms"
+                  title="Back to rooms"
+                >
+                  <ChevronLeftIcon size={17} />
+                </Button>
+              ) : null}
               <div className="topbar__title">
                 <span className="topbar__name">{room.name}</span>
               </div>
@@ -391,13 +723,40 @@ export default function App() {
             </>
           ) : (
             <div className="topbar__title">
-              <span className="topbar__name">Shared Clipboard</span>
+              <span className="topbar__name">Campus Connect</span>
             </div>
           )}
 
           <span className="topbar__spacer" />
 
           <div className="topbar__actions">
+            {/* Placing a call is a room action, so it lives beside the room's
+                name rather than in a menu. It is hidden rather than disabled
+                when there is nobody to call — a button that never works is
+                worse than one that is not there. */}
+            {view === 'room' && canCall && !session ? (
+              <>
+                <Button
+                  variant="ghost"
+                  icon
+                  onClick={() => call.start(room!.roomId, 'audio')}
+                  aria-label={`Start a voice call in ${room!.name}`}
+                  title="Start a voice call"
+                >
+                  <PhoneIcon size={15} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  icon
+                  onClick={() => call.start(room!.roomId, 'video')}
+                  aria-label={`Start a video call in ${room!.name}`}
+                  title="Start a video call"
+                >
+                  <VideoIcon size={15} />
+                </Button>
+              </>
+            ) : null}
+
             {online ? (
               <span
                 className="text-sm text-tertiary row"
@@ -466,8 +825,43 @@ export default function App() {
                 <span className="tabbar__count is-alert">{pendingCount}</span>
               ) : null}
             </button>
+            {session ? (
+              <button
+                className={tab === 'call' ? 'tabbar__tab is-active' : 'tabbar__tab'}
+                onClick={() => setTab('call')}
+              >
+                <PhoneIcon size={14} />
+                Call
+                <span className="tabbar__live" aria-label="on a call" />
+              </button>
+            ) : null}
+            {remote.session?.role === 'controller' ? (
+              <button
+                className={tab === 'remote' ? 'tabbar__tab is-active' : 'tabbar__tab'}
+                onClick={() => setTab('remote')}
+              >
+                <MonitorIcon size={14} />
+                {remote.session.peerName}
+                <span className="tabbar__live" aria-label="remote session running" />
+              </button>
+            ) : null}
           </nav>
         )}
+
+        {/* While this machine is being shared the bar is on screen whatever
+            else is, and cannot be dismissed — the one thing worse than not
+            knowing you are being watched is thinking you have stopped. */}
+        {remote.session?.role === 'host' ? (
+          <RemoteHostBar
+            session={remote.session}
+            onSetGrant={(grant) => remote.setGrant(grant)}
+            onEnd={() => remote.end()}
+          />
+        ) : null}
+
+        {view === 'room' && online && room && !isLocked && roomCall && !session ? (
+          <CallInProgressBanner call={roomCall} onJoin={() => call.join(roomCall.callId)} />
+        ) : null}
 
         {view === 'settings' ? (
           <div className="panel">
@@ -484,6 +878,23 @@ export default function App() {
                 });
               }}
               onCompactStorage={() => run(api.storageCompact())}
+              onUnblockDevice={(id) => run(api.unblockDevice(id))}
+              onSaveSnippet={(input) => run(api.snippetSave(input))}
+              onDeleteSnippet={(id) => run(api.snippetDelete(id))}
+              onCopySnippet={(id) => run(api.snippetCopy(id))}
+              onStartPhone={() => run(api.phoneStart())}
+              onStopPhone={() => run(api.phoneStop())}
+              onRevokePhone={(connectedAt) => run(api.phoneRevoke(connectedAt))}
+              onPhoneQr={() => api.phoneQrCode()}
+              onBlockDevice={(id, name) =>
+                setModal({
+                  kind: 'confirm',
+                  title: `Block ${name}?`,
+                  description: `Nothing from ${name} will be read, stored, shown or answered on this device again, and it will be removed from every room you own. You can unblock it here at any time.`,
+                  confirmLabel: 'Block device',
+                  action: () => run(api.blockDevice(id, name))
+                })
+              }
               onTestConnection={(host) => api.networkTest(host)}
               onCheckUpdate={() => {
                 api.updateCheck().then((status) => {
@@ -566,6 +977,30 @@ export default function App() {
               }
             />
           </div>
+        ) : tab === 'remote' && remote.session?.role === 'controller' ? (
+          <div className="panel panel--flush">
+            <RemoteViewer
+              session={remote.session}
+              stream={remote.stream}
+              connection={remote.connection}
+              inputReady={remote.inputReady}
+              capture={remote.capture}
+              onEnd={() => remote.end()}
+            />
+          </div>
+        ) : tab === 'call' && session ? (
+          <div className="panel panel--flush">
+            <CallStage
+              session={session}
+              room={callRoom}
+              deviceName={state.deviceName}
+              onToggleMic={call.toggleMic}
+              onToggleCamera={call.toggleCamera}
+              onShare={() => setScreenPicker(true)}
+              onStopSharing={() => call.stopSharing()}
+              onLeave={() => call.leave()}
+            />
+          </div>
         ) : tab === 'chat' ? (
           <div className="panel panel--flush">
             <ChatPanel
@@ -619,6 +1054,15 @@ export default function App() {
                 onCopy={(entryId) => run(api.clipboardApply(entryId))}
                 onDelete={(entryId) => run(api.historyDeleteEntry(entryId))}
                 onTogglePin={(entryId) => run(api.historyTogglePin(entryId))}
+                onSaveSnippet={(text) => run(api.snippetSave({ label: '', content: text }))}
+                quickPasteShortcut={state.settings.quickPasteShortcut}
+                onOpenUrl={(url) => {
+                  api.openLink(url).then((result) => {
+                    if (!result.ok) {
+                      push(result.message, 'error');
+                    }
+                  });
+                }}
                 onShareNow={() => run(api.clipboardShareNow())}
                 onClear={() =>
                   setModal({
@@ -637,6 +1081,17 @@ export default function App() {
                 deviceId={state.deviceId}
                 onApprove={(memberId) => run(api.roomApproveMember(room.roomId, memberId))}
                 onReject={(memberId) => run(api.roomRejectMember(room.roomId, memberId))}
+                onRemoteRequest={(memberId) => remote.ask(room.roomId, memberId)}
+                onEdit={() => setModal({ kind: 'edit', room })}
+                onBlock={(memberId, memberName) =>
+                  setModal({
+                    kind: 'confirm',
+                    title: `Block ${memberName}?`,
+                    description: `Nothing from ${memberName} will be read, stored, shown or answered on this device again — in this room or any other — and it will be removed from every room you own. You can unblock it from Settings → Privacy.`,
+                    confirmLabel: 'Block device',
+                    action: () => run(api.blockDevice(memberId, memberName))
+                  })
+                }
                 onRemove={(memberId) => {
                   const name =
                     room.members.find((member) => member.deviceId === memberId)?.deviceName ?? 'This device';
@@ -689,6 +1144,14 @@ export default function App() {
         />
       )}
 
+      {modal?.kind === 'edit' && (
+        <EditRoomModal
+          room={modal.room}
+          onClose={() => setModal(null)}
+          onSave={(patch) => run(api.roomUpdate(modal.room.roomId, patch))}
+        />
+      )}
+
       {modal?.kind === 'unlock' && room && (
         <UnlockRoomModal
           room={room}
@@ -702,6 +1165,47 @@ export default function App() {
           invite={modal.invite}
           onClose={() => setModal(null)}
           onRespond={(roomId, accept) => run(api.roomRespondInvite(roomId, accept))}
+        />
+      )}
+
+      {palette && (
+        <CommandPalette
+          commands={buildCommands()}
+          initialMode={palette}
+          onClose={() => setPalette(null)}
+          onOpenHit={openHit}
+        />
+      )}
+
+      {/* Someone asking for this screen outranks everything else on screen.
+          It is the one prompt where not noticing has real consequences. */}
+      {remote.request && (
+        <RemoteRequestModal
+          request={remote.request}
+          capabilities={state.remoteCapabilities}
+          onRespond={(allow, grant, screen) => remote.respond(allow, grant, screen)}
+          onDismiss={() => remote.dismissRequest()}
+        />
+      )}
+
+      {/* A ring interrupts whatever else is open. Unlike an invitation it is
+          over in seconds, so it cannot wait its turn behind a dialog. */}
+      {call.ringing && (
+        <IncomingCallModal
+          ring={call.ringing}
+          ringtone={state.settings.ringOnCalls}
+          onAnswer={() => call.answer(call.ringing!)}
+          onDecline={() => call.decline(call.ringing!.callId)}
+        />
+      )}
+
+      {screenPicker && (
+        <ScreenPickerModal
+          onClose={() => setScreenPicker(false)}
+          onPick={(sourceId) => {
+            setScreenPicker(false);
+            call.shareScreen(sourceId);
+          }}
         />
       )}
 

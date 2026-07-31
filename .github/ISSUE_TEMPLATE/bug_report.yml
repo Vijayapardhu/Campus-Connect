@@ -80,9 +80,9 @@ body:
       label: Logs
       description: |
         Paste anything relevant. Logs live in
-        `%APPDATA%\shared-clipboard-desktop\logs` on Windows,
-        `~/Library/Logs/shared-clipboard-desktop` on macOS, and
-        `~/.config/shared-clipboard-desktop/logs` on Linux.
+        `%APPDATA%\campus-connect-desktop\logs` on Windows,
+        `~/Library/Logs/campus-connect-desktop` on macOS, and
+        `~/.config/campus-connect-desktop/logs` on Linux.
         You can also press F12 in the app and copy from the Console tab.
       render: shell
 

@@ -23,6 +23,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Editors
+.claude/
 .vscode/*
 !.vscode/extensions.json
 .idea/

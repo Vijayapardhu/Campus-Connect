@@ -38,8 +38,25 @@ Then the manual pass that CI cannot do — clipboard sync is a two-device featur
 - [ ] Tray: window closes to tray, "Share my clipboard" toggles, Quit exits
 - [ ] Installed build works, not just `npm run dev`
 
-The security-critical path is the private room test. If you only do one thing,
-do that one.
+Calls and remote desktop need two machines and cannot be checked any other way:
+
+- [ ] Voice call connects; audio both ways; mute is audible on the far side
+- [ ] Video call connects; camera toggle changes the far side's tile
+- [ ] Screen share replaces the video, and stopping it restores the camera
+- [ ] A third device joins mid-call and everyone sees everyone
+- [ ] Hanging up ends it on both sides within a few seconds
+- [ ] Remote desktop: the request produces a dialog on the **other** machine and
+      nothing is captured until it is answered
+- [ ] **Allow viewing** shares the screen and clicks do nothing
+- [ ] **Allow control** moves the real mouse, and a click lands where aimed
+- [ ] Typing reaches the host, including a modifier combination like Ctrl+C
+- [ ] "Take back control" stops input instantly; the session keeps running
+- [ ] `Ctrl+Alt+Shift+X` on the host ends it with the app unfocused
+- [ ] Hold a modifier, then end the session — the host's keyboard is **not** stuck
+- [ ] Blocking the peer mid-session ends it immediately
+
+The security-critical paths are the private room test and the remote desktop
+approval test. If you only do two things, do those two.
 
 ---
 
@@ -88,7 +105,7 @@ All of it lives in the `build` block of `package.json`.
 ```jsonc
 {
   "appId": "com.vijayapardhu.sharedclipboard",
-  "productName": "Shared Clipboard",
+  "productName": "Campus Connect",
   "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
   "files": ["dist/**/*", "package.json"],
   "directories": { "buildResources": "build", "output": "release" },
@@ -105,6 +122,53 @@ All of it lives in the `build` block of `package.json`.
   }
 }
 ```
+
+### Why `appId` still says `sharedclipboard`
+
+It is deliberate, and it has to stay that way.
+
+`appId` is what the Windows installer registers the application under. Changing it would make the
+next release install **alongside** the previous one instead of upgrading it, leaving people running
+two copies that fight over port 37777. The id is internal; the name anyone actually sees comes from
+`productName`, which is `Campus Connect`.
+
+`app.setAppUserModelId` in `main.ts` carries the same string for the same reason — Windows
+attributes notifications by it, and it must match what the installer registered.
+
+The per-user **data** directory does move, because Electron derives that from the application name.
+`src/main/migrate.ts` copies the old directory across on first run, before the store is opened, so
+device identity, rooms, derived keys and history survive the rename. It refuses to overwrite an
+existing install and leaves the old directory where it was, so rolling back to the previous build
+still works.
+
+### Ports
+
+| Port | Protocol | What for |
+|------|----------|----------|
+| 37777 | UDP + TCP | Discovery, rooms, clipboard, chat, call and remote-desktop signalling |
+| 37778 | TCP | Phone access — **only while it is switched on** |
+
+Windows Firewall prompts for 37777 on first run. 37778 is opened on demand when
+phone access starts, so a user who never turns it on is never asked about it and
+never has a second port listening.
+
+### The native module
+
+`@jitsi/robotjs` provides input injection for remote control — the one capability Electron does not
+have. Three things make it painless, and they are worth not breaking:
+
+1. **It is N-API.** The ABI is stable across both Node and Electron versions, so there is no
+   `electron-rebuild` step and no node-gyp toolchain needed on the CI runners.
+2. **Prebuilt binaries ship inside the tarball** (via `prebuildify`), for win32 x64/ia32/arm64,
+   darwin universal, and linux x64/arm64. `npm install` does not compile anything and does not
+   download anything.
+3. **It is loaded lazily and optionally.** `remoteInput.ts` requires it inside a `try`, the first
+   time control is actually wanted. A platform without a usable binary degrades to view-only screen
+   sharing rather than failing to start.
+
+`asarUnpack: ["**/*.node"]` is in the build config because a native binary cannot be loaded from
+inside an asar archive. If you ever see `Cannot find module` for the native addon in a packaged
+build but not in development, that setting is the first thing to check.
 
 ### Icons
 
