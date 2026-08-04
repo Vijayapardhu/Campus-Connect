@@ -14,14 +14,21 @@ import { PhoneSessions, type PairingStore } from './phoneSession';
  * of every action, with one set of checks, rather than a second mobile code path
  * free to drift away from it.
  *
- * Everything about the security here is shaped by one uncomfortable fact: **the
- * phone gets plaintext**. Room traffic between desktops is AES-256-GCM sealed,
- * but a browser cannot hold the room key, so what it receives has already been
- * opened. There is no honest way around that without shipping a certificate
- * people would have to click through a warning to accept, which teaches exactly
- * the wrong habit.
+ * One fact shapes the security here: **a browser cannot hold the room key**.
+ * Room traffic between desktops is AES-256-GCM sealed, but what a phone is
+ * served has already been opened — so the phone sees plaintext at the
+ * application layer, and no amount of transport security changes that.
  *
- * So instead of pretending, the exposure is bounded:
+ * This once argued that the transport had to stay plain too, on the grounds
+ * that a self-signed certificate teaches people to click through warnings.
+ * That was the wrong trade, and it is no longer what happens. Left plain, the
+ * phone's own access token and every message it read crossed shared WiFi
+ * readable by anyone on it — a far worse habit to have shipped than one
+ * warning at pairing time. It is also the only way a browser will hand the
+ * page a microphone, which is what lets a phone join a call at all.
+ *
+ * So the transport is TLS by default (see `phoneCert`), and the exposure that
+ * remains is bounded:
  *
  *  - It is **off** unless somebody turns it on.
  *  - Pairing is by **scanning a QR code** carrying a single-use 256-bit key.
