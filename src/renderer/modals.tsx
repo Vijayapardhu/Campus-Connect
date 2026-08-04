@@ -349,17 +349,24 @@ export function EditRoomModal({
 
 export function JoinRoomModal({
   target,
+  initialCode = '',
   onClose,
   onJoinDiscovered,
   onJoinByCode
 }: {
   /** A room picked from the discovered list, or null when joining by code alone. */
   target: DiscoveredRoom | null;
+  /**
+   * A code that arrived rather than one being typed — from a scanned QR code or
+   * a `campusconnect://` link. Filled in, never submitted: a link should say
+   * what it is about to do and let a person agree to it.
+   */
+  initialCode?: string;
   onClose: () => void;
   onJoinDiscovered: (roomId: string, password: string, joinCode: string) => Promise<boolean>;
   onJoinByCode: (joinCode: string, password: string) => Promise<boolean>;
 }) {
-  const [code, setCode] = React.useState('');
+  const [code, setCode] = React.useState(initialCode);
   const [password, setPassword] = React.useState('');
   const [error, setError] = React.useState('');
   const [busy, setBusy] = React.useState(false);
@@ -618,256 +625,3 @@ const THEMES: Array<{ value: AppSettings['theme']; label: string; icon: React.Re
   { value: 'dark', label: 'Dark', icon: <MoonIcon size={14} /> }
 ];
 
-/**
- * Text size and font family. The font list comes from the machine itself, so
- * every option in the dropdown is guaranteed to render.
- */
-function TypographySettings({
-  settings,
-  onUpdateSettings
-}: {
-  settings: AppSettings;
-  onUpdateSettings: (patch: Partial<AppSettings>) => void;
-}) {
-  const [fonts, setFonts] = React.useState<string[] | null>(null);
-
-  React.useEffect(() => {
-    let active = true;
-    listSystemFonts().then((families) => {
-      if (active) {
-        setFonts(families);
-      }
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  // Tolerate a settings object written by an older version that has no scale.
-  const scale = Number.isFinite(settings.fontScale) ? settings.fontScale : 1;
-  const isStep = (step: number) => Math.abs(step - scale) < 0.001;
-  const scaleLabel =
-    FONT_SCALES.find((step) => isStep(step.value))?.label ?? `${Math.round(scale * 100)}%`;
-
-  return (
-    <>
-      <div className="field" style={{ marginTop: 'var(--space-4)' }}>
-        <span className="field__label">Text size</span>
-        <div className="range-row">
-          <input
-            className="range"
-            type="range"
-            min={MIN_FONT_SCALE}
-            max={MAX_FONT_SCALE}
-            step={0.05}
-            value={scale}
-            onChange={(event) => onUpdateSettings({ fontScale: Number(event.target.value) })}
-            aria-label="Text size"
-          />
-          <span className="range-row__value">{scaleLabel}</span>
-        </div>
-        <div className="row" style={{ gap: 'var(--space-1)' }}>
-          {FONT_SCALES.map((step) => (
-            <Button
-              key={step.label}
-              size="sm"
-              variant={isStep(step.value) ? 'primary' : 'ghost'}
-              onClick={() => onUpdateSettings({ fontScale: step.value })}
-            >
-              {step.label}
-            </Button>
-          ))}
-        </div>
-      </div>
-
-      <Field
-        label="Font"
-        hint={
-          fonts === null
-            ? 'Reading the fonts installed on this computer…'
-            : `${fonts.length} fonts found on this computer.`
-        }
-      >
-        <select
-          className="select"
-          value={settings.fontFamily}
-          onChange={(event) => onUpdateSettings({ fontFamily: event.target.value })}
-        >
-          <option value="">System default</option>
-          {(fonts ?? []).map((family) => (
-            <option key={family} value={family}>
-              {family}
-            </option>
-          ))}
-        </select>
-      </Field>
-
-      <div className="type-preview" style={{ marginTop: 'var(--space-3)' }}>
-        <div className="type-preview__title">Final Year Project</div>
-        <div className="type-preview__body">
-          Copy on one laptop, paste on another. The quick brown fox jumps over the lazy dog.
-        </div>
-        <div className="type-preview__mono">npm run dev — 0123456789</div>
-      </div>
-    </>
-  );
-}
-
-export function SettingsModal({
-  state,
-  onClose,
-  onRename,
-  onUpdateSettings,
-  onConnectPeer,
-  onOpenExternal
-}: {
-  state: AppState;
-  onClose: () => void;
-  onRename: (name: string) => void;
-  onUpdateSettings: (patch: Partial<AppSettings>) => void;
-  onConnectPeer: (host: string) => void;
-  onOpenExternal: (url: string) => void;
-}) {
-  const [name, setName] = React.useState(state.deviceName);
-  const [peerHost, setPeerHost] = React.useState('');
-
-  return (
-    <Modal
-      title="Settings"
-      onClose={onClose}
-      footer={<Button variant="primary" onClick={onClose}>Done</Button>}
-    >
-      <Field label="Device name" hint="How this laptop appears to everyone else.">
-        <div className="row">
-          <input
-            className="input"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            onBlur={() => name.trim() && name !== state.deviceName && onRename(name.trim())}
-            onKeyDown={(event) => event.key === 'Enter' && name.trim() && onRename(name.trim())}
-            maxLength={32}
-          />
-        </div>
-      </Field>
-
-      <div className="field" style={{ marginTop: 'var(--space-4)' }}>
-        <span className="field__label">Appearance</span>
-        <div className="segmented">
-          {THEMES.map((theme) => (
-            <button
-              key={theme.value}
-              className={
-                state.settings.theme === theme.value ? 'segmented__option is-selected' : 'segmented__option'
-              }
-              onClick={() => onUpdateSettings({ theme: theme.value })}
-            >
-              <span className="segmented__title">
-                {theme.icon}
-                {theme.label}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <TypographySettings settings={state.settings} onUpdateSettings={onUpdateSettings} />
-
-      <div style={{ marginTop: 'var(--space-4)' }}>
-        <SwitchRow
-          title="Shared clipboard"
-          description="The master switch. Off means nothing is shared, received or announced."
-          checked={state.settings.online !== false}
-          onChange={(next) => onUpdateSettings({ online: next })}
-        />
-        <SwitchRow
-          title="Share my clipboard"
-          description="Send what you copy to the room you have selected."
-          checked={state.settings.syncEnabled}
-          onChange={(next) => onUpdateSettings({ syncEnabled: next })}
-        />
-        <SwitchRow
-          title="Paste automatically"
-          description="Put incoming items straight onto this clipboard, ready for Ctrl+V."
-          checked={state.settings.autoApply}
-          onChange={(next) => onUpdateSettings({ autoApply: next })}
-        />
-        <SwitchRow
-          title="Include images"
-          description="Share copied images as well as text. Large images may not fit on the network."
-          checked={state.settings.shareImages}
-          onChange={(next) => onUpdateSettings({ shareImages: next })}
-        />
-      </div>
-
-      <div className="field" style={{ marginTop: 'var(--space-5)' }}>
-        <span className="field__label">This device on the network</span>
-        <div className="code-block">
-          <span className="mono text-sm">
-            {state.localAddress}:{state.listenPort}
-          </span>
-          <span className="spacer" />
-          <span className="text-sm text-tertiary">
-            {state.peers.length} {state.peers.length === 1 ? 'peer' : 'peers'} seen
-          </span>
-        </div>
-      </div>
-
-      <Field
-        label="Add a device by IP"
-        hint="Only needed when your network blocks broadcast discovery."
-      >
-        <div className="row">
-          <input
-            className="input"
-            value={peerHost}
-            onChange={(event) => setPeerHost(event.target.value)}
-            placeholder="192.168.1.42"
-            spellCheck={false}
-          />
-          <Button
-            onClick={() => {
-              if (peerHost.trim()) {
-                onConnectPeer(peerHost.trim());
-                setPeerHost('');
-              }
-            }}
-            disabled={!peerHost.trim()}
-          >
-            Add
-          </Button>
-        </div>
-      </Field>
-
-      <div className="about">
-        <div className="about__head">
-          <span className="about__mark">
-            <ClipboardIcon size={16} />
-          </span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="about__name">
-              {APP_INFO.name}
-              <span className="about__version">v{state.appVersion}</span>
-            </div>
-            <div className="about__by">
-              MVP designed and built by{' '}
-              <button className="link" onClick={() => onOpenExternal(APP_INFO.authorUrl)}>
-                {APP_INFO.author}
-              </button>
-            </div>
-          </div>
-        </div>
-        <div className="about__links">
-          <Button size="sm" onClick={() => onOpenExternal(APP_INFO.repositoryUrl)}>
-            <GithubIcon size={14} />
-            Source code
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => onOpenExternal(APP_INFO.websiteUrl)}>
-            Website
-          </Button>
-          <span className="spacer" />
-          <span className="about__license">{APP_INFO.license} licensed</span>
-        </div>
-      </div>
-    </Modal>
-  );
-}

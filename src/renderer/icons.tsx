@@ -5,6 +5,24 @@ type IconProps = {
   className?: string;
 };
 
+/**
+ * Stroke width that renders the same thickness at every size.
+ *
+ * The stroke is specified in a 24-unit viewBox and scales with the icon, so a
+ * fixed 1.8 drew 1.2px at size 16 but only 0.83px at the size 11 used in
+ * badges — thin enough to go grey and blur on a non-retina screen. Solving for
+ * a constant 1.2px on screen keeps every icon the same visual weight, which is
+ * what a hand-drawn set does at each size and why one looks considered.
+ *
+ * Clamped at both ends: unbounded, a very small icon's strokes would meet in
+ * the middle and a large one would turn spindly.
+ */
+const RENDERED_STROKE = 1.2;
+
+function strokeFor(size: number): number {
+  return Math.min(2.4, Math.max(1.4, (RENDERED_STROKE * 24) / size));
+}
+
 function Svg({ size = 16, className, children }: IconProps & { children: React.ReactNode }) {
   return (
     <svg
@@ -13,7 +31,7 @@ function Svg({ size = 16, className, children }: IconProps & { children: React.R
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.8}
+      strokeWidth={strokeFor(size)}
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}

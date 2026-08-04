@@ -133,7 +133,9 @@ export function ClipboardPanel({
         </Button>
       </div>
 
-      <div className="row">
+      {/* This row labels the list under it, so it sits close to the list and
+          further from the toolbar above — proximity doing the grouping. */}
+      <div className="row row--meta">
         <span className="text-sm text-secondary">
           {needle
             ? `${visible.length} of ${entries.length} ${entries.length === 1 ? 'item' : 'items'}`
@@ -796,6 +798,7 @@ export function ChatPanel({
   typingNames,
   onSend,
   onSendFile,
+  canSendFiles,
   onSaveFile,
   onEdit,
   onDelete,
@@ -810,6 +813,8 @@ export function ChatPanel({
   typingNames: string[];
   onSend: (text: string, replyToId?: string) => void;
   onSendFile: () => void;
+  /** False on a phone: the picker and the save dialog are native. */
+  canSendFiles: boolean;
   onSaveFile: (messageId: string) => void;
   onEdit: (messageId: string, content: string) => void;
   onDelete: (messageId: string, forEveryone: boolean) => void;
@@ -924,7 +929,7 @@ export function ChatPanel({
         setDragging(false);
         // Electron gives a real path, but the picker in the main process is the
         // only place allowed to read it — so a drop just opens that picker.
-        if (event.dataTransfer.files.length > 0) onSendFile();
+        if (event.dataTransfer.files.length > 0 && canSendFiles) onSendFile();
       }}
     >
       {dragging && (
@@ -1069,9 +1074,12 @@ export function ChatPanel({
       )}
 
       <div className="composer">
-        <Button icon onClick={onSendFile} aria-label="Attach a file" title="Attach a file">
-          <PaperclipIcon size={16} />
-        </Button>
+        {/* The picker is a native dialog on the machine with the files on it. */}
+        {canSendFiles ? (
+          <Button icon onClick={onSendFile} aria-label="Attach a file" title="Attach a file">
+            <PaperclipIcon size={16} />
+          </Button>
+        ) : null}
         <textarea
           ref={composerRef}
           className="input composer__input"
@@ -1112,6 +1120,7 @@ export function MembersPanel({
   onRemove,
   onBlock,
   onRemoteRequest,
+  canRemote,
   onEdit,
   onLeave,
   onCopyCode,
@@ -1133,6 +1142,8 @@ export function MembersPanel({
   onBlock: (memberId: string, memberName: string) => void;
   /** Asks that device for its screen. They still have to allow it. */
   onRemoteRequest: (memberId: string, memberName: string) => void;
+  /** False on a phone: there is no way to display somebody's desktop here. */
+  canRemote: boolean;
   /** Owner only. Opens the dialog for renaming, re-typing or re-keying. */
   onEdit: () => void;
   onLeave: () => void;
@@ -1278,7 +1289,7 @@ export function MembersPanel({
               </div>
               <div className="member__meta">Joined {relativeTime(member.joinedAt)}</div>
             </div>
-            {member.deviceId !== deviceId && (
+            {member.deviceId !== deviceId && canRemote && (
               <div className="member__actions">
                 {/* Asking is always allowed; it is answering that is guarded,
                     and that happens on the other machine. */}

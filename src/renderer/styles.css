@@ -49,9 +49,35 @@
 
   --sidebar-width: 292px;
   --topbar-height: 64px;
+  /*
+   * The horizontal inset every full-width surface shares.
+   *
+   * The top bar, the tab strip and the panel all have to start on the same
+   * vertical line, and that line moves at the narrower breakpoints. One token
+   * so they move together — hardcoding it in three places is how they drifted
+   * apart in the first place.
+   */
+  --gutter: var(--space-5);
 
+  /*
+   * Motion, as a small scale rather than one setting.
+   *
+   * Everything used to move at 160ms on one curve — a hover tint and a panel
+   * crossing the window took exactly as long, which reads as an interface with
+   * one speed rather than one with intent. Distance decides duration: a colour
+   * change is instant, a thing that travels is allowed to take its time.
+   */
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  /** Entrances. Decelerates hard, so a thing arrives rather than slides in. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /** A press letting go. Overshoots a little, which is what makes it feel physical. */
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  /** Colour and tint. Below ~120ms a hover reads as instant, which it should. */
+  --duration-fast: 110ms;
   --duration: 160ms;
+  /** Something crossing real distance: a panel, a dialog, a sheet. */
+  --duration-slow: 260ms;
 
   color-scheme: light;
 
@@ -192,6 +218,7 @@ body,
   height: 100%;
 }
 
+
 body {
   margin: 0;
   font-family: var(--font-sans);
@@ -271,10 +298,24 @@ select {
 
 .splash {
   display: grid;
-  place-items: center;
+  grid-template-rows: calc(var(--topbar-height) + var(--window-top-inset, 0px)) 1fr;
   height: 100%;
-  gap: var(--space-4);
   color: var(--text-secondary);
+}
+
+/* Draggable from the first frame, so a frameless window is never stuck. */
+.splash__bar {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: var(--window-top-inset, 0px);
+  -webkit-app-region: drag;
+}
+
+.splash__body {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: var(--space-4);
 }
 
 .splash__dot {
@@ -282,10 +323,10 @@ select {
   height: 10px;
   border-radius: var(--radius-full);
   background: var(--accent);
-  animation: pulse 1.4s var(--ease) infinite;
+  animation: splash-pulse 1.4s var(--ease) infinite;
 }
 
-@keyframes pulse {
+@keyframes splash-pulse {
   0%,
   100% {
     opacity: 0.3;
@@ -307,12 +348,20 @@ select {
   border-right: 1px solid var(--border);
 }
 
+/*
+ * 20px, matching every row beneath it.
+ *
+ * The rail's own padding is 12 and each row adds 8, so everything in the list
+ * starts at 20 — the brand was at 16 and sat a notch to the left of the whole
+ * column under it. Four pixels, but it is the first vertical line the eye
+ * follows down the window.
+ */
 .sidebar__brand {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   height: var(--topbar-height);
-  padding: 0 var(--space-4);
+  padding: 0 var(--space-5);
   flex-shrink: 0;
 }
 
@@ -365,8 +414,23 @@ select {
 
 .sidebar__footer {
   flex-shrink: 0;
+  display: grid;
+  gap: var(--space-1);
   padding: var(--space-3);
   border-top: 1px solid var(--border);
+}
+
+/*
+ * The footer's two rows share one text column.
+ *
+ * The account card's avatar is 32px and a rail icon is 24, so "Files" and the
+ * device name started 8px apart from each other — two labels in a stack of two,
+ * not lining up. The icon matches the avatar here and nowhere else.
+ */
+.sidebar__footer .room-item__icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
 }
 
 /* Room entry in the rail */
@@ -548,15 +612,61 @@ select {
   background: var(--bg);
 }
 
+/*
+ * 16px between groups, 8px inside them.
+ *
+ * Every gap along here used to be 12, so the room's name, the three badges
+ * describing it and the controls on the right all read as one undifferentiated
+ * row. Separating the groups by more than their contents are separated from
+ * each other is what makes them look like groups.
+ */
 .topbar {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-4);
   height: var(--topbar-height);
-  padding: 0 var(--space-5);
+  padding: 0 var(--gutter);
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
+}
+
+/*
+ * Moving the window.
+ *
+ * The whole top edge drags — both the rail's brand and the bar beside it — and
+ * everything you can actually press opts back out. Declared on the containers
+ * rather than per element so a control added later is draggable by mistake at
+ * worst, never unusable.
+ */
+.topbar,
+.sidebar__brand {
+  -webkit-app-region: drag;
+  /*
+   * The strip a maximised frameless window loses off the top of the screen.
+   *
+   * Zero everywhere but a maximised window on Windows, which the system grows
+   * past the work area by its invisible resize border — quietly cutting off
+   * the top of the interface, window controls included. Each column absorbs it
+   * into its own top bar rather than the page padding itself, so the rail and
+   * the content keep their own backgrounds right up to the edge.
+   */
+  height: calc(var(--topbar-height) + var(--window-top-inset, 0px));
+  padding-top: var(--window-top-inset, 0px);
+}
+
+.topbar button,
+.topbar input,
+.topbar a,
+.topbar [role='switch'],
+.sidebar__brand button,
+.sidebar__brand a {
+  -webkit-app-region: no-drag;
+}
+
+/* macOS keeps its own controls; the brand moves aside to clear them. */
+:root[data-platform='darwin'] .sidebar__brand {
+  padding-left: 78px;
 }
 
 .topbar__title {
@@ -573,6 +683,14 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* What the room is, as one cluster rather than three separate facts. */
+.topbar__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .topbar__spacer {
@@ -619,19 +737,35 @@ select {
   outline-offset: 2px;
 }
 
+/*
+ * Inset by the gutter less a tab's own padding, so the label lands exactly on
+ * the gutter — the same left edge as the panel below. Computed rather than
+ * fixed, because the gutter narrows at small widths and a hardcoded 8 would
+ * put the tabs 4px off the content there.
+ */
 .tabbar {
   display: flex;
   gap: var(--space-1);
-  padding: 0 var(--space-5);
+  padding: 0 calc(var(--gutter) - var(--space-3));
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
+  /* Six tabs, one of them labelled with a device name, on a narrow window:
+     they scroll rather than squeezing each other into initials. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabbar::-webkit-scrollbar {
+  display: none;
 }
 
 .tabbar__tab {
   position: relative;
   display: flex;
   align-items: center;
+  flex: none;
+  white-space: nowrap;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-3) calc(var(--space-3) - 1px);
   font-size: var(--text-base);
@@ -673,10 +807,10 @@ select {
   height: 7px;
   border-radius: var(--radius-full);
   background: var(--danger);
-  animation: pulse 1.8s var(--ease) infinite;
+  animation: live-pulse 1.8s var(--ease) infinite;
 }
 
-@keyframes pulse {
+@keyframes live-pulse {
   0%,
   100% {
     opacity: 1;
@@ -696,7 +830,7 @@ select {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-5);
+  padding: var(--gutter);
 }
 
 .panel--flush {
@@ -1513,6 +1647,19 @@ kbd {
   gap: var(--space-4);
 }
 
+/*
+ * A row that labels whatever follows it.
+ *
+ * The stack spaces everything evenly, which left the item count floating
+ * exactly between the toolbar above and the list it is counting below. Pulled
+ * down onto the list and pushed off the toolbar, it reads as the list's
+ * heading instead of as a third, unrelated row.
+ */
+.row--meta {
+  margin-top: var(--space-1);
+  margin-bottom: calc(var(--space-2) * -1);
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -1532,12 +1679,19 @@ kbd {
 
 /* --------------------------------------------------------- empty state --- */
 
+/*
+ * `safe` centring, because content can outgrow the box.
+ *
+ * Centred content taller than its container overflows evenly in both
+ * directions — so on a narrow screen, where the message wraps to twice the
+ * lines, the last line sat outside the card. `safe` falls back to aligning
+ * from the start the moment centring would push content out of view.
+ */
 .empty {
   display: grid;
   justify-items: center;
-  align-content: center;
+  align-content: safe center;
   gap: var(--space-3);
-  height: 100%;
   min-height: 260px;
   padding: var(--space-8);
   text-align: center;
@@ -1634,7 +1788,9 @@ kbd {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
   grid-auto-rows: 8px;
-  column-gap: var(--space-3);
+  /* Matched to the gap between stacked cards elsewhere; 12 read as cramped at
+     this card width. Column only — the row rhythm is the 8px span maths. */
+  column-gap: var(--space-4);
   /*
    * Stretch, not start. The card's only child is absolutely positioned, so its
    * content height is zero — with `align-items: start` the item shrank to that
@@ -1658,7 +1814,7 @@ kbd {
   position: relative;
   display: block;
   min-width: 0;
-  animation: rise 180ms var(--ease);
+  animation: card-rise 180ms var(--ease);
 }
 
 /*
@@ -1691,7 +1847,7 @@ kbd {
   box-shadow: var(--shadow-lg);
 }
 
-@keyframes rise {
+@keyframes card-rise {
   from {
     opacity: 0;
     transform: translateY(4px);
@@ -2526,10 +2682,10 @@ kbd {
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-lg);
-  animation: rise var(--duration) var(--ease);
+  animation: modal-rise var(--duration) var(--ease);
 }
 
-@keyframes rise {
+@keyframes modal-rise {
   from {
     opacity: 0;
     transform: translateY(8px) scale(0.98);
@@ -3105,7 +3261,7 @@ body.is-overlay {
   flex-shrink: 0;
   border-radius: var(--radius-full);
   background: var(--danger);
-  animation: pulse 1.8s var(--ease) infinite;
+  animation: live-pulse 1.8s var(--ease) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3345,7 +3501,7 @@ body.is-overlay {
   outline-offset: -2px;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .call-grid.is-strip .call-tile {
     flex: 0 0 104px;
     height: 72px;
@@ -3518,6 +3674,30 @@ body.is-overlay {
   font-size: var(--text-sm);
 }
 
+.remote-bar__shortcut {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: rgba(244, 244, 245, 0.6);
+  white-space: nowrap;
+}
+
+.remote-bar.is-control .remote-bar__shortcut {
+  background: rgba(251, 113, 133, 0.3);
+  color: #fda4af;
+}
+
+.remote-bar__shortcut kbd {
+  padding: 1px 5px;
+  font-size: 0.75em;
+  background: rgba(0, 0, 0, 0.4);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(244, 244, 245, 0.8);
+}
 
 /* ------------------------------------------------------- screen picker --- */
 
@@ -3563,6 +3743,24 @@ body.is-overlay {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.picker__check {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--text-inverse);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  margin-left: auto;
+}
+
+.picker__item.is-selected .picker__check {
+  display: flex;
 }
 
 .picker__thumb {
@@ -3789,8 +3987,8 @@ body.is-overlay {
     --sidebar-width: 240px;
   }
 
-  .panel {
-    padding: var(--space-4);
+  :root {
+    --gutter: var(--space-4);
   }
 
   .chat__scroll,
@@ -3810,7 +4008,7 @@ body.is-overlay {
 
 /* --- phones ------------------------------------------------------------- */
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   :root {
     --topbar-height: 56px;
   }
@@ -3862,29 +4060,69 @@ body.is-overlay {
   }
 
   .btn--sm {
-    height: 34px;
+    height: 40px;
+  }
+
+  .power-toggle {
+    height: 40px;
+  }
+
+
+  /* 44px is the smallest target a fingertip hits reliably. */
+  .btn--icon {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .tabbar__tab {
+    min-height: 48px;
+  }
+
+  .clip__action,
+  .msg__action {
+    min-width: 40px;
+    min-height: 40px;
   }
 
   .room-item {
     padding: var(--space-3);
   }
 
-  .panel {
-    padding: var(--space-3);
+  /*
+   * Narrow moves the shared gutter rather than overriding the surfaces that
+   * read it. Setting `.panel` directly left the tab strip computing its inset
+   * from the old value — the same four-pixel drift between tab labels and
+   * content that the token exists to prevent, reappearing only on phones.
+   */
+  :root {
+    --gutter: var(--space-3);
   }
 
   .topbar {
-    padding: 0 var(--space-3);
     gap: var(--space-2);
   }
 
-  /* The badges are the first thing to go; the room's name is what matters. */
-  .topbar .badge {
+  /*
+   * The bar sheds everything ambient. The badges and the peer count describe
+   * the room and the network; neither is worth the collision with the controls
+   * that actually do something, and both are a tap away in Settings.
+   */
+  .topbar .badge,
+  .topbar__peers {
     display: none;
   }
 
+  .topbar__name {
+    font-size: var(--text-base);
+  }
+
+  /*
+   * A segmented control rather than a row of links: equal shares, centred, and
+   * the strip's own edges on the gutter. Tabs no longer align their labels to
+   * the content column here because they no longer sit at its left edge.
+   */
   .tabbar {
-    padding: 0 var(--space-2);
+    padding: 0 var(--gutter);
   }
 
   .tabbar__tab {
@@ -4052,4 +4290,782 @@ body.is-phone select {
   min-height: 22px;
   color: var(--danger);
   font-size: var(--text-sm);
+}
+
+/* File sharing */
+
+.xfers {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+}
+
+.xfer {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-sunken);
+}
+
+/* A transfer under way is the one thing on this tab worth looking at. */
+.xfer.is-running {
+  border-color: var(--accent);
+  background: var(--bg-elevated);
+}
+
+.xfer__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.xfer__icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.xfer.is-running .xfer__icon {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.xfer__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.xfer__title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xfer__meta {
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.xfer .meter__track {
+  margin: var(--space-3) 0 0;
+}
+
+.xfer__files {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.xfer-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.xfer-file__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+.xfer-file__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.xfer-file__name {
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Slimmer than the transfer's own bar, so the two never compete. */
+.xfer-file__track {
+  height: 4px;
+  margin: var(--space-1) 0 0;
+}
+
+.xfer-file__size {
+  flex: none;
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Window controls */
+
+/*
+ * The bar gives up its right inset when it is carrying window controls.
+ *
+ * Reaching the corner by pulling the controls out with a negative margin meant
+ * hardcoding the bar's padding into the controls — which was wrong the moment
+ * the gutter narrowed at a breakpoint, and wrong on the splash screen, whose
+ * bar has no padding at all and so flung them off the edge entirely. The bar
+ * knows its own padding; the controls should not have to guess it.
+ */
+:root[data-window-controls='true'] .topbar {
+  padding-right: 0;
+}
+
+.wincontrols {
+  display: flex;
+  align-self: stretch;
+  /* Plus the bar's own gap, so the window's controls sit a clear step away
+     from the application's — they belong to different things. */
+  margin-left: var(--space-3);
+  /*
+   * Over the bar's bottom border, not up to it. Stretching fills the content
+   * box, which stops one pixel short — invisible under the quiet hover of the
+   * first two buttons, a pale hairline under the close button's solid red.
+   */
+  margin-bottom: -1px;
+  flex: none;
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * Full height and hard against the corner.
+ *
+ * The width is the system's, near enough, because these are the one set of
+ * buttons in the app people aim at without looking — the top-right corner is an
+ * infinitely large target only if nothing is inset from it. Everything else
+ * about them is quieter: no borders, no fill until hovered.
+ */
+.wincontrols__btn {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  align-self: stretch;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
+}
+
+.wincontrols__btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.wincontrols__btn:active {
+  background: var(--bg-active);
+}
+
+/*
+ * Close is the only one that earns colour, and only once you are on it.
+ *
+ * A fixed red rather than `--danger`: that token lightens in dark mode to stay
+ * readable as text, which is the opposite of what a filled button needs — white
+ * on it would barely hold contrast. This is the one red both themes share.
+ */
+.wincontrols__btn--close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+.wincontrols__btn--close:active {
+  background: #b0261a;
+  color: #fff;
+}
+
+/* The corner belongs to the button, but focus still has to be visible. */
+.wincontrols__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/*
+ * The window's controls shrink rather than vanish on a narrow window.
+ *
+ * A phone never renders them at all — there is no window to drive — but a
+ * narrow *desktop* window still has to be closable, and 138px of a 360px bar
+ * was most of the room the room's own name needed. This has to live after the
+ * base rule rather than up with the other narrow overrides: the window-control
+ * styles are the last block in this file, so an earlier media query of equal
+ * specificity loses the cascade and silently does nothing.
+ */
+@media (max-width: 900px) {
+  .wincontrols__btn {
+    width: 38px;
+  }
+}
+
+/* First-run tour */
+
+.tour {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  background: color-mix(in srgb, var(--bg-sunken) 82%, transparent);
+  backdrop-filter: blur(10px);
+  animation: tour-in 260ms var(--ease) both;
+}
+
+.tour__card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  max-height: 100%;
+  border-radius: var(--radius-xl, 20px);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.tour__skip {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
+}
+
+.tour__skip:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tour__stage {
+  text-align: center;
+  /* Keyed on the step, so each one arrives rather than the words swapping. */
+  animation: tour-step 300ms var(--ease-out) both;
+}
+
+/*
+ * The illustration's own area.
+ *
+ * A tinted field with a horizon at its foot, so the scene stands on something
+ * instead of floating in the middle of a paragraph. This is most of the
+ * difference between artwork that looks placed and artwork that looks dropped.
+ */
+.tour__canvas {
+  display: grid;
+  place-items: center;
+  padding: var(--space-6) var(--space-5) var(--space-5);
+  background:
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 70%),
+    var(--bg-sunken);
+  border-bottom: 1px solid var(--border);
+}
+
+.tour__art {
+  width: 100%;
+  max-width: 340px;
+  height: auto;
+}
+
+.tour__copy {
+  padding: var(--space-6) var(--space-6) var(--space-5);
+}
+
+.tour__title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-xl);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.tour__body {
+  margin: 0 auto;
+  max-width: 42ch;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.tour__body kbd {
+  white-space: nowrap;
+}
+
+.tour__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.tour__spacer {
+  flex: 1;
+}
+
+.tour__dots {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tour__dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border-radius: var(--radius-full);
+  background: var(--border);
+  transition: width var(--duration) var(--ease), background var(--duration) var(--ease);
+}
+
+.tour__dot.is-current {
+  width: 20px;
+  background: var(--accent);
+}
+
+@keyframes tour-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes tour-step {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour,
+  .tour__stage {
+    animation: none;
+  }
+}
+
+/* On a phone the tour is the whole screen, not a card floating in one. */
+@media (max-width: 900px) {
+  .tour {
+    padding: 0;
+  }
+
+  .tour__card {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .tour__stage {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: var(--space-6) var(--space-5);
+  }
+
+  .tour__foot {
+    padding: var(--space-4);
+    padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  }
+}
+
+/* Press feedback */
+
+/*
+ * The single biggest difference between an interface that feels built and one
+ * that feels like a web page: things acknowledge being pressed.
+ *
+ * There were four `:active` rules in the whole application, so almost every
+ * control took a click in complete silence. The movement is deliberately tiny —
+ * a couple of percent, released on a curve that overshoots very slightly — and
+ * it goes on `transform`, which the compositor handles without touching layout
+ * or repainting anything around it.
+ */
+.btn,
+.room-item,
+.member,
+.segmented__option,
+.settings__tab,
+.picker__item,
+.snippet,
+.tour__dot,
+.power-toggle {
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease),
+    border-color var(--duration-fast) var(--ease),
+    transform var(--duration) var(--ease-spring);
+}
+
+.btn:active:not(:disabled),
+.segmented__option:active,
+.picker__item:active,
+.power-toggle:active {
+  transform: scale(0.97);
+  transition-duration: var(--duration-fast);
+}
+
+/* Rows are wide; scaling them looks like a wobble, so they take a nudge. */
+.room-item:active,
+.member:active,
+.settings__tab:active,
+.snippet:active {
+  transform: translateY(1px);
+  transition-duration: var(--duration-fast);
+}
+
+/* Chrome and full-bleed surfaces stay put — a window control that shrinks
+   under the cursor reads as a bug, not as feedback. */
+.wincontrols__btn:active,
+.tabbar__tab:active {
+  transform: none;
+}
+
+/*
+ * Entrances decelerate; the tokens above exist to be used.
+ * Reduced motion is already honoured per-animation further up this file.
+ */
+.modal {
+  animation-duration: var(--duration-slow);
+  animation-timing-function: var(--ease-out);
+}
+
+.toast {
+  animation-timing-function: var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .room-item,
+  .member,
+  .segmented__option,
+  .settings__tab,
+  .picker__item,
+  .snippet,
+  .tour__dot,
+  .power-toggle {
+    transition-property: background, color, border-color;
+  }
+
+  .btn:active:not(:disabled),
+  .segmented__option:active,
+  .picker__item:active,
+  .power-toggle:active,
+  .room-item:active,
+  .member:active,
+  .settings__tab:active,
+  .snippet:active {
+    transform: none;
+  }
+}
+
+/* Tour artwork */
+
+/*
+ * The accent as a light source rather than a fill, plus the pool of light each
+ * scene sits in. Gradient stops cannot take a CSS variable in `stop-color`
+ * shorthand reliably across engines, so they are set as their own properties.
+ */
+.tour__grad-from {
+  stop-color: var(--accent);
+  stop-opacity: 1;
+}
+
+.tour__grad-to {
+  stop-color: var(--accent);
+  stop-opacity: 0.72;
+}
+
+.tour__glow-from {
+  stop-color: var(--accent);
+  stop-opacity: 0.13;
+}
+
+.tour__glow-to {
+  stop-color: var(--accent);
+  stop-opacity: 0;
+}
+
+.tour__screen,
+.tour__panel,
+.tour__room,
+.tour__taskbar,
+.tour__note {
+  fill: var(--bg-elevated);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.tour__room {
+  fill: var(--bg-sunken);
+}
+
+/* The room you are not in: present, but plainly not lit. */
+.tour__room.is-other {
+  fill: transparent;
+  stroke-dasharray: 6 5;
+  opacity: 0.75;
+}
+
+.tour__titlebar {
+  fill: var(--bg-sunken);
+}
+
+.tour__stand,
+.tour__dot-chrome {
+  fill: var(--border);
+}
+
+.tour__wire {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.tour__packet {
+  fill: var(--accent);
+}
+
+.tour__face {
+  fill: var(--accent);
+}
+
+.tour__face.is-muted,
+.tour__note.is-muted {
+  fill: var(--text-tertiary);
+  stroke: none;
+  opacity: 0.28;
+}
+
+.tour__note-line {
+  fill: var(--accent);
+  opacity: 0.4;
+}
+
+.tour__note-line.is-short {
+  opacity: 0.22;
+}
+
+.tour__row {
+  fill: var(--text-tertiary);
+  opacity: 0.24;
+}
+
+.tour__key-side {
+  fill: var(--border);
+}
+
+.tour__key-top {
+  fill: var(--bg-elevated);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.tour__key-top.is-accent {
+  /* Set here rather than as a `fill` attribute on the element: a class always
+     beats a presentation attribute, so the gradient was being overpainted by
+     the surface colour above and the pressed key came out blank. */
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+
+.tour__key-glyph {
+  fill: var(--text-tertiary);
+  opacity: 0.55;
+}
+
+.tour__key-glyph.is-invert {
+  fill: var(--text-inverse);
+  opacity: 0.95;
+}
+
+.tour__tray-badge {
+  fill: var(--danger);
+}
+
+/* --- one movement each, showing the idea rather than labelling it --- */
+
+.tour__note-fly {
+  animation: note-pass 3.4s var(--ease) infinite;
+}
+
+.tour__overlay-pop {
+  animation: overlay-pop 3s var(--ease) infinite;
+  transform-origin: 140px 76px;
+}
+
+.tour__window-tuck {
+  animation: window-tuck 3.6s var(--ease) infinite;
+  transform-origin: 203px 126px;
+}
+
+@keyframes note-pass {
+  0%,
+  18% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  46%,
+  62% {
+    transform: translateX(34px);
+    opacity: 0;
+  }
+  63% {
+    transform: translateX(-20px);
+    opacity: 0;
+  }
+  86%,
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes overlay-pop {
+  0%,
+  12% {
+    transform: translateY(14px) scale(0.94);
+    opacity: 0;
+  }
+  30%,
+  76% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  92%,
+  100% {
+    transform: translateY(14px) scale(0.94);
+    opacity: 0;
+  }
+}
+
+/*
+ * Weighted so the window is present for most of the loop.
+ *
+ * Evenly spaced, it spent a third of every cycle invisible — which is what a
+ * glance, and every screenshot, happened to catch. The tuck is the accent, not
+ * the subject.
+ */
+@keyframes window-tuck {
+  0%,
+  46% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+  62%,
+  70% {
+    transform: translate(58px, 92px) scale(0.12);
+    opacity: 0;
+  }
+  86%,
+  100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour__note-fly,
+  .tour__overlay-pop,
+  .tour__window-tuck {
+    animation: none;
+  }
+
+  /* The packets move via SMIL, which the media query cannot reach. */
+  .tour__packet {
+    display: none;
+  }
+}
+
+/* Narrow-screen completeness */
+
+/*
+ * A flex child cannot shrink below its content unless it is told it may.
+ *
+ * Card headers put a growing title block beside an action, and without this the
+ * block held its natural width — pushing the action off the screen and running
+ * its own text past the edge. `min-width: 0` is the whole fix; the ellipsis and
+ * wrapping rules below only get a chance to work once it is there.
+ */
+.card__header > div {
+  min-width: 0;
+}
+
+/* Paths, ids and fingerprints have no spaces to break at. */
+.card__desc.mono,
+.settings__facts dd,
+.mono {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  /*
+   * The top bar sheds the theme switch.
+   *
+   * It was the last thing squeezing the room's name, which had collapsed to a
+   * single letter — and it is the one control here that is also two taps away
+   * in Settings. Everything left either says where you are or does something
+   * that cannot be done anywhere else.
+   */
+  .topbar__actions .btn--icon {
+    display: none;
+  }
+
+  /* Never let the name be shrunk away to nothing by its neighbours. */
+  .topbar__title {
+    flex: 1 1 auto;
+    min-width: 5rem;
+  }
+
+  /*
+   * Card headers stack. Side by side there is room for a title or an action,
+   * not both, and the action is the reason the card is there.
+   */
+  .card__header {
+    flex-wrap: wrap;
+  }
+
+  .card__header > div {
+    flex: 1 1 100%;
+  }
+
+  /* The settings sections scroll sideways; the scrollbar itself is noise. */
+  .settings__nav {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .settings__nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .settings__tab {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  /* An empty state is mostly air; a phone has none to spare. */
+  .empty {
+    min-height: 200px;
+    padding: var(--space-6) var(--space-4);
+  }
+
+  /* Nothing on a phone should scroll sideways by accident. */
+  .panel,
+  .settings__body {
+    overflow-x: hidden;
+  }
 }

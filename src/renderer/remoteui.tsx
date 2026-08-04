@@ -74,6 +74,11 @@ export function useRemote({
     setInputReady(false);
   }, []);
 
+  // Kept in a ref so the engine, which is built once, can always reach the
+  // current teardown without being rebuilt.
+  const teardownRef = React.useRef(teardown);
+  teardownRef.current = teardown;
+
   const buildEngine = React.useCallback(
     (state: RemoteSessionState) =>
       new RemoteEngine({
@@ -92,6 +97,14 @@ export function useRemote({
            * makes no judgement about it at all.
            */
           void api.remoteInput(state.sessionId, state.peerId, event);
+        },
+        onScreenLost: () => {
+          // Nothing left to share, so nothing left to keep open. Ended rather
+          // than reported, or the far side keeps a frozen picture of a screen
+          // that is gone and this side keeps claiming to be sharing it.
+          pushRef.current('The shared screen is no longer available, so the session ended.', 'warning');
+          void api.remoteEnd();
+          teardownRef.current();
         },
         onError: (message) => pushRef.current(message, 'error')
       }),
@@ -151,6 +164,26 @@ export function useRemote({
     return () => window.removeEventListener('beforeunload', release);
   }, []);
 
+  /*
+   * A session the main process still holds but this window knows nothing about.
+   *
+   * Only possible when the window was reloaded or replaced mid-session, and it
+   * cannot be resumed — the peer connection and the captured stream went with
+   * the old window. Leaving it would be the one failure the host bar exists to
+   * prevent: a screen still shared, with nothing on screen saying so.
+   *
+   * Asked of the main process once, at mount, rather than watched through
+   * state — watching would race a session this window is itself setting up.
+   */
+  React.useEffect(() => {
+    void api.getState().then((current) => {
+      if (current.remote && !engineRef.current) {
+        pushRef.current('A remote session was left running and has been ended.', 'warning');
+        void api.remoteEnd();
+      }
+    });
+  }, []);
+
   // The data channel opens shortly after the connection does, and only then can
   // anything actually be typed.
   React.useEffect(() => {
@@ -191,7 +224,8 @@ export function useRemote({
         allow,
         grant,
         screen?.id ?? '',
-        screen?.name ?? ''
+        screen?.name ?? '',
+        screen?.displayId
       );
       pushRef.current(result.message, result.ok ? 'success' : 'error');
 
@@ -309,6 +343,21 @@ export function RemoteRequestModal({
 
   const screen = screens?.find((candidate) => candidate.id === chosen) ?? null;
 
+  const handleRespond = (allow: boolean, grant: RemoteGrant) => {
+    if (!allow) {
+      onRespond(false, 'view', null);
+      return;
+    }
+    if (!screen) {
+      // If no screen selected but screens available, pick the first one
+      if (screens && screens.length > 0) {
+        onRespond(true, grant, screens[0]);
+      }
+      return;
+    }
+    onRespond(true, grant, screen);
+  };
+
   return (
     <Modal
       title="Screen access requested"
@@ -316,18 +365,18 @@ export function RemoteRequestModal({
       onClose={onDismiss}
       footer={
         <>
-          <Button variant="danger" onClick={() => onRespond(false, 'view', null)}>
+          <Button variant="danger" onClick={() => handleRespond(false, 'view')}>
             <XIcon size={15} />
             Decline
           </Button>
-          <Button onClick={() => onRespond(true, 'view', screen)} disabled={!screen}>
+          <Button onClick={() => handleRespond(true, 'view')} disabled={!screen && !screens?.length}>
             <EyeIcon size={15} />
             Allow viewing
           </Button>
           <Button
             variant="primary"
-            onClick={() => onRespond(true, 'control', screen)}
-            disabled={!screen || !capabilities.canControl}
+            onClick={() => handleRespond(true, 'control')}
+            disabled={!screen && !screens?.length || !capabilities.canControl}
             title={capabilities.canControl ? undefined : capabilities.reason}
           >
             <MousePointerIcon size={15} />
@@ -431,6 +480,10 @@ export function RemoteHostBar({
         <XIcon size={14} />
         Stop sharing
       </Button>
+      
+      <div className="remote-bar__shortcut">
+        <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd> to stop
+      </div>
     </div>
   );
 }
@@ -475,6 +528,29 @@ export function RemoteViewer({
     }
   }, [stream]);
 
+  // Handle playsInline attribute for better fullscreen video handling
+  React.useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (fullscreen.active) {
+      video.removeAttribute('playsInline');
+    } else {
+      video.setAttribute('playsInline', '');
+    }
+  }, [fullscreen.active]);
+
+  /*
+   * Full screen implies actual size, and leaving it goes back to fitting.
+   *
+   * Deliberately keyed on the fullscreen transition alone. With `actualSize` in
+   * the dependencies too, this ran again the instant the button changed it and
+   * put it straight back — so outside full screen the Actual size button did
+   * nothing at all.
+   */
+  React.useEffect(() => {
+    setActualSize(fullscreen.active);
+  }, [fullscreen.active]);
+
   /*
    * Keyboard capture lives on the window rather than on the element, because
    * the moment a click is forwarded to the remote machine this surface may not
@@ -487,9 +563,9 @@ export function RemoteViewer({
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
-      // The one combination that must keep working here: it is how the person
-      // driving gets out.
-      if (event.key === 'Escape') {
+      // The panic shortcut (Ctrl+Alt+Shift+X) is handled globally in main process
+      // Allow Escape to exit fullscreen when in fullscreen mode
+      if (event.key === 'Escape' && document.fullscreenElement) {
         return;
       }
       event.preventDefault();
@@ -498,7 +574,7 @@ export function RemoteViewer({
     };
 
     const onKeyUp = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && document.fullscreenElement) {
         return;
       }
       event.preventDefault();
@@ -514,6 +590,26 @@ export function RemoteViewer({
     };
   }, [live, capture]);
 
+  // Handle focus to ensure keyboard capture works
+  React.useEffect(() => {
+    if (!live || !capture) return;
+    
+    const video = videoRef.current;
+    if (!video) return;
+    
+    const onFocus = () => {
+      // Re-focus the video element to ensure keyboard events are captured
+      video.focus();
+    };
+    
+    video.addEventListener('focus', onFocus);
+    video.focus(); // Initial focus
+    
+    return () => {
+      video.removeEventListener('focus', onFocus);
+    };
+  }, [live, capture]);
+
   function pointer(handler: (event: React.MouseEvent) => void) {
     return (event: React.MouseEvent) => {
       if (!live || !videoRef.current) {
@@ -524,39 +620,102 @@ export function RemoteViewer({
     };
   }
 
+  /*
+   * Mouse-up is watched on the window, not on the picture.
+   *
+   * Dragging on the far machine — a window by its title bar, a selection, a
+   * scrollbar — routinely ends with the pointer outside this element, and the
+   * element's own mouseup never fires. The host is then holding a button down
+   * that nothing will ever release, which it experiences as a stuck mouse.
+   */
+  const dragging = React.useRef(false);
+  React.useEffect(() => {
+    if (!live || !capture) {
+      dragging.current = false;
+      return;
+    }
+
+    const onUp = (event: MouseEvent) => {
+      if (!dragging.current || !videoRef.current) {
+        return;
+      }
+      dragging.current = false;
+      capture.button(event, videoRef.current, false);
+    };
+
+    window.addEventListener('mouseup', onUp);
+    return () => window.removeEventListener('mouseup', onUp);
+  }, [live, capture]);
+
+  // Auto-hide header in fullscreen after a delay
+  const [showHeader, setShowHeader] = React.useState(true);
+  React.useEffect(() => {
+    if (!fullscreen.active) {
+      setShowHeader(true);
+      return;
+    }
+    
+    let hideTimer: ReturnType<typeof setTimeout>;
+    const show = () => {
+      setShowHeader(true);
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => setShowHeader(false), 3000);
+    };
+    
+    show();
+    const stage = stageRef.current;
+    if (stage) {
+      stage.addEventListener('mousemove', show);
+      stage.addEventListener('keydown', show);
+    }
+    return () => {
+      if (stage) {
+        stage.removeEventListener('mousemove', show);
+        stage.removeEventListener('keydown', show);
+      }
+      clearTimeout(hideTimer);
+    };
+  }, [fullscreen.active]);
+
   return (
     <div className="remote-stage" ref={stageRef}>
-      <header className="call-stage__header">
-        <MonitorIcon size={15} />
-        <span className="call-stage__title">{session.peerName}</span>
-        <span className="call-stage__meta">
-          {session.screenLabel}
-          {connection === 'connected' ? '' : ' · connecting…'}
-        </span>
-        <span className="call-stage__spacer" />
+      {showHeader && (
+        <header className="call-stage__header">
+          <MonitorIcon size={15} />
+          <span className="call-stage__title">{session.peerName}</span>
+          <span className="call-stage__meta">
+            {session.screenLabel}
+            {connection === 'connected' ? '' : ' · connecting…'}
+          </span>
+          <span className="call-stage__spacer" />
 
-        <span className={controlling ? 'remote-chip is-control' : 'remote-chip'}>
-          {controlling ? <MousePointerIcon size={12} /> : <EyeIcon size={12} />}
-          {controlling ? (live ? 'Control' : 'Control — connecting') : 'View only'}
-        </span>
+          <span className={controlling ? 'remote-chip is-control' : 'remote-chip'}>
+            {controlling ? <MousePointerIcon size={12} /> : <EyeIcon size={12} />}
+            {controlling ? (live ? 'Control' : 'Control — connecting') : 'View only'}
+          </span>
 
-        <button className="call-btn call-btn--slim" onClick={() => setActualSize((current) => !current)}>
-          {actualSize ? 'Fit to window' : 'Actual size'}
-        </button>
-        {/* Full screen matters more here than anywhere: you are working on
-            somebody else's desktop through a window inside your own. */}
-        <button
-          className="call-btn call-btn--slim"
-          onClick={fullscreen.toggle}
-          title={fullscreen.active ? 'Leave full screen' : 'Full screen'}
-        >
-          {fullscreen.active ? <MinimiseIcon size={15} /> : <MaximiseIcon size={15} />}
-        </button>
-        <button className="call-btn call-btn--slim call-btn--leave" onClick={onEnd}>
-          <XIcon size={14} />
-          Disconnect
-        </button>
-      </header>
+          <button 
+            className="call-btn call-btn--slim" 
+            onClick={() => setActualSize((current) => !current)}
+            title={actualSize ? 'Fit to window (Esc to exit fullscreen)' : 'Actual size (1:1 pixel mapping)'}
+          >
+            {actualSize ? 'Fit to window' : 'Actual size'}
+          </button>
+          {/* Full screen matters more here than anywhere: you are working on
+              somebody else's desktop through a window inside your own. */}
+          <button
+            className="call-btn call-btn--slim"
+            onClick={fullscreen.toggle}
+            title={fullscreen.active ? 'Leave full screen (Esc)' : 'Full screen (F)'}
+          >
+            {fullscreen.active ? <MinimiseIcon size={15} /> : <MaximiseIcon size={15} />}
+          </button>
+          <button className="call-btn call-btn--slim call-btn--leave" onClick={onEnd}>
+            <XIcon size={14} />
+            Disconnect
+          </button>
+        </header>
+      )}
 
       <div className={actualSize ? 'remote-surface is-actual' : 'remote-surface'}>
         <video
@@ -565,9 +724,14 @@ export function RemoteViewer({
           autoPlay
           playsInline
           muted
+          tabIndex={0}
           onMouseMove={pointer((event) => capture?.move(event.nativeEvent, videoRef.current!))}
-          onMouseDown={pointer((event) => capture?.button(event.nativeEvent, videoRef.current!, true))}
-          onMouseUp={pointer((event) => capture?.button(event.nativeEvent, videoRef.current!, false))}
+          onMouseDown={pointer((event) => {
+            dragging.current = true;
+            capture?.button(event.nativeEvent, videoRef.current!, true);
+          })}
+          // Release is handled on the window, so a drag that ends off the
+          // picture still lets go of the button on the far machine.
           onContextMenu={(event) => event.preventDefault()}
           onWheel={(event) => {
             if (live) {

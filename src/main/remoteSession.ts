@@ -26,9 +26,25 @@ export type PendingRequest = {
 /** How long an unanswered request stays on offer. */
 export const REQUEST_TIMEOUT_MS = 60000;
 
+/** A request this device made and has not been answered on yet. */
+export type OutgoingRequest = {
+  roomId: string;
+  targetDeviceId: string;
+  at: number;
+};
+
 export class RemoteSessionManager {
   private session: RemoteSessionState | null = null;
   private pending = new Map<string, PendingRequest>();
+  /**
+   * Requests *this* device made, so an answer can be matched to one.
+   *
+   * Without this a `grant` is simply believed, and any room member can open a
+   * session on a machine that never asked for one — pushing their screen onto
+   * somebody's display and occupying the single session slot while they are at
+   * it. An answer nobody asked a question for is not an answer.
+   */
+  private outgoing = new Map<string, OutgoingRequest>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -75,6 +91,21 @@ export class RemoteSessionManager {
     return Array.from(this.pending.values()).sort((a, b) => a.at - b.at);
   }
 
+  /** Records a request this device just sent, so its answer can be matched. */
+  noteOutgoingRequest(sessionId: string, roomId: string, targetDeviceId: string): void {
+    this.outgoing.set(sessionId, { roomId, targetDeviceId, at: this.now() });
+  }
+
+  /**
+   * Claims the request an answer belongs to. Returns undefined when this device
+   * never asked — in which case the answer is not ours and must be dropped.
+   */
+  takeOutgoingRequest(sessionId: string): OutgoingRequest | undefined {
+    const request = this.outgoing.get(sessionId);
+    this.outgoing.delete(sessionId);
+    return request;
+  }
+
   /** Requests nobody answered. Returns the ids dropped, so they can be refused. */
   sweepRequests(): string[] {
     const cutoff = this.now() - REQUEST_TIMEOUT_MS;
@@ -84,6 +115,14 @@ export class RemoteSessionManager {
       if (request.at < cutoff) {
         this.pending.delete(sessionId);
         expired.push(sessionId);
+      }
+    }
+
+    // Our own unanswered asks lapse on the same clock, so a `grant` that turns
+    // up long after the fact is no longer accepted.
+    for (const [sessionId, request] of this.outgoing) {
+      if (request.at < cutoff) {
+        this.outgoing.delete(sessionId);
       }
     }
 
@@ -144,6 +183,7 @@ export class RemoteSessionManager {
   /** Drops everything — for a room going away, or the network being switched off. */
   clear(): RemoteSessionState | null {
     this.pending.clear();
+    this.outgoing.clear();
     return this.end();
   }
 
@@ -152,6 +192,11 @@ export class RemoteSessionManager {
     for (const [sessionId, request] of Array.from(this.pending)) {
       if (request.roomId === roomId) {
         this.pending.delete(sessionId);
+      }
+    }
+    for (const [sessionId, request] of Array.from(this.outgoing)) {
+      if (request.roomId === roomId) {
+        this.outgoing.delete(sessionId);
       }
     }
 
@@ -163,6 +208,11 @@ export class RemoteSessionManager {
     for (const [sessionId, request] of Array.from(this.pending)) {
       if (request.fromDeviceId === deviceId) {
         this.pending.delete(sessionId);
+      }
+    }
+    for (const [sessionId, request] of Array.from(this.outgoing)) {
+      if (request.targetDeviceId === deviceId) {
+        this.outgoing.delete(sessionId);
       }
     }
 

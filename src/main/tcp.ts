@@ -138,6 +138,18 @@ export class TcpTransport {
     return Array.from(this.connections.keys()).filter((host) => this.isConnected(host));
   }
 
+  /**
+   * Bytes written to this host that the OS has not taken yet.
+   *
+   * `socket.write` never refuses — it queues in Node's memory instead — so a
+   * caller streaming a large file faster than the network drains it will buffer
+   * the whole file. Anything doing that has to watch this and pause.
+   */
+  pendingBytes(host: string): number {
+    const connection = this.connections.get(host);
+    return connection && !connection.socket.destroyed ? connection.socket.writableLength : 0;
+  }
+
   /** Sends a frame. Returns false if there was no usable connection. */
   send(host: string, payload: string): boolean {
     const connection = this.connections.get(host);

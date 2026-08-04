@@ -392,6 +392,38 @@ export function SettingsPage({
               onChange={(next) => onUpdateSettings({ notificationSound: next })}
             />
 
+            <h3 className="settings__subtitle">Phone security</h3>
+
+            <SwitchRow
+              title="Encrypt phone access"
+              description="Serves your phone over HTTPS with a certificate this computer issues. Your phone shows a security warning the first time, which you accept once. Without it, everything your phone reads — and its access token — crosses the WiFi readable by anyone on it, and calls cannot work at all. Changing this makes every phone scan the code again."
+              checked={settings.phoneSecure}
+              onChange={(next) => onUpdateSettings({ phoneSecure: next })}
+            />
+
+            <h3 className="settings__subtitle">Starting with this computer</h3>
+
+            <SwitchRow
+              title="Show the welcome tour again"
+              description="Replays the short introduction next time this window opens. Useful when handing this machine to somebody who has not seen it before."
+              checked={!settings.hasOnboarded}
+              onChange={(next) => onUpdateSettings({ hasOnboarded: !next })}
+            />
+
+            <SwitchRow
+              title="Open Campus Connect at login"
+              description="Start automatically when you sign in to this computer. Your clipboard, the quick-paste shortcut and file transfers only work while it is running."
+              checked={settings.launchAtLogin}
+              onChange={(next) => onUpdateSettings({ launchAtLogin: next })}
+            />
+
+            <SwitchRow
+              title="Start in the tray"
+              description="Start without opening the window. Everything runs as normal in the background — click the tray icon whenever you want to see it."
+              checked={settings.launchMinimized && settings.launchAtLogin}
+              onChange={(next) => onUpdateSettings({ launchMinimized: next })}
+            />
+
             <h3 className="settings__subtitle">Calls</h3>
 
             <SwitchRow

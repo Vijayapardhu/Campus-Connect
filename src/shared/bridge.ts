@@ -8,6 +8,7 @@ import type {
   ChatMessage,
   ClipboardHistoryEntry,
   ConnectivityResult,
+  DeepLink,
   JoinRequest,
   RemoteCapabilities,
   RemoteGrant,
@@ -21,7 +22,8 @@ import type {
   RoomType,
   RoomUpdate,
   StorageStats,
-  UpdateStatus
+  UpdateStatus,
+  WindowState
 } from './types';
 
 export type StatusTone = 'info' | 'success' | 'warning' | 'error';
@@ -75,6 +77,14 @@ export type ScreenSource = {
   name: string;
   kind: 'screen' | 'window';
   thumbnail: string;
+  /**
+   * The display id the `screen` module knows this source by, straight from
+   * desktopCapturer. The `id` field's `screen:ZZ:0` middle segment is a
+   * sequential number, not a display id, so this is the only reliable link
+   * between a captured screen and the rectangle the pointer must be mapped
+   * into. Empty when the platform does not report it.
+   */
+  displayId: string;
 };
 
 /** One step of remote desktop setup that arrived for us, with the sender attached. */
@@ -185,14 +195,16 @@ export type CampusConnectApi = {
   remoteRequest: (roomId: string, targetDeviceId: string) => Promise<ActionResult>;
   /**
    * The host's answer, and the only way a screen ever starts being shared.
-   * `grant` chooses viewing or control; `screenId` is the display picked.
+   * `grant` chooses viewing or control; `screenId` is the display picked and
+   * `displayId` is the screen-module id for it that the pointer maps into.
    */
   remoteRespond: (
     sessionId: string,
     allow: boolean,
     grant: RemoteGrant,
     screenId: string,
-    screenLabel: string
+    screenLabel: string,
+    displayId?: string
   ) => Promise<ActionResult>;
   /** Host only. Hands control over, or takes it back, without ending the session. */
   remoteSetGrant: (grant: RemoteGrant) => Promise<ActionResult>;
@@ -206,6 +218,40 @@ export type CampusConnectApi = {
   /** Whole displays only — a window cannot be clicked on reliably. */
   remoteScreens: () => Promise<ScreenSource[]>;
   remoteCapabilities: () => Promise<RemoteCapabilities>;
+
+  /**
+   * Claims the `campusconnect://` link that brought the app here, if any.
+   * Single-use: a reload cannot reopen a dialog already dealt with.
+   */
+  takeDeepLink: () => Promise<DeepLink | null>;
+  /** Links that arrive while the app is already running. */
+  onDeepLink: (handler: (link: DeepLink) => void) => () => void;
+
+  /**
+   * The window's own controls. `windowClose` means whatever the system's close
+   * button meant — for this app, hide to the tray rather than quit.
+   */
+  windowState: () => Promise<WindowState | null>;
+  windowMinimize: () => Promise<void>;
+  windowToggleMaximize: () => Promise<void>;
+  windowClose: () => Promise<void>;
+  onWindowState: (handler: (state: WindowState) => void) => () => void;
+
+  /**
+   * Peer-to-peer file sharing.
+   *
+   * The order matters and is the whole safety story: the sender asks by name
+   * only, the receiver answers, and only then does a picker open. Nothing is
+   * read off disk, and no files are named, until somebody has said yes.
+   */
+  fileShareRequest: (peerId: string, peerName: string) => Promise<ActionResult>;
+  fileShareRespond: (transferId: string, accept: boolean) => Promise<ActionResult>;
+  /** Sender only, after acceptance. Opens the native picker and streams. */
+  fileSharePick: (transferId: string) => Promise<ActionResult>;
+  fileShareCancel: (transferId: string) => Promise<ActionResult>;
+  /** Drops a finished transfer from the list. Saved files are untouched. */
+  fileShareDismiss: (transferId: string) => Promise<void>;
+  fileShareOpenFolder: () => Promise<void>;
 
   /**
    * Blocking. Total and local: nothing from a blocked device is read, stored,

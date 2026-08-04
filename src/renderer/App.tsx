@@ -5,6 +5,7 @@ import type {
   AppState,
   ChatMessage,
   ClipboardHistoryEntry,
+  DeepLink,
   DiscoveredRoom,
   RoomInfo,
   RoomInvite,
@@ -25,6 +26,9 @@ import {
   useCall
 } from './callui';
 import { RemoteHostBar, RemoteRequestModal, RemoteViewer, useRemote } from './remoteui';
+import { FileRequestModal, FilesPanel, useFileShare } from './filesharing';
+import { WindowControls, hasWindowControls, useWindowState } from './windowcontrols';
+import { Onboarding } from './onboarding';
 import { CommandPalette, type Command, type PaletteMode } from './palette';
 import { toFontStack } from './fonts';
 import {
@@ -40,6 +44,7 @@ import {
   MoonIcon,
   BookmarkIcon,
   MonitorIcon,
+  PaperclipIcon,
   PhoneIcon,
   PlusIcon,
   PowerIcon,
@@ -54,15 +59,31 @@ import {
 
 import { api } from './api';
 import { PhoneHome } from './phonehome';
-import { isPhoneClient } from './httpApi';
+import { canUseMedia, hasNativeFeatures, isPhoneClient } from './httpApi';
 type Tab = 'clipboard' | 'chat' | 'members' | 'call' | 'remote';
-type View = 'room' | 'settings';
+/**
+ * Files is a peer of Room and Settings rather than a tab inside a room: it is
+ * device-to-device, keeps no history and belongs to no room, so gating it
+ * behind picking and unlocking one made it unreachable exactly when it was
+ * wanted.
+ */
+type View = 'room' | 'files' | 'settings';
+
+/**
+ * Where the two-column layout stops fitting.
+ *
+ * Not a phone-versus-desktop line: at 768 the rail and the room were both on
+ * screen and neither had room, so the room's name truncated to two characters
+ * and the peer count collided with the power switch. Below this the two become
+ * pages instead of columns. Must match the media queries in the stylesheet.
+ */
+const NARROW_QUERY = '(max-width: 900px)';
 
 type Toast = { id: number; message: string; tone: StatusTone };
 
 type ModalState =
   | { kind: 'create' }
-  | { kind: 'join'; target: DiscoveredRoom | null }
+  | { kind: 'join'; target: DiscoveredRoom | null; code?: string; roomName?: string }
   | { kind: 'unlock'; roomId: string }
   | { kind: 'edit'; room: RoomInfo }
   | { kind: 'invite'; invite: RoomInvite }
@@ -121,12 +142,12 @@ export default function App() {
    * entirely and keeps both on screen.
    */
   const [narrow, setNarrow] = React.useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 760px)').matches
+    () => typeof window !== 'undefined' && window.matchMedia(NARROW_QUERY).matches
   );
   const [showRooms, setShowRooms] = React.useState(true);
 
   React.useEffect(() => {
-    const query = window.matchMedia('(max-width: 760px)');
+    const query = window.matchMedia(NARROW_QUERY);
     const update = () => setNarrow(query.matches);
     query.addEventListener('change', update);
     return () => query.removeEventListener('change', update);
@@ -140,6 +161,30 @@ export default function App() {
   });
 
   const remote = useRemote({ push });
+
+  const fileShare = state?.fileShare;
+  const files = useFileShare({ fileShare, push });
+
+  const windowState = useWindowState();
+
+  /*
+   * The platform reaches the stylesheet, so macOS can leave room for its
+   * traffic lights and nothing else has to pay for that gap.
+   */
+  const platform = windowState?.platform;
+  const topInset = windowState?.topInset ?? 0;
+  const ownControls = hasWindowControls(windowState);
+  React.useEffect(() => {
+    if (platform) {
+      document.documentElement.dataset.platform = platform;
+    }
+    // Tells the top bar to give up its right inset, so the controls reach the
+    // corner without having to know what that inset currently is.
+    document.documentElement.dataset.windowControls = String(ownControls);
+    // Maximised on Windows, the window reaches above the screen; this is how
+    // much of the top edge would otherwise be cut off.
+    document.documentElement.style.setProperty('--window-top-inset', `${topInset}px`);
+  }, [platform, topInset, ownControls]);
 
   // Keep the room id in a ref so event handlers registered once still know
   // which room is on screen.
@@ -211,6 +256,28 @@ export default function App() {
     ];
 
     return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
+  }, [push]);
+
+  /*
+   * `campusconnect://join?code=…` — the links room QR codes have always encoded.
+   *
+   * Two arrival routes: one that launched the app, claimed once the interface
+   * exists, and any that turn up while it is already running. Both open the
+   * join dialog with the code filled in rather than joining outright — a link
+   * from outside should say what it is about to do and wait to be agreed with.
+   */
+  React.useEffect(() => {
+    const open = (link: DeepLink) => {
+      setView('room');
+      setShowRooms(false);
+      setModal({ kind: 'join', target: null, code: link.code, roomName: link.roomName });
+      if (link.roomName) {
+        push(`Opening an invitation to ${link.roomName}.`, 'info');
+      }
+    };
+
+    api.takeDeepLink().then((link) => link && open(link));
+    return api.onDeepLink(open);
   }, [push]);
 
   // Load the selected room's history whenever the selection changes.
@@ -413,8 +480,15 @@ export default function App() {
   if (!state) {
     return (
       <div className="splash">
-        <span className="splash__dot" />
-        <span>Starting Campus Connect…</span>
+        {/* The window still has to be movable and closable while it starts —
+            a frameless window with nothing drawn yet is otherwise stuck. */}
+        <div className="splash__bar">
+          <WindowControls state={windowState} />
+        </div>
+        <div className="splash__body">
+          <span className="splash__dot" />
+          <span>Starting Campus Connect…</span>
+        </div>
       </div>
     );
   }
@@ -428,6 +502,10 @@ export default function App() {
     ? (room?.members.filter((member) => member.status === 'pending').length ?? 0)
     : 0;
   const memberCount = room?.members.filter((member) => member.status === 'accepted').length ?? 0;
+  const runningTransfers =
+    fileShare?.transfers.filter(
+      (transfer) => transfer.status === 'requested' || transfer.status === 'active'
+    ).length ?? 0;
 
   /**
    * Everything the palette can do.
@@ -490,7 +568,8 @@ export default function App() {
           group: 'Clipboard',
           run: () => run(api.clipboardShareNow())
         },
-        {
+        ...(hasNativeFeatures()
+          ? [{
           id: 'chat:file',
           label: 'Send a file',
           hint: `To ${room.name}`,
@@ -498,10 +577,11 @@ export default function App() {
           icon: <ChatIcon size={14} />,
           group: 'Chat',
           run: () => run(api.chatSendFile(room.roomId))
-        }
+        } as Command]
+          : [])
       );
 
-      if (memberCount > 1 && !call.session) {
+      if (memberCount > 1 && !call.session && canUseMedia()) {
         list.push(
           {
             id: 'call:audio',
@@ -546,7 +626,7 @@ export default function App() {
       }
 
       for (const member of room.members) {
-        if (member.status !== 'accepted' || member.deviceId === state!.deviceId) {
+        if (member.status !== 'accepted' || member.deviceId === state!.deviceId || !hasNativeFeatures()) {
           continue;
         }
         list.push({
@@ -603,6 +683,15 @@ export default function App() {
         group: 'App',
         run: toggleTheme
       },
+      ...(native ? [{
+        id: 'app:files',
+        label: 'Send files to a nearby device',
+        hint: 'Straight to one machine — nothing is kept',
+        keywords: 'file transfer send share drop device',
+        icon: <PaperclipIcon size={14} />,
+        group: 'App',
+        run: () => setView('files')
+      } as Command] : []),
       {
         id: 'app:settings',
         label: 'Open settings',
@@ -628,7 +717,18 @@ export default function App() {
   const roomCall = room
     ? state.activeCalls.find((active) => active.roomId === room.roomId && active.callId !== session?.callId)
     : undefined;
-  const canCall = online && room && !isLocked && memberCount > 1;
+  /*
+   * Everything a phone cannot do is decided in one place. The HTTP bridge
+   * refuses all of it already; this is what stops the phone offering it in the
+   * first place, which is the difference between a limitation and a dead end.
+   */
+  const native = hasNativeFeatures();
+  /*
+   * Calls need a microphone, not a desktop. A phone served over a certificate
+   * can hold one; the same phone over plain HTTP cannot, and the browser is the
+   * one that decides — so `canUseMedia` asks it rather than guessing.
+   */
+  const canCall = online && room && !isLocked && memberCount > 1 && canUseMedia();
 
   function toggleTheme() {
     const next: AppSettings['theme'] =
@@ -657,6 +757,13 @@ export default function App() {
         onJoinByCode={() => setModal({ kind: 'join', target: null })}
         onJoinDiscovered={(target) => setModal({ kind: 'join', target })}
         onOpenInvite={(invite) => setModal({ kind: 'invite', invite })}
+        showFiles={native}
+        onOpenFiles={() => {
+          setShowRooms(false);
+          setView((current) => (current === 'files' ? 'room' : 'files'));
+        }}
+        filesOpen={view === 'files'}
+        runningTransfers={runningTransfers}
         onOpenSettings={() => {
           setShowRooms(false);
           setView((current) => (current === 'settings' ? 'room' : 'settings'));
@@ -666,11 +773,16 @@ export default function App() {
 
       <main className="main">
         <header className="topbar">
-          {view === 'settings' ? (
+          {view === 'settings' || view === 'files' ? (
             <>
               <div className="topbar__title">
-                <span className="topbar__name">Settings</span>
+                <span className="topbar__name">{view === 'files' ? 'Files' : 'Settings'}</span>
               </div>
+              {view === 'files' && runningTransfers > 0 ? (
+                <Badge tone="accent">
+                  {runningTransfers} {runningTransfers === 1 ? 'transfer' : 'transfers'}
+                </Badge>
+              ) : null}
               <Button
                 size="sm"
                 variant="ghost"
@@ -682,7 +794,9 @@ export default function App() {
                 }}
               >
                 <XIcon size={14} />
-                Close
+                {/* Icon alone on a phone: the word was the last thing standing
+                    between the title and enough room to be read. */}
+                {narrow ? null : 'Close'}
               </Button>
             </>
           ) : room ? (
@@ -701,25 +815,29 @@ export default function App() {
               <div className="topbar__title">
                 <span className="topbar__name">{room.name}</span>
               </div>
-              <Badge tone={room.type === 'private' ? 'accent' : 'neutral'}>
-                {room.type === 'private' ? <LockIcon size={11} /> : <GlobeIcon size={11} />}
-                {room.type === 'private' ? 'Private' : 'Public'}
-              </Badge>
-              {room.encrypted ? (
-                <Badge tone="success">
-                  <ShieldIcon size={11} />
-                  Encrypted
+              {/* One cluster, not four peers. What these say about the room
+                  belongs together and belongs to the name beside it. */}
+              <div className="topbar__meta">
+                <Badge tone={room.type === 'private' ? 'accent' : 'neutral'}>
+                  {room.type === 'private' ? <LockIcon size={11} /> : <GlobeIcon size={11} />}
+                  {room.type === 'private' ? 'Private' : 'Public'}
                 </Badge>
-              ) : (
-                <Badge tone="warning">
-                  <AlertIcon size={11} />
-                  Not encrypted
+                {room.encrypted ? (
+                  <Badge tone="success">
+                    <ShieldIcon size={11} />
+                    Encrypted
+                  </Badge>
+                ) : (
+                  <Badge tone="warning">
+                    <AlertIcon size={11} />
+                    Not encrypted
+                  </Badge>
+                )}
+                <Badge>
+                  <UsersIcon size={11} />
+                  {memberCount}
                 </Badge>
-              )}
-              <Badge>
-                <UsersIcon size={11} />
-                {memberCount}
-              </Badge>
+              </div>
             </>
           ) : (
             <div className="topbar__title">
@@ -759,7 +877,7 @@ export default function App() {
 
             {online ? (
               <span
-                className="text-sm text-tertiary row"
+                className="topbar__peers text-sm text-tertiary row"
                 title={`${state.peers.length} device(s) seen on ${state.localAddress}`}
               >
                 <SignalIcon size={14} />
@@ -795,6 +913,8 @@ export default function App() {
               {theme === 'dark' ? <MoonIcon size={15} /> : <SunIcon size={15} />}
             </Button>
           </div>
+
+          <WindowControls state={windowState} />
         </header>
 
         {view === 'room' && online && room && !isLocked && (
@@ -921,6 +1041,24 @@ export default function App() {
               }
             />
           </div>
+        ) : view === 'files' ? (
+          // After the offline check and before the room checks: file sharing
+          // needs the network, but deliberately not a room.
+          <div className="panel">
+            <FilesPanel
+              peers={state.peers}
+              deviceId={state.deviceId}
+              blockedIds={new Set(state.blocked.map((device) => device.deviceId))}
+              protocolVersion={state.diagnostics.protocolVersion}
+              // An older desktop may not report file sharing at all; the panel
+              // then simply has nothing running in it rather than breaking.
+              fileShare={fileShare ?? { transfers: [], downloadFolder: '' }}
+              onSend={(peerId, peerName) => files.request(peerId, peerName)}
+              onCancel={(transferId) => files.cancel(transferId)}
+              onDismiss={(transferId) => files.dismiss(transferId)}
+              onOpenFolder={files.openFolder}
+            />
+          </div>
         ) : !room ? (
           <div className="panel">
             <EmptyState
@@ -1017,6 +1155,7 @@ export default function App() {
                     }
                   });
               }}
+              canSendFiles={native}
               onSendFile={() => run(api.chatSendFile(room.roomId))}
               onSaveFile={(messageId) => run(api.chatSaveFile(messageId))}
               onEdit={(messageId, content) => {
@@ -1081,6 +1220,7 @@ export default function App() {
                 deviceId={state.deviceId}
                 onApprove={(memberId) => run(api.roomApproveMember(room.roomId, memberId))}
                 onReject={(memberId) => run(api.roomRejectMember(room.roomId, memberId))}
+                canRemote={native}
                 onRemoteRequest={(memberId) => remote.ask(room.roomId, memberId)}
                 onEdit={() => setModal({ kind: 'edit', room })}
                 onBlock={(memberId, memberName) =>
@@ -1138,6 +1278,7 @@ export default function App() {
       {modal?.kind === 'join' && (
         <JoinRoomModal
           target={modal.target}
+          initialCode={modal.code}
           onClose={() => setModal(null)}
           onJoinDiscovered={(id, password, code) => run(api.roomRequestJoin(id, password, code))}
           onJoinByCode={(code, password) => run(api.roomJoinByCode(code, password))}
@@ -1185,6 +1326,33 @@ export default function App() {
           capabilities={state.remoteCapabilities}
           onRespond={(allow, grant, screen) => remote.respond(allow, grant, screen)}
           onDismiss={() => remote.dismissRequest()}
+        />
+      )}
+
+      {/* Ahead of every other overlay: this is somebody's first minute with the
+          app, and a dialog about a room they have not made yet is noise. */}
+      {!state.settings.hasOnboarded && (
+        <Onboarding
+          quickPasteShortcut={state.settings.quickPasteShortcut}
+          onFinish={() => api.updateSettings({ hasOnboarded: true }).then(setState)}
+        />
+      )}
+
+      {/* Files arriving needs answering while the sender is still waiting, and
+          the request expires on its own — so it interrupts too. */}
+      {fileShare?.incoming && (
+        <FileRequestModal
+          request={fileShare.incoming}
+          downloadFolder={fileShare.downloadFolder}
+          onRespond={(accept) => {
+            const transferId = fileShare.incoming!.transferId;
+            if (accept) {
+              // Somebody who just said yes wants to watch it arrive.
+              setShowRooms(false);
+              setView('files');
+            }
+            void files.respond(transferId, accept);
+          }}
         />
       )}
 

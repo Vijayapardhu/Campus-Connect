@@ -1,4 +1,5 @@
 import http from 'node:http';
+import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
 import log from 'electron-log';
@@ -39,6 +40,9 @@ export const PHONE_PORT = 37778;
 /** A phone paste has to be bounded; generous for text, far short of a file. */
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
+/** The certificate to serve with, when phone access is running secured. */
+export type PhoneTls = { key: string; cert: string };
+
 export type PhoneServerHooks = {
   /** Runs one permitted method, exactly as the desktop would. */
   call: (method: string, args: unknown[]) => Promise<unknown>;
@@ -68,13 +72,32 @@ export type PhoneServerHooks = {
  */
 export const PHONE_DENIED = [
   'remote:',
-  'call:',
   'quick-paste:',
   'update:install'
 ];
 
-export function isPhoneMethodAllowed(method: string): boolean {
-  return !PHONE_DENIED.some((prefix) => method === prefix || method.startsWith(prefix));
+/**
+ * Calls, which are only refused when they could not possibly work.
+ *
+ * A browser will not give a page a microphone unless it arrived over a secure
+ * origin, so over plain HTTP every one of these would end in a permission
+ * failure the person could do nothing about. Served with a certificate, the
+ * phone is a WebRTC peer like any other and there is nothing left to refuse.
+ *
+ * Sharing a screen stays out either way: a phone has no screen to offer.
+ */
+const PHONE_DENIED_INSECURE = ['call:'];
+
+/** Never available, whatever the transport — a phone has no desktop to capture. */
+const PHONE_DENIED_ALWAYS = ['call:screen-sources'];
+
+export function isPhoneMethodAllowed(method: string, secure = false): boolean {
+  const denied = [
+    ...PHONE_DENIED,
+    ...PHONE_DENIED_ALWAYS,
+    ...(secure ? [] : PHONE_DENIED_INSECURE)
+  ];
+  return !denied.some((prefix) => method === prefix || method.startsWith(prefix));
 }
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -90,8 +113,23 @@ const CONTENT_TYPES: Record<string, string> = {
   '.ico': 'image/x-icon'
 };
 
+/** How often an idle stream sends a comment, so nothing decides it has died. */
+const HEARTBEAT_MS = 20000;
+
 export class PhoneServer {
-  private server: http.Server | null = null;
+  private server: http.Server | https.Server | null = null;
+  private secure = false;
+  /**
+   * Streams currently open to paired phones.
+   *
+   * The desktop pushes; HTTP does not, which is why the phone used to poll
+   * every 1.5 seconds and still felt a beat behind — and why anything that
+   * expires on its own, like a ring or a transfer request, could not reach it
+   * at all. One long-lived response per phone turns every event the window
+   * receives into one the phone receives too.
+   */
+  private streams = new Set<http.ServerResponse>();
+  private heartbeat: NodeJS.Timeout | null = null;
   readonly sessions: PhoneSessions;
 
   constructor(private readonly hooks: PhoneServerHooks, pairings: PairingStore) {
@@ -103,38 +141,161 @@ export class PhoneServer {
   }
 
   /** Starts listening. Returns an error message, or an empty string. */
-  start(): string {
+  /**
+   * Brings the server up, over TLS when a certificate is supplied.
+   *
+   * Plain HTTP still works and is still offered, because it is what every
+   * already-paired phone expects — but it cannot carry a call. A browser will
+   * not hand out a microphone to a page it did not receive over a secure
+   * origin, and everything it does carry, including the phone's own token,
+   * crosses the WiFi in the clear.
+   */
+  start(tls?: PhoneTls): void {
     if (this.server) {
-      return '';
+      return;
     }
 
-    try {
-      const server = http.createServer((request, response) => {
-        this.handle(request, response).catch((error) => {
-          log.warn(`Phone server: ${(error as Error).message}`);
+    const handler = (request: http.IncomingMessage, response: http.ServerResponse) => {
+      void this.handle(request, response).catch((error: Error) => {
+        log.warn(`Phone request failed: ${error.message}`);
+        try {
           json(response, 500, { ok: false, message: 'Something went wrong.' });
-        });
+        } catch {
+          // The socket went away mid-answer. Nothing left to tell.
+        }
       });
+    };
 
-      server.on('error', (error) => {
-        log.warn(`Phone server error: ${error.message}`);
-        this.stop();
-      });
+    this.secure = Boolean(tls);
+    const server = tls ? https.createServer({ key: tls.key, cert: tls.cert }, handler) : http.createServer(handler);
 
-      server.listen(PHONE_PORT, '0.0.0.0');
-      this.server = server;
-      log.info(`Phone access listening on ${PHONE_PORT}`);
-      return '';
-    } catch (error) {
-      return `Phone access could not start: ${(error as Error).message}`;
-    }
+    server.on('error', (error) => {
+      log.warn(`Phone server error: ${error.message}`);
+    });
+
+    server.listen(PHONE_PORT, () => {
+      log.info(`Phone access listening on ${this.secure ? 'https' : 'http'}://0.0.0.0:${PHONE_PORT}`);
+    });
+
+    this.server = server;
+  }
+
+  /** Whether the running server is one a browser will grant a camera to. */
+  get isSecure(): boolean {
+    return this.secure;
   }
 
   stop(): void {
     this.sessions.close();
+    this.closeStreams();
     this.server?.close();
     this.server = null;
     log.info('Phone access stopped');
+  }
+
+  /**
+   * Pushes one event to every paired phone.
+   *
+   * Named for the IPC channel it mirrors, so the phone's bridge can hand it to
+   * exactly the listener the desktop would have. Nothing here decides what a
+   * phone should care about — a listener nobody registered simply goes nowhere,
+   * which is the same thing that happens in the window.
+   */
+  broadcast(channel: string, payload: unknown): void {
+    if (this.streams.size === 0) {
+      return;
+    }
+
+    // Serialised once for all of them; this runs on every message in a busy room.
+    let frame: string;
+    try {
+      frame = `event: ${channel}\ndata: ${JSON.stringify(payload ?? null)}\n\n`;
+    } catch {
+      return; // Not serialisable, so not something a phone can be told about.
+    }
+
+    for (const stream of Array.from(this.streams)) {
+      try {
+        stream.write(frame);
+      } catch {
+        this.dropStream(stream);
+      }
+    }
+  }
+
+  get connectedStreams(): number {
+    return this.streams.size;
+  }
+
+  /**
+   * One long-lived response per phone.
+   *
+   * Deliberately behind the same bearer check as everything else: a stream of
+   * every message in every room is not less sensitive than the calls that
+   * fetch them, and an unauthenticated one would be the most useful thing on
+   * the network to anybody watching.
+   */
+  private events(request: http.IncomingMessage, response: http.ServerResponse): void {
+    if (!this.sessions.verify(bearer(request))) {
+      json(response, 401, { ok: false, message: 'This phone is not paired.' });
+      return;
+    }
+
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      // Nothing should sit between these two machines, but a proxy that does
+      // would otherwise buffer the stream into uselessness.
+      'X-Accel-Buffering': 'no'
+    });
+    response.write('retry: 2000\n\n');
+
+    this.streams.add(response);
+    request.on('close', () => this.dropStream(response));
+    response.on('error', () => this.dropStream(response));
+
+    if (!this.heartbeat) {
+      /*
+       * A comment line every so often. A phone that sleeps and wakes, or a
+       * network that quietly drops an idle connection, otherwise leaves both
+       * ends believing in a stream that is no longer there.
+       */
+      this.heartbeat = setInterval(() => {
+        for (const stream of Array.from(this.streams)) {
+          try {
+            stream.write(': ping\n\n');
+          } catch {
+            this.dropStream(stream);
+          }
+        }
+      }, HEARTBEAT_MS);
+      this.heartbeat.unref?.();
+    }
+
+    this.hooks.onClientsChanged();
+  }
+
+  private dropStream(stream: http.ServerResponse): void {
+    if (!this.streams.delete(stream)) {
+      return;
+    }
+    try {
+      stream.end();
+    } catch {
+      // Already gone, which is the point.
+    }
+    if (this.streams.size === 0 && this.heartbeat) {
+      clearInterval(this.heartbeat);
+      this.heartbeat = null;
+    }
+    this.hooks.onClientsChanged();
+  }
+
+  private closeStreams(): void {
+    for (const stream of Array.from(this.streams)) {
+      this.dropStream(stream);
+    }
   }
 
   private async handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
@@ -158,6 +319,10 @@ export class PhoneServer {
 
     if (request.method === 'POST' && route === '/api/rpc') {
       return this.rpc(request, response);
+    }
+
+    if (request.method === 'GET' && route === '/api/events') {
+      return this.events(request, response);
     }
 
     if (request.method === 'GET') {
@@ -205,7 +370,7 @@ export class PhoneServer {
     const method = String(body?.method ?? '');
     const args = Array.isArray(body?.args) ? (body.args as unknown[]) : [];
 
-    if (!isPhoneMethodAllowed(method)) {
+    if (!isPhoneMethodAllowed(method, this.secure)) {
       log.warn(`Phone asked for a method it cannot have: ${method}`);
       json(response, 403, { ok: false, message: 'That one only works on the computer.' });
       return;

@@ -11,11 +11,13 @@ import {
   Tray,
   nativeImage,
   nativeTheme,
+  screen,
   shell
 } from 'electron';
 import log from 'electron-log';
 import Store from 'electron-store';
 import QRCode from 'qrcode';
+import AdmZip from 'adm-zip';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
@@ -35,12 +37,15 @@ import { HistoryManager } from './historyManager';
 import { CallManager } from './callManager';
 import { SnippetManager } from './snippetManager';
 import { QuickPaste } from './quickPaste';
-import { PhoneServer, PHONE_PORT } from './phoneServer';
+import { PhoneServer, PHONE_PORT, type PhoneTls } from './phoneServer';
+import { clearPhoneCertificate, ensurePhoneCertificate } from './phoneCert';
 import type { PhonePairing } from './phoneSession';
 import { RemoteSessionManager } from './remoteSession';
+import { FileShareManager } from './fileShare';
 import { createDisplayInjector, getPasteAction, getRemoteCapabilities } from './remoteInput';
 import { parseRemoteInput, type Injector } from './remoteControl';
 import { migrateUserData } from './migrate';
+import { DEEP_LINK_SCHEME, deepLinkFromArgv, parseDeepLink } from '../shared/deepLink';
 import { ChunkAssembler, splitIntoChunks } from './transfer';
 import { TcpTransport, probeTcp } from './tcp';
 import { Updater } from './updater';
@@ -93,7 +98,9 @@ import {
   type Snippet,
   type RoomUpdate,
   type StorageStats,
+  type DeepLink,
   type UpdateStatus,
+  type WindowState,
   type WireMessage
 } from '../shared/types';
 import type { CallSignalEvent, CallStartResult, ScreenSource } from '../shared/bridge';
@@ -102,7 +109,6 @@ import { isOpenableUrl } from '../shared/contentType';
 type AppStore = {
   deviceId: string;
   deviceName: string;
-  listenPort: number;
   peers: PeerInfo[];
   currentRoomId?: string;
   settings: AppSettings;
@@ -115,7 +121,24 @@ type AppStore = {
   phonePairings: PhonePairing[];
 };
 
-const BROADCAST_PORT = 37777;
+/**
+ * The port everything on the network talks over.
+ *
+ * Overridable, which is not a preference — it is the only way to run a second
+ * copy on one machine. Two instances otherwise fight over the same port, and
+ * since a peer is addressed by the host it announces, both would claim the same
+ * address and neither could reach the other. Set `CAMPUS_CONNECT_PORT` and a
+ * development copy stays entirely out of the way of an installed one.
+ *
+ * Ignored unless it parses to a usable port, so a stray value cannot leave the
+ * app listening somewhere nobody will look for it.
+ */
+function configuredPort(): number {
+  const override = Number(process.env.CAMPUS_CONNECT_PORT);
+  return Number.isInteger(override) && override > 1024 && override < 65536 ? override : 37777;
+}
+
+const BROADCAST_PORT = configuredPort();
 const ANNOUNCE_INTERVAL_MS = 3000;
 /**
  * Checking the clipboard is now cheap enough to do properly. It used to
@@ -172,6 +195,15 @@ const MAX_NACK_INDICES = 512;
  */
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
+/**
+ * How far ahead of the network a file transfer may queue before it waits.
+ *
+ * A socket write queues in memory rather than refusing, so without a ceiling a
+ * 500 MB file becomes 500 MB of RSS — exactly what streaming it slice by slice
+ * was meant to prevent.
+ */
+const FILE_SHARE_HIGH_WATER_BYTES = 4 * 1024 * 1024;
+
 /** Enough to make common files preview and open correctly on the far side. */
 const MIME_BY_EXTENSION: Record<string, string> = {
   '.png': 'image/png',
@@ -220,6 +252,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   startCallsMuted: false,
   quickPasteShortcut: 'Control+Shift+V',
   quickPasteAutoPaste: true,
+  phoneSecure: true,
+  hasOnboarded: false,
+  launchAtLogin: false,
+  launchMinimized: true,
   retainMediaDays: 7,
   maxStorageMb: 100,
   autoUpdate: true
@@ -246,7 +282,6 @@ const store = new Store<AppStore>({
   defaults: {
     deviceId: randomUUID(),
     deviceName: getSystemDeviceName(),
-    listenPort: BROADCAST_PORT,
     peers: [],
     currentRoomId: undefined,
     settings: DEFAULT_SETTINGS,
@@ -377,6 +412,51 @@ const callManager = new CallManager();
  */
 const remoteSessions = new RemoteSessionManager();
 
+/**
+ * Peer-to-peer file transfers. Memory-only like the rest of the sessions: a
+ * transfer is a thing that happens now, and nothing about it should survive a
+ * restart except the files the receiver chose to keep.
+ */
+const fileShares = new FileShareManager({
+  send: (peerId, signal) => {
+    const host = getPeerHost(peerId);
+    if (!host) {
+      return false;
+    }
+    const message = baseMessage('file-xfer');
+    message.fileXfer = signal;
+
+    /*
+     * File slices go over the direct link and nowhere else.
+     *
+     * The rest of the protocol tolerates a lost datagram — a clipboard item
+     * that misses gets shared again. A file does not: there is no retransmit
+     * on this path, so one dropped slice loses the whole file, and a ~32 KB
+     * datagram IP-fragments into two dozen pieces that only all have to arrive.
+     * TCP already orders and retransmits, and every discovered peer is dialled,
+     * so refusing here costs nothing and turns silent corruption into a clear
+     * "no direct connection" the moment it matters.
+     */
+    if (signal.kind === 'data') {
+      return Boolean(tcp?.isConnected(host)) && tcp!.send(host, JSON.stringify(message));
+    }
+    return sendUdpMessage(message, host);
+  },
+  downloadFolder: () => path.join(app.getPath('downloads'), 'Campus Connect'),
+  onChanged: sendStateToRenderer,
+  awaitReady: async (peerId) => {
+    const host = getPeerHost(peerId);
+    if (!host) {
+      return;
+    }
+    // Bounded memory rather than bounded speed: the file streams as fast as the
+    // link drains, and never queues more than this much ahead of it.
+    while (tcp?.isConnected(host) && tcp.pendingBytes(host) > FILE_SHARE_HIGH_WATER_BYTES) {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+  }
+});
+
 let mainWindow: BrowserWindow | null = null;
 let udpSocket: dgram.Socket | null = null;
 let announceTimer: NodeJS.Timeout | null = null;
@@ -455,7 +535,8 @@ function getAppState(): AppState {
     deviceId: deviceId(),
     deviceName: deviceName(),
     appVersion: app.getVersion(),
-    listenPort: read('listenPort'),
+    // The port actually bound, not a remembered one. See `baseMessage`.
+    listenPort: BROADCAST_PORT,
     localAddress: getLocalIpAddress(),
     peers: read('peers'),
     currentRoomId: read('currentRoomId'),
@@ -472,6 +553,7 @@ function getAppState(): AppState {
     snippets: snippetManager.list(),
     phone: phoneAccessState(),
     remote: remoteSessions.current ?? undefined,
+    fileShare: fileShares.state,
     remoteCapabilities: getRemoteCapabilities(),
     storage: historyManager.stats(),
     update: updater?.getStatus() ?? { state: 'idle', currentVersion: app.getVersion() },
@@ -493,12 +575,25 @@ function getAppState(): AppState {
 }
 
 function sendStateToRenderer() {
-  mainWindow?.webContents.send('app:state-changed', getAppState());
+  emit('app:state-changed', getAppState());
 }
 
 /** Tells the renderer to refetch history, so it never has to poll for it. */
+/**
+ * One event, to every interface that is listening.
+ *
+ * The window and a paired phone are two views of the same device, so anything
+ * worth telling one is worth telling the other. Sending to only the window is
+ * how the phone ended up polling for state and still missing everything that
+ * expires on its own — a ring, a transfer request, a join asking to be let in.
+ */
+function emit(channel: string, payload?: unknown): void {
+  mainWindow?.webContents.send(channel, payload);
+  phoneServer?.broadcast(channel, payload);
+}
+
 function notifyHistoryChanged(roomId: string) {
-  mainWindow?.webContents.send('history:changed', roomId);
+  emit('history:changed', roomId);
 }
 
 /**
@@ -506,21 +601,52 @@ function notifyHistoryChanged(roomId: string) {
  * Nothing is more irritating than being notified about the window you are
  * looking at.
  */
-function notify(title: string, body: string, onClick?: () => void): void {
+type NotifyOptions = {
+  onClick?: () => void;
+  /**
+   * Something that expires on its own and is gone if it is missed — a ringing
+   * call, a transfer waiting on an answer, somebody asking for this screen.
+   *
+   * Two things change. It is raised even while the window has focus, because
+   * "you are looking at the app" is not the same as "you are looking at the
+   * dialog that just appeared behind your editor". And it stays on screen
+   * rather than sliding away after a few seconds, because the whole point is
+   * that it is still true a moment later.
+   */
+  urgent?: boolean;
+};
+
+/**
+ * A system notification.
+ *
+ * Ordinary ones are suppressed while the window is focused — nothing is more
+ * irritating than being notified about the thing you are already looking at.
+ * Urgent ones are not, because they are the ones with a clock on them.
+ */
+function notify(title: string, body: string, options: NotifyOptions = {}): void {
   const settings = getSettings();
   if (!settings.notifications || !Notification.isSupported()) {
     return;
   }
 
   const visible = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible();
-  if (visible && mainWindow?.isFocused()) {
+  if (visible && mainWindow?.isFocused() && !options.urgent) {
     return;
   }
 
-  const notification = new Notification({ title, body, silent: !settings.notificationSound });
+  const notification = new Notification({
+    title,
+    body,
+    silent: !settings.notificationSound,
+    // Windows slides an ordinary toast away after about five seconds; 'never'
+    // leaves it in the action centre until it is answered or dismissed.
+    timeoutType: options.urgent ? 'never' : 'default',
+    urgency: options.urgent ? 'critical' : 'normal'
+  });
+
   notification.on('click', () => {
     showMainWindow();
-    onClick?.();
+    options.onClick?.();
   });
   notification.show();
 }
@@ -553,7 +679,7 @@ function sendStatus(message: string, tone: StatusTone = 'info') {
   }
 
   log.info(`[${tone}] ${message}`);
-  mainWindow?.webContents.send('sync:status', { message, tone });
+  emit('sync:status', { message, tone });
 }
 
 function hashText(text: string): string {
@@ -570,7 +696,16 @@ function baseMessage(type: WireMessage['type']): WireMessage {
     type,
     deviceId: deviceId(),
     deviceName: deviceName(),
-    port: read('listenPort'),
+    /*
+     * The port we are listening on right now.
+     *
+     * This was read from stored state that nothing ever wrote, so it could
+     * disagree with reality — after a migration from an older install, or any
+     * time the port is overridden. Every peer takes this as the address to
+     * answer on, so a stale number tells the whole network to reach this device
+     * somewhere it is not.
+     */
+    port: BROADCAST_PORT,
     host: getLocalIpAddress(),
     timestamp: Date.now()
   };
@@ -1314,7 +1449,7 @@ function handleRoomRequest(message: WireMessage, host: string) {
       deviceName: message.deviceName,
       requestedAt: Date.now()
     };
-    mainWindow?.webContents.send('room:join-request', request);
+    emit('room:join-request', request);
     sendStateToRenderer();
     sendStatus(`${message.deviceName} is asking to join ${room.name}`, 'warning');
     notify('Someone wants to join', `${message.deviceName} is asking to join ${room.name}`);
@@ -1340,7 +1475,7 @@ function handleRoomAccept(message: WireMessage) {
   roomManager.dropAdvert(room.roomId);
   write('currentRoomId', room.roomId);
   sendStateToRenderer();
-  mainWindow?.webContents.send('room:join-result', {
+  emit('room:join-result', {
     roomId: room.roomId,
     ok: true,
     message: `You are in ${room.name}`
@@ -1363,7 +1498,7 @@ function handleRoomReject(message: WireMessage) {
   }
 
   sendStateToRenderer();
-  mainWindow?.webContents.send('room:join-result', {
+  emit('room:join-result', {
     roomId: message.roomId,
     ok: false,
     message: message.reason ?? `Your request to join ${name} was declined.`
@@ -1594,7 +1729,7 @@ function handleChatMessage(message: WireMessage) {
     id: chat.id,
     timestamp: chat.timestamp
   });
-  mainWindow?.webContents.send('chat:message', stored);
+  emit('chat:message', stored);
   sendReceipt(chat.deviceId, message.roomId!, [stored.id], 'delivered');
 
   const room = roomManager.getRoom(message.roomId!);
@@ -1606,7 +1741,7 @@ function handleChatMessage(message: WireMessage) {
 
 /** Tells the renderer a room's messages changed, so it refetches them. */
 function notifyChatChanged(roomId: string) {
-  mainWindow?.webContents.send('chat:changed', roomId);
+  emit('chat:changed', roomId);
 }
 
 /*
@@ -1670,7 +1805,7 @@ function handleChatTyping(message: WireMessage) {
     return;
   }
 
-  mainWindow?.webContents.send('chat:typing', {
+  emit('chat:typing', {
     roomId: message.roomId,
     deviceId: message.deviceId,
     deviceName: message.deviceName,
@@ -1704,7 +1839,7 @@ function handleRoomInvite(message: WireMessage, host: string) {
 
   receivedInvites.set(advert.roomId, invite);
   roomManager.recordAdvert(advert, host);
-  mainWindow?.webContents.send('room:invite', invite);
+  emit('room:invite', invite);
   sendStateToRenderer();
   sendStatus(`${advert.ownerName} invited you to ${advert.name}`, 'warning');
   notify('Room invitation', `${advert.ownerName} invited you to ${advert.name}`);
@@ -1728,7 +1863,7 @@ function handleInviteAccept(message: WireMessage) {
 
   const updated = roomManager.addPendingMember(room.roomId, message.deviceId, message.deviceName);
   if (updated) {
-    mainWindow?.webContents.send('room:join-request', {
+    emit('room:join-request', {
       roomId: room.roomId,
       roomName: room.name,
       deviceId: message.deviceId,
@@ -1787,7 +1922,7 @@ function handleChatReceipt(message: WireMessage) {
   }
 
   if (historyManager.recordReceipt(message.messageIds, message.deviceId, message.receipt)) {
-    mainWindow?.webContents.send('chat:receipts', message.roomId);
+    emit('chat:receipts', message.roomId);
   }
 }
 
@@ -1867,7 +2002,7 @@ function sendCallSignal(roomId: string, signal: CallSignal): boolean {
 }
 
 function forwardCallSignal(message: WireMessage, signal: CallSignal): void {
-  mainWindow?.webContents.send('call:signal', {
+  emit('call:signal', {
     roomId: message.roomId!,
     fromDeviceId: message.deviceId,
     fromDeviceName: message.deviceName,
@@ -1878,7 +2013,7 @@ function forwardCallSignal(message: WireMessage, signal: CallSignal): void {
 /** Stops offering a ring, and tells the window to take the prompt down. */
 function clearRing(callId: string): void {
   if (ringing.delete(callId)) {
-    mainWindow?.webContents.send('call:ring-cancelled', callId);
+    emit('call:ring-cancelled', callId);
   }
 }
 
@@ -1895,7 +2030,7 @@ function endLocalCall(announce: boolean): void {
     sendCallSignal(call.roomId, { kind: 'leave', callId: call.callId });
   }
   callManager.leave(call.callId, deviceId());
-  mainWindow?.webContents.send('call:ended', call.callId);
+  emit('call:ended', call.callId);
   sendStateToRenderer();
 }
 
@@ -1967,10 +2102,12 @@ function handleCallRing(message: WireMessage, room: RoomInfo, signal: CallSignal
     return; // A repeat of a ring already on screen.
   }
 
-  mainWindow?.webContents.send('call:ring', ring);
+  emit('call:ring', ring);
   const kind = signal.mode === 'video' ? 'video call' : 'voice call';
   sendStatus(`${message.deviceName} is calling ${room.name}`, 'warning');
-  notify(`Incoming ${kind}`, `${message.deviceName} is calling ${room.name}`);
+  // A call is the shortest-lived thing this app raises: unanswered, it is gone
+  // in seconds. It interrupts even when the window has focus.
+  notify(`Incoming ${kind}`, `${message.deviceName} is calling ${room.name}`, { urgent: true });
 }
 
 function handleCall(message: WireMessage): void {
@@ -2088,15 +2225,30 @@ let remoteDisplayId = '';
 const REMOTE_PANIC_SHORTCUT = 'Control+Alt+Shift+X';
 
 /**
- * The display behind a `desktopCapturer` source id.
+ * The display behind a `desktopCapturer` source id — a fallback only.
  *
- * The id looks like `screen:0:0`, whose middle field is the display id the
- * `screen` module knows it by — which is what the pointer has to be mapped
- * into. `getSources` also reports it directly, but only when it feels like it,
- * so the id is parsed as a fallback.
+ * The id looks like `screen:0:0`, whose middle field is often, but not always,
+ * the display id the `screen` module knows it by (the docs call it "a
+ * sequential number"). `getSources` reports the real display id directly as
+ * `display_id`, which the renderer passes through and is preferred; this parse
+ * exists for platforms where that field comes back empty.
  */
 function displayIdFor(sourceId: string): string {
   return sourceId.split(':')[1] ?? '';
+}
+
+/**
+ * Text that arrived from another device and is about to be shown.
+ *
+ * Screen labels and refusal reasons are written by the far side, and a room
+ * member is authenticated rather than well behaved. A few kilobytes of text in
+ * a toast or a status bar is a layout problem at best.
+ */
+const MAX_REMOTE_TEXT = 120;
+
+function shortenForDisplay(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > MAX_REMOTE_TEXT ? `${flat.slice(0, MAX_REMOTE_TEXT)}…` : flat;
 }
 
 function sendRemoteSignal(roomId: string, signal: RemoteSignal): boolean {
@@ -2144,7 +2296,7 @@ function endRemoteSession(reason: string, announce: boolean): void {
     });
   }
 
-  mainWindow?.webContents.send('remote:ended', { sessionId: session.sessionId, reason });
+  emit('remote:ended', { sessionId: session.sessionId, reason });
   sendStateToRenderer();
 
   if (reason) {
@@ -2237,17 +2389,32 @@ function handleRemote(message: WireMessage): void {
         at: Date.now()
       };
 
-      mainWindow?.webContents.send('remote:request', request);
+      emit('remote:request', request);
       sendStatus(`${message.deviceName} is asking to see your screen`, 'warning');
       notify(
         'Screen access requested',
-        `${message.deviceName} wants to view your screen in ${room.name}. Nothing is shared until you allow it.`
+        `${message.deviceName} wants to view your screen in ${room.name}. Nothing is shared until you allow it.`,
+        // Expires in a minute, and is the most consequential thing anyone can
+        // ask this machine for. Missing it by not looking is not acceptable.
+        { urgent: true }
       );
       return;
     }
 
     case 'grant': {
-      // Our own request was allowed. We become the controller.
+      /*
+       * Our own request was allowed — but only if we made one. The session id
+       * is chosen by whoever speaks first, so without matching it back to an
+       * ask of ours, any room member could hand this device a session it never
+       * requested and take over its screen with their own.
+       */
+      const asked = remoteSessions.takeOutgoingRequest(signal.sessionId);
+      if (!asked || asked.targetDeviceId !== message.deviceId || asked.roomId !== roomId) {
+        log.warn(`Ignored a remote grant from ${message.deviceName} that answered no request of ours`);
+        return;
+      }
+
+      // We become the controller.
       const started = remoteSessions.start({
         sessionId: signal.sessionId,
         roomId,
@@ -2255,14 +2422,14 @@ function handleRemote(message: WireMessage): void {
         peerId: message.deviceId,
         peerName: message.deviceName,
         grant: signal.grant === 'control' ? 'control' : 'view',
-        screenLabel: String(signal.screenLabel ?? '')
+        screenLabel: shortenForDisplay(String(signal.screenLabel ?? ''))
       });
 
       if (!started) {
         return;
       }
 
-      mainWindow?.webContents.send('remote:started', remoteSessions.current);
+      emit('remote:started', remoteSessions.current);
       sendStateToRenderer();
       sendStatus(
         signal.grant === 'control'
@@ -2273,9 +2440,16 @@ function handleRemote(message: WireMessage): void {
       return;
     }
 
-    case 'deny':
-      sendStatus(String(signal.reason || `${message.deviceName} declined.`), 'warning');
+    case 'deny': {
+      // Same correlation as `grant`: a refusal for something we never asked is
+      // just a stranger putting text on our screen.
+      const asked = remoteSessions.takeOutgoingRequest(signal.sessionId);
+      if (!asked || asked.targetDeviceId !== message.deviceId) {
+        return;
+      }
+      sendStatus(shortenForDisplay(String(signal.reason || `${message.deviceName} declined.`)), 'warning');
       return;
+    }
 
     case 'grant-changed': {
       if (!remoteSessions.ownsSession(signal.sessionId, message.deviceId)) {
@@ -2284,7 +2458,7 @@ function handleRemote(message: WireMessage): void {
 
       const grant: RemoteGrant = signal.grant === 'control' ? 'control' : 'view';
       remoteSessions.setGrant(signal.sessionId, grant);
-      mainWindow?.webContents.send('remote:grant-changed', grant);
+      emit('remote:grant-changed', grant);
       sendStateToRenderer();
       sendStatus(
         grant === 'control'
@@ -2307,7 +2481,7 @@ function handleRemote(message: WireMessage): void {
       if (!remoteSessions.ownsSession(signal.sessionId, message.deviceId)) {
         return;
       }
-      mainWindow?.webContents.send('remote:signal', {
+      emit('remote:signal', {
         roomId,
         fromDeviceId: message.deviceId,
         fromDeviceName: message.deviceName,
@@ -2323,7 +2497,38 @@ function handleRemote(message: WireMessage): void {
 /** Requests nobody answered are refused rather than left hanging. */
 function sweepRemoteRequests(): void {
   for (const sessionId of remoteSessions.sweepRequests()) {
-    mainWindow?.webContents.send('remote:request-expired', sessionId);
+    emit('remote:request-expired', sessionId);
+  }
+}
+
+/**
+ * One step of a peer-to-peer file transfer, off the wire.
+ *
+ * Unlike remote desktop this is not room-scoped — it is device-to-device, and
+ * the only gate beyond the transport's own checks is whether the receiver
+ * accepted. Every signal is handed to the manager, which decides whether it
+ * belongs to a session it owns. Nothing is persisted here, which is the point:
+ * a transfer is a thing that happens now.
+ */
+function handleFileXfer(message: WireMessage): void {
+  const signal = message.fileXfer;
+  if (!signal || typeof signal.kind !== 'string' || typeof signal.transferId !== 'string') {
+    return;
+  }
+
+  // The sender is the only one who talks first, and only ever by name — the
+  // request carries no files, so agreeing to it cannot hand over anything yet.
+  fileShares.handleSignal(message.deviceId, message.deviceName, signal);
+
+  /*
+   * A transfer request had been the one thing in the app that asked for an
+   * answer without ever saying so out loud: it opens a dialog, times out after
+   * a minute, and until now raised nothing at all if the window was behind
+   * something else.
+   */
+  if (signal.kind === 'request' && fileShares.state.incoming?.transferId === signal.transferId) {
+    sendStatus(`${message.deviceName} wants to send you files`, 'warning');
+    notify('Incoming files', `${message.deviceName} wants to send you files.`, { urgent: true });
   }
 }
 
@@ -2352,6 +2557,7 @@ function sweepCalls(): void {
   }
 
   sweepRemoteRequests();
+  fileShares.sweep();
   if (phoneServer?.sessions.sweep()) {
     sendStateToRenderer();
   }
@@ -2441,6 +2647,8 @@ function handleWireMessage(message: WireMessage, host: string) {
       return handleCall(message);
     case 'remote':
       return handleRemote(message);
+    case 'file-xfer':
+      return handleFileXfer(message);
     default:
       return;
   }
@@ -2785,8 +2993,188 @@ function quickPasteItems(): { clips: ClipboardHistoryEntry[]; snippets: Snippet[
   };
 }
 
-function createWindow(): BrowserWindow {
+// --- launching with the machine ----------------------------------------------
+
+/**
+ * The flag a login-item launch carries.
+ *
+ * `openAsHidden` is a macOS-only concept; on Windows and Linux the registered
+ * command is just a command, so the only way to know it came from the system
+ * rather than from a person double-clicking is to have put something in it.
+ */
+const HIDDEN_LAUNCH_FLAG = '--hidden';
+
+/**
+ * Adopts whatever the system already says, once.
+ *
+ * Every previous version added itself to startup unconditionally, with no way
+ * to say otherwise. Now that it is a setting, defaulting it to off would mean
+ * upgrading quietly took the app *out* of startup for everyone who had grown
+ * used to it being there — a change nobody asked for, made invisibly.
+ *
+ * So on the first run that has the setting at all, the answer comes from the
+ * operating system rather than from the default. A fresh install has no entry
+ * and lands on off; an upgrade keeps what it had.
+ */
+function seedLaunchSettingFromSystem(): void {
+  const stored = read('settings') as Partial<AppSettings> | undefined;
+  if (stored && stored.launchAtLogin !== undefined) {
+    return;
+  }
+
+  let openAtLogin = false;
+  try {
+    openAtLogin = app.getLoginItemSettings().openAtLogin;
+  } catch {
+    // Unsupported platform, or no permission to look. Off is the safe answer.
+  }
+
+  write('settings', { ...getSettings(), launchAtLogin: openAtLogin });
+  log.info(`Adopted the existing startup setting: ${openAtLogin ? 'on' : 'off'}`);
+}
+
+/** True when this run began at login and should stay in the tray. */
+function startedHidden(): boolean {
+  if (process.argv.includes(HIDDEN_LAUNCH_FLAG)) {
+    return true;
+  }
+  // macOS answers this properly, and never sees the flag above.
+  return IS_MAC && app.getLoginItemSettings().wasOpenedAsHidden;
+}
+
+/**
+ * Puts the stored preference into effect.
+ *
+ * Called at startup as well as on change, because the login item lives in the
+ * operating system rather than in this app's own storage — a reinstall, a
+ * profile move or somebody clearing their startup list all leave the two
+ * disagreeing, and the app's own setting is the one that should win.
+ */
+function applyLaunchSettings(): void {
+  /*
+   * Only the installed copy gets to touch this.
+   *
+   * Electron keys the startup entry by application name, so a checkout running
+   * unpackaged shares the registry value with the installed app — and since
+   * this runs at every startup, a `npm run dev` would repoint the real app's
+   * autostart at a development tree, or with the setting off, delete it.
+   */
+  if (!app.isPackaged) {
+    return;
+  }
+
+  const settings = getSettings();
+
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: settings.launchAtLogin,
+      // macOS reads this; the others read the argument.
+      openAsHidden: settings.launchMinimized,
+      args: settings.launchMinimized ? [HIDDEN_LAUNCH_FLAG] : []
+    });
+  } catch (error) {
+    log.warn(`Could not update the startup setting: ${(error as Error).message}`);
+  }
+}
+
+// --- deep links --------------------------------------------------------------
+
+/**
+ * Links that open this app.
+ *
+ * The scheme was already being minted — every room QR code encodes
+ * `campusconnect://join?code=…` — but nothing had ever registered to receive
+ * it, so scanning one offered no application to open. Registering it is what
+ * makes that code path mean something.
+ */
+/** Links that arrived before there was a window to hand them to. */
+let pendingDeepLink: DeepLink | null = null;
+
+function registerProtocolClient(): void {
+  try {
+    if (app.isPackaged) {
+      app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
+      return;
+    }
+
+    /*
+     * Unpackaged, the executable is Electron itself, so the registration has to
+     * carry the script path too or the system launches a bare Electron with no
+     * application in it.
+     */
+    const entry = process.argv[1] ? [path.resolve(process.argv[1])] : [];
+    app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME, process.execPath, entry);
+  } catch (error) {
+    log.warn(`Could not register the ${DEEP_LINK_SCHEME}: scheme: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * Hands a link to the interface, opening the window if it is not already there.
+ *
+ * A link is always a deliberate act by the person at the keyboard, so unlike a
+ * message arriving from the network it is allowed to take the screen.
+ */
+function deliverDeepLink(link: DeepLink | null): void {
+  if (!link) {
+    return;
+  }
+
+  showMainWindow();
+
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.send('app:deep-link', link);
+    pendingDeepLink = null;
+    return;
+  }
+
+  // The window is still starting; it asks for this once it is ready.
+  pendingDeepLink = link;
+}
+
+/**
+ * Whether this platform keeps its own window controls.
+ *
+ * Only macOS does. Windows and Linux hand the whole frame over, which is what
+ * lets the application own its top edge rather than sitting under a strip of
+ * system chrome in the wrong colour.
+ */
+const IS_MAC = process.platform === 'darwin';
+
+function currentWindowState(window: BrowserWindow): WindowState {
+  return {
+    maximized: window.isMaximized(),
+    fullScreen: window.isFullScreen(),
+    // The renderer decides whether to draw controls at all from this, so it is
+    // reported rather than guessed at from a user-agent string.
+    platform: IS_MAC ? 'darwin' : process.platform === 'win32' ? 'win32' : 'linux',
+    topInset: maximizedTopInset(window)
+  };
+}
+
+/**
+ * How far a maximised window reaches above the usable screen.
+ *
+ * Windows grows a maximised window by the width of its invisible resize border
+ * on every side. With a frame that is unnoticeable; without one it quietly
+ * clips the top of the application — including part of the window controls.
+ *
+ * Measured against the display's work area rather than assumed to be 8px,
+ * because it scales with DPI and differs per monitor.
+ */
+function maximizedTopInset(window: BrowserWindow): number {
+  if (!window.isMaximized() || window.isFullScreen()) {
+    return 0;
+  }
+
+  const bounds = window.getBounds();
+  const { workArea } = screen.getDisplayMatching(bounds);
+  return Math.max(0, Math.min(16, workArea.y - bounds.y));
+}
+
+function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   const window = new BrowserWindow({
+    show,
     /*
      * Sized for the screens this actually runs on. The old 1180x780 left the
      * content column half empty on a 1080p laptop while still being tight
@@ -2799,6 +3187,18 @@ function createWindow(): BrowserWindow {
     minHeight: 680,
     title: 'Campus Connect',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0f1115' : '#ffffff',
+    /*
+     * The window draws its own top edge.
+     *
+     * On macOS the traffic lights stay native and are simply inset into the
+     * rail — they are muscle memory there, and an app that redraws them is the
+     * first thing a Mac user notices and dislikes. Everywhere else the frame
+     * goes entirely and the controls are ours, because the alternative is a
+     * grey OS strip sitting above a dark application.
+     */
+    frame: IS_MAC,
+    titleBarStyle: IS_MAC ? 'hiddenInset' : 'default',
+    trafficLightPosition: IS_MAC ? { x: 18, y: 18 } : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -2812,6 +3212,23 @@ function createWindow(): BrowserWindow {
       window.hide();
     }
   });
+
+  /*
+   * The controls are drawn by the renderer, so it has to be told what the
+   * window is doing — including when that changes without it, as it does on a
+   * double-click of the drag region or a keyboard maximise.
+   */
+  const reportWindowState = () => {
+    if (!window.isDestroyed()) {
+      window.webContents.send('window:state', currentWindowState(window));
+    }
+  };
+
+  window.on('maximize', reportWindowState);
+  window.on('unmaximize', reportWindowState);
+  window.on('enter-full-screen', reportWindowState);
+  window.on('leave-full-screen', reportWindowState);
+  window.webContents.on('did-finish-load', reportWindowState);
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -2895,7 +3312,31 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
 
-app.on('second-instance', () => showMainWindow());
+/*
+ * The second copy is how a link arrives on Windows and Linux.
+ *
+ * Clicking a `campusconnect://` link launches the registered command with the
+ * URL appended, which the single-instance lock turns into this event rather
+ * than a new process — so the URL is in *its* command line, not ours.
+ */
+app.on('second-instance', (_event, argv) => {
+  const link = deepLinkFromArgv(argv);
+  if (link) {
+    deliverDeepLink(link);
+    return;
+  }
+  showMainWindow();
+});
+
+/*
+ * macOS never puts the URL on a command line; it delivers it as an event, and
+ * routinely does so before the app is ready. `deliverDeepLink` parks anything
+ * that arrives too early until there is a window to give it to.
+ */
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  deliverDeepLink(parseDeepLink(url));
+});
 
 app.whenReady().then(() => {
   // A second copy is on its way out; it must not open a window or take a port.
@@ -2905,7 +3346,9 @@ app.whenReady().then(() => {
 
   // No File/Edit/View/Window/Help ribbon — the app has its own chrome.
   Menu.setApplicationMenu(null);
-  app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true });
+  seedLaunchSettingFromSystem();
+  applyLaunchSettings();
+  registerProtocolClient();
 
   /*
    * What the window is allowed to ask the system for. Everything unrecognised is
@@ -2955,9 +3398,25 @@ app.whenReady().then(() => {
 
   compactStorage();
 
-  mainWindow = createWindow();
+  /*
+   * A login-item launch stays in the tray.
+   *
+   * The window is still built — the clipboard poller, the quick-paste overlay
+   * and everything the renderer drives all live in it — it simply never shows
+   * itself. What people ask for when they ask for "start with Windows" is the
+   * app running, not the app in their face at every boot.
+   */
+  const hiddenStart = startedHidden() && getSettings().launchMinimized;
+  mainWindow = createWindow({ show: !hiddenStart });
   setupTray();
   setupQuickPaste();
+
+  if (hiddenStart) {
+    log.info('Started at login; staying in the tray');
+  }
+
+  // A link that launched the app arrives on this process's own command line.
+  pendingDeepLink = pendingDeepLink ?? deepLinkFromArgv(process.argv);
 
   // Left off last time means still off now; the switch survives a restart.
   if (getSettings().online) {
@@ -2969,7 +3428,7 @@ app.whenReady().then(() => {
 
   updater = new Updater({
     onStatus: (status) => {
-      mainWindow?.webContents.send('update:status', status);
+      emit('update:status', status);
       sendStateToRenderer();
 
       if (status.state === 'ready' && status.availableVersion) {
@@ -3027,6 +3486,26 @@ function updateSettings(patch: Partial<AppSettings>): AppState {
   }
   if (patch.online !== undefined) {
     setNetworkEnabled(patch.online);
+  }
+  if (patch.launchAtLogin !== undefined || patch.launchMinimized !== undefined) {
+    applyLaunchSettings();
+  }
+  if (patch.phoneSecure !== undefined && phoneServer?.running) {
+    /*
+     * The transport is decided when the server starts, so changing it while one
+     * is running did nothing at all until somebody stopped and started it by
+     * hand. Restarting here is also what makes the change honest: every phone
+     * has to pair again, because the origin it trusted no longer exists.
+     */
+    phoneServer.stop();
+    void startPhoneAccess().then((result) => {
+      sendStatus(
+        result.ok
+          ? `Phone access restarted ${next.phoneSecure ? 'encrypted' : 'unencrypted'}. Your phones need to scan the code again.`
+          : result.message,
+        result.ok ? 'warning' : 'error'
+      );
+    });
   }
   if (patch.quickPasteShortcut !== undefined) {
     const problem = quickPaste?.setShortcut(next.quickPasteShortcut) ?? '';
@@ -3473,6 +3952,21 @@ handle('room:remove-member', (_event, roomId: string, memberId: string): ActionR
     return fail('That member could not be removed.');
   }
 
+  /*
+   * Removing someone who is driving this screen has to stop them driving it.
+   * Membership is checked when a session starts and never again, so without
+   * this the removed device keeps its session — and its control — indefinitely.
+   * Blocking already did this; being removed from the room did not.
+   */
+  const session = remoteSessions.current;
+  if (session?.peerId === memberId && session.roomId === roomId) {
+    endRemoteSession(
+      `${member?.deviceName ?? 'That device'} was removed from ${room.name}, so the remote session ended.`,
+      true
+    );
+  }
+  remoteSessions.clearDevice(memberId);
+
   broadcastRoster(room);
   sendStateToRenderer();
   return ok(`${member?.deviceName ?? 'Device'} was removed from ${room.name}.`);
@@ -3708,7 +4202,7 @@ function postChatMessage(
     return fail('That was too large to send.');
   }
 
-  mainWindow?.webContents.send('chat:message', chatMessage);
+  emit('chat:message', chatMessage);
   return ok('Sent');
 }
 
@@ -4010,7 +4504,9 @@ function phoneAccessState(): PhoneAccess {
      * leaves this process inside the QR image below, which is what makes
      * "scanning is the only way in" true rather than merely encouraged.
      */
-    pairUrl: active ? `http://${getLocalIpAddress()}:${PHONE_PORT}/?k=${sessions?.currentKey ?? ''}` : '',
+    pairUrl: active
+      ? `${phoneServer?.isSecure ? 'https' : 'http'}://${getLocalIpAddress()}:${PHONE_PORT}/?k=${sessions?.currentKey ?? ''}`
+      : '',
     clients: sessions?.list() ?? [],
     lockedUntil: sessions?.lockedOutUntil ?? 0
   };
@@ -4033,7 +4529,7 @@ function toPhoneItem(item: {
   };
 }
 
-function startPhoneAccess(): ActionResult {
+async function startPhoneAccess(): Promise<ActionResult> {
   const offline = requireOnline();
   if (offline) {
     return offline;
@@ -4065,18 +4561,48 @@ function startPhoneAccess(): ActionResult {
     );
   }
 
-  const problem = phoneServer.start();
-  if (problem) {
-    return fail(problem);
+  /*
+   * A certificate turns the phone into a secure origin, which is the only way a
+   * browser will hand it a microphone — and it stops the phone's token and every
+   * message it reads crossing the WiFi in clear text. Issued for the addresses
+   * this machine actually answers on, since a browser checks those and rejects
+   * anything else outright.
+   */
+  let tls: PhoneTls | undefined;
+  if (getSettings().phoneSecure) {
+    try {
+      /*
+       * Every address this machine answers on, not just the preferred one.
+       * A laptop on WiFi and Ethernet at once has two, and a phone that
+       * reaches it by the other gets a certificate that does not name the
+       * address it dialled — which browsers reject outright.
+       */
+      const addresses = currentInterfaces()
+        .map((entry) => entry.address)
+        .filter((address) => address && !address.includes(':'));
+      const certificate = await ensurePhoneCertificate(app.getPath('userData'), [
+        getLocalIpAddress(),
+        ...addresses
+      ]);
+      tls = { key: certificate.key, cert: certificate.cert };
+    } catch (error) {
+      log.warn(`Could not prepare the phone certificate: ${(error as Error).message}`);
+      return fail('A certificate for phone access could not be created, so it was not started.');
+    }
   }
 
+  phoneServer.start(tls);
   phoneServer.sessions.open();
   sendStateToRenderer();
 
-  return ok('Phone access is on. Scan the code with your phone.');
+  return ok(
+    tls
+      ? 'Phone access is on. Scan the code, then accept the certificate warning once.'
+      : 'Phone access is on. Scan the code with your phone.'
+  );
 }
 
-handle('phone:start', (): ActionResult => startPhoneAccess());
+handle('phone:start', (): Promise<ActionResult> => startPhoneAccess());
 
 /**
  * The phone's own clipboard, straight to and from this machine.
@@ -4303,6 +4829,10 @@ handle('remote:request', (_event, roomId: string, targetDeviceId: string): Actio
     return fail('The request could not be sent — that device could not be reached.');
   }
 
+  // Remembered so the answer can be matched back to this ask, and to this
+  // device. Anything else claiming to answer it is discarded.
+  remoteSessions.noteOutgoingRequest(sessionId, roomId, targetDeviceId);
+
   return ok(
     `Asked ${target?.deviceName ?? 'that device'} for access. They have to allow it before anything is shared.`
   );
@@ -4325,7 +4855,8 @@ handle(
     allow: boolean,
     grant: RemoteGrant,
     screenId: string,
-    screenLabel: string
+    screenLabel: string,
+    displayId?: string
   ): ActionResult => {
     const request = remoteSessions.takeRequest(sessionId);
     if (!request) {
@@ -4382,7 +4913,7 @@ handle(
       return fail('A remote session is already running.');
     }
 
-    remoteDisplayId = displayIdFor(screenId);
+    remoteDisplayId = displayId || displayIdFor(screenId);
     if (effectiveGrant === 'control') {
       remoteInjector = createDisplayInjector(remoteDisplayId);
       if (!remoteInjector) {
@@ -4402,7 +4933,7 @@ handle(
       screenLabel: screenLabel || 'a screen'
     });
 
-    mainWindow?.webContents.send('remote:started', remoteSessions.current);
+    emit('remote:started', remoteSessions.current);
     sendStateToRenderer();
 
     return ok(
@@ -4510,11 +5041,153 @@ handle('remote:screens', async (): Promise<ScreenSource[]> => {
     id: source.id,
     name: source.name,
     kind: 'screen' as const,
-    thumbnail: source.thumbnail.toDataURL()
+    thumbnail: source.thumbnail.toDataURL(),
+    displayId: source.display_id
   }));
 });
 
 handle('remote:capabilities', (): RemoteCapabilities => getRemoteCapabilities());
+
+/**
+ * Claims whatever link brought the app here, if any.
+ *
+ * Pulled by the renderer once it can act rather than pushed at it the moment it
+ * arrives: a link that launched the app is ready long before anything exists to
+ * open a dialog. Single-use, so a reload cannot reopen a dialog already dealt
+ * with.
+ */
+handle('app:take-deep-link', (): DeepLink | null => {
+  const link = pendingDeepLink;
+  pendingDeepLink = null;
+  return link;
+});
+
+// --- window controls IPC -----------------------------------------------------
+
+/**
+ * The buttons in the corner.
+ *
+ * Close deliberately goes through the window's own `close`, not `destroy`, so
+ * it means exactly what the system's close button meant before this replaced
+ * it — which for this app is "hide to the tray", not "quit".
+ */
+handle('window:state', (event): WindowState | null => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  return window ? currentWindowState(window) : null;
+});
+
+handle('window:minimize', (event): void => {
+  BrowserWindow.fromWebContents(event.sender)?.minimize();
+});
+
+handle('window:toggle-maximize', (event): void => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) {
+    return;
+  }
+  if (window.isMaximized()) {
+    window.unmaximize();
+  } else {
+    window.maximize();
+  }
+});
+
+handle('window:close', (event): void => {
+  BrowserWindow.fromWebContents(event.sender)?.close();
+});
+
+// --- file sharing IPC ------------------------------------------------------------
+
+/**
+ * The sender asks a discovered peer whether it will receive files. Nothing is
+ * picked yet — the peer accepts the *idea* of a transfer, and only then is a
+ * connection opened for files that are actually chosen.
+ */
+handle('files:request', (_event, peerId: string, peerName: string): ActionResult => {
+  const offline = requireOnline();
+  if (offline) {
+    return offline;
+  }
+  if (peerId === deviceId()) {
+    return fail('You cannot send files to this device.');
+  }
+
+  /*
+   * Checked here rather than discovered halfway through a file. The link is
+   * dialled automatically for every peer we can see, so this normally passes —
+   * and when it does not, it is a firewall worth naming up front.
+   */
+  const host = getPeerHost(peerId);
+  if (!host || !tcp?.isConnected(host)) {
+    return fail(
+      `No direct connection to ${peerName} yet. File transfers need one — check that port ${BROADCAST_PORT} is allowed through the firewall on both machines, then try again in a moment.`
+    );
+  }
+
+  return fileShares.request(peerId, peerName);
+});
+
+/** The receiver's answer to a request. */
+handle('files:respond', async (_event, transferId: string, accept: boolean): Promise<ActionResult> => {
+  return fileShares.respond(transferId, accept);
+});
+
+/**
+ * The sender chooses what to send, once the peer has said yes. The dialog is
+ * the only place the filesystem is touched on this side; everything after that
+ * streams through the manager.
+ */
+handle('files:pick', async (_event, transferId: string): Promise<ActionResult> => {
+  if (!mainWindow) {
+    return fail('No window available.');
+  }
+
+  const picked = await dialog.showOpenDialog(mainWindow, {
+    title: 'Send files',
+    buttonLabel: 'Send',
+    properties: ['openFile', 'multiSelections']
+  });
+  if (picked.canceled || picked.filePaths.length === 0) {
+    return ok('Cancelled.');
+  }
+
+  const files: { path: string; name: string; size: number }[] = [];
+  for (const filePath of picked.filePaths) {
+    let stats;
+    try {
+      stats = await fs.stat(filePath);
+    } catch {
+      return fail('One of the files could not be read.');
+    }
+    if (!stats.isFile()) {
+      continue;
+    }
+    files.push({ path: filePath, name: path.basename(filePath), size: stats.size });
+  }
+
+  if (files.length === 0) {
+    return fail('Nothing to send was selected.');
+  }
+  return fileShares.sendFiles(transferId, files);
+});
+
+/** Either side stops a transfer. */
+handle('files:cancel', (_event, transferId: string): ActionResult => {
+  return fileShares.cancel(transferId);
+});
+
+/** Removes a finished transfer from the list. The saved files stay. */
+handle('files:dismiss', (_event, transferId: string): void => {
+  fileShares.dismiss(transferId);
+});
+
+/** Opens the folder received files land in. */
+handle('files:open-folder', (): void => {
+  const folder = path.join(app.getPath('downloads'), 'Campus Connect');
+  void fs.mkdir(folder, { recursive: true }).then(() => {
+    void shell.openPath(folder);
+  });
+});
 
 // --- blocking IPC ------------------------------------------------------------
 
@@ -4744,7 +5417,8 @@ handle('call:screen-sources', async (): Promise<ScreenSource[]> => {
       id: source.id,
       name: source.name,
       kind: source.id.startsWith('screen:') ? ('screen' as const) : ('window' as const),
-      thumbnail: source.thumbnail.toDataURL()
+      thumbnail: source.thumbnail.toDataURL(),
+      displayId: source.id.startsWith('screen:') ? source.display_id : ''
     }));
 });
 
