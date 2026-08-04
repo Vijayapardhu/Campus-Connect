@@ -95,6 +95,16 @@ const MOUSE_BUTTONS = new Set<RemoteMouseButton>(['left', 'right', 'middle']);
 export const MAX_TEXT_LENGTH = 4096;
 
 /**
+ * Furthest a single scroll event may travel, in notches.
+ *
+ * The viewer already reduces wheel deltas to a handful of notches, but that is a
+ * convenience for real mice, not a limit — it runs on the *controller*, which is
+ * the side being trusted. A scroll of a billion is finite, passes every other
+ * check, and goes straight to the native module.
+ */
+export const MAX_SCROLL_NOTCHES = 20;
+
+/**
  * Translates a browser key name into robotjs's. Returns null for anything
  * unrecognised or refused, and the caller drops it rather than guessing.
  */
@@ -168,10 +178,16 @@ export function parseRemoteInput(value: unknown): RemoteInputEvent | null {
         ? { t: event.t, x: event.x, y: event.y, b: event.b as RemoteMouseButton }
         : null;
 
-    case 'scroll':
+    case 'scroll': {
+      // Clamped here rather than trusted: this is the boundary, and the
+      // controller's own clamping is not evidence about what arrives.
+      const notches = (value: number) =>
+        Math.max(-MAX_SCROLL_NOTCHES, Math.min(MAX_SCROLL_NOTCHES, Math.trunc(value)));
+
       return isFraction(event.dx) && isFraction(event.dy)
-        ? { t: 'scroll', dx: event.dx, dy: event.dy }
+        ? { t: 'scroll', dx: notches(event.dx), dy: notches(event.dy) }
         : null;
+    }
 
     case 'key':
       return typeof event.k === 'string' && typeof event.down === 'boolean'

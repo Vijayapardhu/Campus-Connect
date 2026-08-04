@@ -57,8 +57,8 @@ const api: CampusConnectApi = {
   callScreenSources: () => ipcRenderer.invoke('call:screen-sources'),
 
   remoteRequest: (roomId, targetDeviceId) => ipcRenderer.invoke('remote:request', roomId, targetDeviceId),
-  remoteRespond: (sessionId, allow, grant, screenId, screenLabel) =>
-    ipcRenderer.invoke('remote:respond', sessionId, allow, grant, screenId, screenLabel),
+  remoteRespond: (sessionId, allow, grant, screenId, screenLabel, displayId) =>
+    ipcRenderer.invoke('remote:respond', sessionId, allow, grant, screenId, screenLabel, displayId),
   remoteSetGrant: (grant) => ipcRenderer.invoke('remote:set-grant', grant),
   remoteEnd: () => ipcRenderer.invoke('remote:end'),
   remoteSignal: (signal) => ipcRenderer.invoke('remote:signal', signal),
@@ -66,6 +66,20 @@ const api: CampusConnectApi = {
     ipcRenderer.invoke('remote:input', sessionId, fromDeviceId, event),
   remoteScreens: () => ipcRenderer.invoke('remote:screens'),
   remoteCapabilities: () => ipcRenderer.invoke('remote:capabilities'),
+
+  takeDeepLink: () => ipcRenderer.invoke('app:take-deep-link'),
+
+  windowState: () => ipcRenderer.invoke('window:state'),
+  windowMinimize: () => ipcRenderer.invoke('window:minimize'),
+  windowToggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
+  windowClose: () => ipcRenderer.invoke('window:close'),
+
+  fileShareRequest: (peerId, peerName) => ipcRenderer.invoke('files:request', peerId, peerName),
+  fileShareRespond: (transferId, accept) => ipcRenderer.invoke('files:respond', transferId, accept),
+  fileSharePick: (transferId) => ipcRenderer.invoke('files:pick', transferId),
+  fileShareCancel: (transferId) => ipcRenderer.invoke('files:cancel', transferId),
+  fileShareDismiss: (transferId) => ipcRenderer.invoke('files:dismiss', transferId),
+  fileShareOpenFolder: () => ipcRenderer.invoke('files:open-folder'),
 
   blockDevice: (deviceId, deviceName) => ipcRenderer.invoke('privacy:block', deviceId, deviceName),
   unblockDevice: (deviceId) => ipcRenderer.invoke('privacy:unblock', deviceId),
@@ -109,6 +123,9 @@ const api: CampusConnectApi = {
   onCallSignal: (handler) => subscribe('call:signal', handler),
   onCallEnded: (handler) => subscribe('call:ended', handler),
   onQuickPasteOpened: (handler) => subscribe('quick-paste:opened', handler),
+
+  onDeepLink: (handler) => subscribe('app:deep-link', handler),
+  onWindowState: (handler) => subscribe('window:state', handler),
 
   onRemoteRequest: (handler) => subscribe('remote:request', handler),
   onRemoteRequestExpired: (handler) => subscribe('remote:request-expired', handler),

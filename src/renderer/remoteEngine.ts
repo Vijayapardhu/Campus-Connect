@@ -31,6 +31,13 @@ export type RemoteEngineHooks = {
   onConnectionState: (state: RemoteConnectionState) => void;
   /** Host only: an input event arrived and should be applied. */
   onInput: (event: RemoteInputEvent) => void;
+  /**
+   * Host only: the shared screen has gone — unplugged, or stopped from the OS's
+   * own sharing indicator. Distinct from `onError` because there is no session
+   * left to continue: the far side would sit on a frozen frame, and the pointer
+   * would be aimed at a display that no longer exists.
+   */
+  onScreenLost: () => void;
   onError: (message: string) => void;
 };
 
@@ -107,7 +114,11 @@ export class RemoteEngine {
     this.screenTrack = track;
     // The screen going away — unplugged, or the session ended from the OS — has
     // to end the session rather than leave the far end on a frozen frame.
-    track.addEventListener('ended', () => this.hooks.onError('The shared screen is no longer available.'));
+    track.addEventListener('ended', () => {
+      if (!this.stopped) {
+        this.hooks.onScreenLost();
+      }
+    });
 
     const pc = this.createConnection();
 

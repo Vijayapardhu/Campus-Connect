@@ -1,5 +1,6 @@
 import type { AppSettings, AppState } from '../shared/types';
 import type { CampusConnectApi } from '../shared/bridge';
+import { openEventStream } from './eventStream';
 
 /**
  * The same API surface, over HTTP instead of Electron IPC.
@@ -22,8 +23,15 @@ import type { CampusConnectApi } from '../shared/bridge';
  *    hide them and nothing breaks if it misses one.
  */
 
-/** How often the phone asks what changed. Fast enough to feel live, cheap on a LAN. */
-const POLL_MS = 1500;
+/**
+ * How often the phone reconciles against the desktop's full state.
+ *
+ * Was a second and a half, because polling *was* the transport. Now that
+ * changes are pushed, this only exists to repair a gap — a stream dropped
+ * while the phone slept, an event missed mid-reconnect — so it can be far
+ * slower, which a phone's battery notices and nothing else does.
+ */
+const POLL_MS = 20000;
 
 const TOKEN_KEY = 'campus-connect-token';
 
@@ -41,6 +49,35 @@ const PHONE_CLIENT = typeof window !== 'undefined' && !('campusConnect' in windo
 
 export function isPhoneClient(): boolean {
   return PHONE_CLIENT;
+}
+
+/**
+ * Whether this device can do the things only a computer can.
+ *
+ * Calls, remote desktop, peer-to-peer file transfer and every native dialog
+ * are refused on a phone. The refusals below were written so the interface
+ * could hide those affordances — and then nothing did, so a phone showed a
+ * full set of buttons whose only possible outcome was "that is only available
+ * on the computer". A button that can never work is worse than no button.
+ */
+export function hasNativeFeatures(): boolean {
+  return !PHONE_CLIENT;
+}
+
+/**
+ * Whether this page may ask for a microphone and a camera.
+ *
+ * `isSecureContext` is the browser's own answer to the question that decides
+ * whether a call is possible here, so it is asked directly rather than inferred
+ * from the URL or from a setting the desktop reports. On the desktop it is
+ * always true; on a phone it is true exactly when phone access is being served
+ * with a certificate.
+ */
+export function canUseMedia(): boolean {
+  if (!PHONE_CLIENT) {
+    return true;
+  }
+  return typeof window !== 'undefined' && window.isSecureContext === true;
 }
 
 export function storedToken(): string {
@@ -150,7 +187,7 @@ export async function rawRpc<T>(method: string, ...args: unknown[]): Promise<T> 
  * laptop reports, so each device decides its own view while everything that is
  * genuinely about the machine — sharing, notifications, retention — stays shared.
  */
-const VIEW_KEYS = ['theme', 'fontScale', 'fontFamily'] as const;
+const VIEW_KEYS = ['theme', 'fontScale', 'fontFamily', 'hasOnboarded'] as const;
 const LOCAL_KEY = 'campus-connect-view';
 
 type LocalView = {
@@ -178,9 +215,6 @@ function writeLocalView(view: LocalView): void {
 /** Refused, in the shape each caller expects. */
 const UNAVAILABLE = 'That is only available on the computer.';
 
-function notHere(): Promise<never> {
-  return Promise.reject(new Error(UNAVAILABLE));
-}
 
 function refuse() {
   return Promise.resolve({ ok: false, message: UNAVAILABLE });
@@ -225,15 +259,40 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
   }
 
   /*
-   * Polling, turned back into the events the interface already expects.
+   * Events, pushed rather than polled for.
    *
-   * Only the listeners that matter on a phone are ever fired. The rest exist so
-   * that the interface's `useEffect` blocks can subscribe without special-casing
-   * anything, and simply never hear from them.
+   * One set of listeners per IPC channel, keyed by the same channel name the
+   * desktop uses — so an event the window would have received is delivered to
+   * exactly the listener the window would have delivered it to, and nothing
+   * above this layer knows which transport it came over.
+   *
+   * Polling stays, slowed right down, as reconciliation. A stream that drops
+   * while the phone is asleep can miss whatever happened in the gap; a periodic
+   * full state read means the interface is never wrong for longer than that,
+   * even if it is briefly late.
    */
-  const stateListeners = new Set<Listener<AppState>>();
-  const historyListeners = new Set<Listener<string>>();
-  const chatChangedListeners = new Set<Listener<string>>();
+  const channels = new Map<string, Set<Listener<never>>>();
+
+  function listeners<T>(channel: string): Set<Listener<T>> {
+    let set = channels.get(channel);
+    if (!set) {
+      set = new Set();
+      channels.set(channel, set);
+    }
+    return set as unknown as Set<Listener<T>>;
+  }
+
+  function on<T>(channel: string, handler: Listener<T>): () => void {
+    const set = listeners<T>(channel);
+    set.add(handler);
+    return () => {
+      set.delete(handler);
+    };
+  }
+
+  function fire<T>(channel: string, value: T): void {
+    listeners<T>(channel).forEach((handler) => handler(value));
+  }
 
   let lastState = '';
   let lastRoom = '';
@@ -241,20 +300,28 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
   let lastChatCount = -1;
   let polling = false;
 
+  /**
+   * Reads the whole state, fires the change only if it actually changed, and
+   * hands the state back so a caller that needs it does not fetch it again.
+   */
+  async function refreshState(): Promise<AppState> {
+    const state = await localState();
+    const serialised = JSON.stringify(state);
+    if (serialised !== lastState) {
+      lastState = serialised;
+      fire('app:state-changed', state);
+    }
+    return state;
+  }
+
   async function poll() {
-    if (polling || stateListeners.size === 0) {
+    if (polling || listeners('app:state-changed').size === 0) {
       return;
     }
     polling = true;
 
     try {
-      const state = await localState();
-      const serialised = JSON.stringify(state);
-      if (serialised !== lastState) {
-        lastState = serialised;
-        stateListeners.forEach((listener) => listener(state));
-      }
-
+      const state = await refreshState();
       const roomId = state.currentRoomId ?? '';
       if (roomId) {
         // Counts rather than contents: cheap to compare, and enough to know
@@ -266,11 +333,11 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
 
         if (roomId !== lastRoom || clips.length !== lastClipCount) {
           lastClipCount = clips.length;
-          historyListeners.forEach((listener) => listener(roomId));
+          fire('history:changed', roomId);
         }
         if (roomId !== lastRoom || chat.length !== lastChatCount) {
           lastChatCount = chat.length;
-          chatChangedListeners.forEach((listener) => listener(roomId));
+          fire('chat:changed', roomId);
         }
         lastRoom = roomId;
       }
@@ -281,7 +348,43 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
     }
   }
 
-  window.setInterval(poll, POLL_MS);
+  /*
+   * Only once there is a token to present. Opened unconditionally, an unpaired
+   * phone spent the whole pairing screen in a 401 reconnect loop — and its
+   * first successful read would have tripped the unpaired handler.
+   */
+  let stopStream: (() => void) | null = null;
+
+  function ensureStream(): void {
+    if (stopStream || !token()) {
+      return;
+    }
+    stopStream = openEventStream(
+      () => token(),
+      (event) => {
+        /*
+         * The desktop's state, with this device's own view laid over the top —
+         * the theme and the open room are local. Taking the pushed payload
+         * as-is would drag the laptop's room onto the phone every time
+         * anything changed, so the push is a prompt to re-read, not the answer.
+         */
+        if (event.channel === 'app:state-changed') {
+          void refreshState();
+          return;
+        }
+        fire(event.channel, event.payload as never);
+      },
+      () => void refreshState()
+    );
+  }
+
+  ensureStream();
+
+  window.setInterval(() => {
+    // Pairing happens on this page, so the stream starts the moment it can.
+    ensureStream();
+    void poll();
+  }, POLL_MS);
   // A phone spends most of its life with the screen off; catching up on return
   // matters more than the steady tick does.
   document.addEventListener('visibilitychange', () => {
@@ -290,19 +393,31 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
     }
   });
 
-  function subscribe<T>(set: Set<Listener<T>>, handler: Listener<T>): () => void {
-    set.add(handler);
+  /** Subscribing also kicks a poll, so a fresh listener is not left waiting. */
+  function subscribe<T>(channel: string, handler: Listener<T>): () => void {
+    const off = on<T>(channel, handler);
     void poll();
-    return () => set.delete(handler);
+    return off;
   }
 
-  /** A subscription to something that never happens here. Unsubscribing is a no-op. */
+  /**
+   * A subscription to something that genuinely cannot happen here.
+   *
+   * Only for the desktop's own chrome — the window's controls and the links the
+   * operating system hands it. Everything else now arrives over the stream, so
+   * this list being short is the point.
+   */
   const none =
     () =>
     () =>
     () => {
       /* nothing to unsubscribe from */
     };
+
+  /** Unsubscribing from something that was never subscribed to. */
+  const noop = () => {
+    /* nothing to unsubscribe from */
+  };
 
   return {
     getState: () => localState(),
@@ -378,11 +493,19 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
     chatSaveFile: () => refuse(),
     chatMarkSeen: (roomId) => rpc('chat:mark-seen', roomId),
 
-    callStart: () => refuse(),
-    callJoin: () => refuse(),
-    callLeave: () => refuse(),
-    callDecline: () => refuse(),
-    callSignal: () => Promise.resolve(false),
+    /*
+     * Real calls, once the page is a secure origin. The desktop runs the same
+     * handlers it runs for its own window; the phone is simply another peer in
+     * the mesh, negotiating over the event stream like everybody else.
+     */
+    callStart: (roomId, mode) =>
+      canUseMedia() ? rpc('call:start', roomId, mode) : refuse(),
+    callJoin: (callId) => (canUseMedia() ? rpc('call:join', callId) : refuse()),
+    callLeave: () => (canUseMedia() ? rpc('call:leave') : refuse()),
+    callDecline: (callId) => (canUseMedia() ? rpc('call:decline', callId) : refuse()),
+    callSignal: (signal) =>
+      canUseMedia() ? rpc('call:signal', signal) : Promise.resolve(false),
+    // A phone has no desktop to capture, on any transport.
     callScreenSources: () => Promise.resolve([]),
 
     remoteRequest: () => refuse(),
@@ -393,6 +516,24 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
     remoteInput: () => Promise.resolve(false),
     remoteScreens: () => Promise.resolve([]),
     remoteCapabilities: () => Promise.resolve({ canControl: false, reason: UNAVAILABLE }),
+
+    // A phone reaches the app through its own paired URL, not a desktop scheme.
+    takeDeepLink: () => Promise.resolve(null),
+
+    // A browser tab has no window to drive; the controls are never drawn.
+    windowState: () => Promise.resolve(null),
+    windowMinimize: () => Promise.resolve(),
+    windowToggleMaximize: () => Promise.resolve(),
+    windowClose: () => Promise.resolve(),
+
+    // File sharing moves files between two machines' disks. A phone has neither
+    // end of that, so it is refused outright rather than half-supported.
+    fileShareRequest: () => refuse(),
+    fileShareRespond: () => refuse(),
+    fileSharePick: () => refuse(),
+    fileShareCancel: () => refuse(),
+    fileShareDismiss: () => Promise.resolve(),
+    fileShareOpenFolder: () => Promise.resolve(),
 
     quickPasteItems: () => Promise.resolve({ clips: [], snippets: [], roomNames: {} }),
     quickPastePick: () => refuse(),
@@ -426,19 +567,33 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
     clipboardApply: (entryId) => rpc('clipboard:apply', entryId),
     clipboardShareNow: () => rpc('clipboard:share-now'),
 
-    onStateChanged: (handler) => subscribe(stateListeners, handler),
-    onHistoryChanged: (handler) => subscribe(historyListeners, handler),
-    onChatChanged: (handler) => subscribe(chatChangedListeners, handler),
 
-    // Nothing on a phone raises these, and nothing needs them to.
-    onStatus: none(),
-    onChatMessage: none(),
-    onReceipts: none(),
-    onTyping: none(),
-    onCallRing: none(),
-    onCallRingCancelled: none(),
-    onCallSignal: none(),
-    onCallEnded: none(),
+    onStatus: (handler) => subscribe('sync:status', handler),
+    onChatMessage: (handler) => subscribe('chat:message', handler),
+    onReceipts: (handler) => subscribe('chat:receipts', handler),
+    onTyping: (handler) => subscribe('chat:typing', handler),
+    onCallRing: (handler) => (canUseMedia() ? subscribe('call:ring', handler) : noop),
+    onCallRingCancelled: (handler) => (canUseMedia() ? subscribe('call:ring-cancelled', handler) : noop),
+    onCallSignal: (handler) => (canUseMedia() ? subscribe('call:signal', handler) : noop),
+    onCallEnded: (handler) => (canUseMedia() ? subscribe('call:ended', handler) : noop),
+    onStateChanged: (handler) => subscribe('app:state-changed', handler),
+    onHistoryChanged: (handler) => subscribe('history:changed', handler),
+    onChatChanged: (handler) => subscribe('chat:changed', handler),
+
+    /*
+     * Events this device could hear but could do nothing about.
+     *
+     * The stream carries everything the desktop emits, so subscribing is a
+     * choice rather than a limitation — and a ring that cannot be answered is
+     * an unanswerable dialog. Calls subscribe only when the page is a secure
+     * origin, because that is exactly when they can be answered.
+     *
+     * Remote desktop never can: it injects input by screen coordinate through a
+     * native module. The rest is the desktop's own window chrome and the links
+     * the operating system hands it, which a browser tab does not have.
+     */
+    onDeepLink: none(),
+    onWindowState: none(),
     onRemoteRequest: none(),
     onRemoteRequestExpired: none(),
     onRemoteStarted: none(),
@@ -446,9 +601,9 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
     onRemoteGrantChanged: none(),
     onRemoteEnded: none(),
     onQuickPasteOpened: none(),
-    onUpdateStatus: none(),
-    onJoinRequest: none(),
-    onInvite: none(),
-    onJoinResult: none()
+    onUpdateStatus: (handler) => subscribe('update:status', handler),
+    onJoinRequest: (handler) => subscribe('room:join-request', handler),
+    onInvite: (handler) => subscribe('room:invite', handler),
+    onJoinResult: (handler) => subscribe('room:join-result', handler)
   };
 }

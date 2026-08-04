@@ -30,7 +30,8 @@ const {
   parseRemoteInput,
   toRobotKey,
   toScreenPoint,
-  MAX_TEXT_LENGTH
+  MAX_TEXT_LENGTH,
+  MAX_SCROLL_NOTCHES
 } = require(path.join(ROOT, 'remoteControl.js'));
 const { RemoteSessionManager, REQUEST_TIMEOUT_MS } = require(path.join(ROOT, 'remoteSession.js'));
 const { SnippetManager } = require(path.join(ROOT, 'snippetManager.js'));
@@ -65,6 +66,30 @@ function test(name, fn) {
     console.log(`  FAIL  ${name}\n        ${error.message}`);
     process.exitCode = 1;
   }
+}
+
+/**
+ * Tests whose subject only exists across awaits.
+ *
+ * File transfer is a conversation, not a function call: half of what is worth
+ * asserting about it — that the second file follows the first, that a cancel
+ * releases whoever was waiting — cannot be observed synchronously. These are
+ * collected and run after the synchronous suite so the output stays ordered.
+ */
+const deferred = [];
+
+function testAsync(name, fn) {
+  deferred.push(async () => {
+    try {
+      await fn();
+      passed++;
+      console.log(`  PASS  ${name}`);
+    } catch (error) {
+      failed++;
+      console.log(`  FAIL  ${name}\n        ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
 }
 
 console.log('\n-- crypto --');
@@ -1973,4 +1998,810 @@ test('quoted manifest values are unwrapped', () => {
   assert.strictEqual(sha512For(quoted, 'a.exe'), 'ABC==');
 });
 
-console.log(`\n${passed} passed, ${failed} failed\n`);
+// -----------------------------------------------------------------------------
+
+const { parseDeepLink, deepLinkFromArgv } = require(
+  path.join(__dirname, '..', 'dist', 'shared', 'deepLink.js')
+);
+
+const { ensurePhoneCertificate, clearPhoneCertificate } = require(path.join(ROOT, 'phoneCert.js'));
+
+deferred.push(async () => console.log('\n-- the phone certificate --'));
+
+/*
+ * The certificate is what makes a phone a secure origin, which is the only way
+ * a browser hands it a microphone — and what stops its access token crossing
+ * the WiFi in clear text. Two properties decide whether it is a one-time
+ * annoyance or a permanent one, and both are worth pinning.
+ */
+
+const certDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'cc-cert-'));
+
+testAsync('the certificate names every address it was asked to serve', async () => {
+  const dir = certDir();
+  const made = await ensurePhoneCertificate(dir, ['192.168.1.9', '10.0.0.4']);
+
+  assert.ok(made.cert.startsWith('-----BEGIN CERTIFICATE-----'), 'not a certificate');
+  assert.ok(made.key.includes('PRIVATE KEY'), 'no private key');
+  // Browsers check subject alternative names; a missing one is a hard refusal,
+  // not a warning somebody can click through.
+  for (const host of ['192.168.1.9', '10.0.0.4', 'localhost', '127.0.0.1']) {
+    assert.ok(made.hosts.includes(host), `missing ${host}`);
+  }
+});
+
+testAsync('a usable certificate is reused rather than reissued', async () => {
+  // Reissuing would mean a fresh security warning on every launch, which is
+  // how people learn to click through security warnings.
+  const dir = certDir();
+  const first = await ensurePhoneCertificate(dir, ['192.168.1.9']);
+  const second = await ensurePhoneCertificate(dir, ['192.168.1.9']);
+  assert.strictEqual(second.cert, first.cert);
+});
+
+testAsync('an address the certificate does not cover forces a new one', async () => {
+  const dir = certDir();
+  const first = await ensurePhoneCertificate(dir, ['192.168.1.9']);
+  // The laptop moved networks, or came up on Ethernet as well as WiFi.
+  const second = await ensurePhoneCertificate(dir, ['192.168.1.9', '10.0.0.4']);
+
+  assert.notStrictEqual(second.cert, first.cert, 'served an address it does not name');
+  assert.ok(second.hosts.includes('10.0.0.4'));
+});
+
+testAsync('a certificate near its end is replaced before it lapses', async () => {
+  const dir = certDir();
+  const now = 1_700_000_000_000;
+  const first = await ensurePhoneCertificate(dir, ['192.168.1.9'], now);
+
+  // A day before expiry: still valid, but not for much longer.
+  const later = now + 799 * 24 * 60 * 60 * 1000;
+  const second = await ensurePhoneCertificate(dir, ['192.168.1.9'], later);
+  assert.notStrictEqual(second.cert, first.cert, 'kept a certificate about to expire');
+});
+
+testAsync('clearing it means the next start issues a fresh one', async () => {
+  const dir = certDir();
+  const first = await ensurePhoneCertificate(dir, ['192.168.1.9']);
+  clearPhoneCertificate(dir);
+  const second = await ensurePhoneCertificate(dir, ['192.168.1.9']);
+  assert.notStrictEqual(second.cert, first.cert);
+});
+
+testAsync('the certificate actually serves TLS', async () => {
+  // The point of all of it: a socket a browser would accept after the warning.
+  const https = require('node:https');
+  const tls = require('node:tls');
+  const made = await ensurePhoneCertificate(certDir(), ['127.0.0.1']);
+
+  const server = https.createServer({ key: made.key, cert: made.cert }, (_q, r) => r.end('ok'));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+
+  const sans = await new Promise((resolve, reject) => {
+    const socket = tls.connect({ host: '127.0.0.1', port, rejectUnauthorized: false }, () => {
+      const peer = socket.getPeerCertificate();
+      socket.end();
+      resolve(String(peer.subjectaltname || ''));
+    });
+    socket.on('error', reject);
+  });
+  server.close();
+
+  assert.ok(sans.includes('IP Address:127.0.0.1'), `SANs were: ${sans}`);
+});
+
+console.log('\n-- what a paired phone may ask for --');
+
+const { isPhoneMethodAllowed } = require(path.join(ROOT, 'phoneServer.js'));
+
+/*
+ * This is a trust boundary, and it now has two shapes: what a phone may do over
+ * plain HTTP, and what it may additionally do once the connection is one a
+ * browser will grant a microphone to. Widening it by accident is how a pocket
+ * ends up able to drive somebody's desktop.
+ */
+
+test('a phone can always reach the everyday surface', () => {
+  for (const method of ['room:create', 'chat:send', 'clipboard:apply', 'search:all', 'app:get-state']) {
+    assert.strictEqual(isPhoneMethodAllowed(method, false), true, method);
+    assert.strictEqual(isPhoneMethodAllowed(method, true), true, method);
+  }
+});
+
+test('remote desktop is refused however the phone connected', () => {
+  for (const secure of [false, true]) {
+    assert.strictEqual(isPhoneMethodAllowed('remote:request', secure), false);
+    assert.strictEqual(isPhoneMethodAllowed('remote:input', secure), false);
+    assert.strictEqual(isPhoneMethodAllowed('remote:respond', secure), false);
+  }
+});
+
+test('the quick-paste overlay and self-install stay desktop-only', () => {
+  for (const secure of [false, true]) {
+    assert.strictEqual(isPhoneMethodAllowed('quick-paste:pick', secure), false);
+    assert.strictEqual(isPhoneMethodAllowed('update:install', secure), false);
+  }
+  // Checking for one is still fine; it is installing that is not.
+  assert.strictEqual(isPhoneMethodAllowed('update:check', true), true);
+});
+
+test('calls open up only once the connection can carry a microphone', () => {
+  // Over plain HTTP the browser refuses getUserMedia, so every one of these
+  // would end in a permission failure nobody could act on.
+  assert.strictEqual(isPhoneMethodAllowed('call:start', false), false);
+  assert.strictEqual(isPhoneMethodAllowed('call:join', false), false);
+  assert.strictEqual(isPhoneMethodAllowed('call:signal', false), false);
+
+  assert.strictEqual(isPhoneMethodAllowed('call:start', true), true);
+  assert.strictEqual(isPhoneMethodAllowed('call:join', true), true);
+  assert.strictEqual(isPhoneMethodAllowed('call:signal', true), true);
+});
+
+test('a phone never captures a screen, on any transport', () => {
+  // It has no desktop to offer, so this is not a security limit but an honest one.
+  assert.strictEqual(isPhoneMethodAllowed('call:screen-sources', false), false);
+  assert.strictEqual(isPhoneMethodAllowed('call:screen-sources', true), false);
+});
+
+test('the default is the closed one', () => {
+  // Called without the flag — as anything added later might be — calls stay shut.
+  assert.strictEqual(isPhoneMethodAllowed('call:start'), false);
+});
+
+console.log('\n-- phone event stream --');
+
+/*
+ * The frame parser, exercised against what a real stream actually delivers:
+ * frames split across reads, heartbeat comments, and the retry hint the server
+ * opens with. Getting any of those wrong drops events silently, which on a
+ * phone looks exactly like the desktop having nothing to say.
+ *
+ * The parser is a closure inside `openEventStream`, so the same logic is
+ * mirrored here — the point is to pin the format the two ends agree on.
+ */
+function parseStream(chunks) {
+  const events = [];
+  let buffer = '';
+  for (const chunk of chunks) {
+    buffer += chunk;
+    let split = buffer.indexOf('\n\n');
+    while (split !== -1) {
+      const frame = buffer.slice(0, split);
+      buffer = buffer.slice(split + 2);
+      let channel = '';
+      const data = [];
+      for (const line of frame.split('\n')) {
+        if (line.startsWith(':') || line.length === 0) continue;
+        if (line.startsWith('event:')) channel = line.slice(6).trim();
+        else if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
+      }
+      if (channel) {
+        try {
+          events.push({ channel, payload: data.length ? JSON.parse(data.join('\n')) : null });
+        } catch {
+          /* malformed frame is dropped, not thrown */
+        }
+      }
+      split = buffer.indexOf('\n\n');
+    }
+  }
+  return events;
+}
+
+const frame = (channel, payload) => `event: ${channel}\ndata: ${JSON.stringify(payload)}\n\n`;
+
+test('one whole frame yields one event', () => {
+  assert.deepStrictEqual(parseStream([frame('chat:message', { id: 'm1' })]), [
+    { channel: 'chat:message', payload: { id: 'm1' } }
+  ]);
+});
+
+test('a frame split across reads is not lost', () => {
+  // TCP does not respect frame boundaries; this is the normal case, not the edge.
+  const whole = frame('sync:status', { message: 'Shared', tone: 'success' });
+  for (const at of [1, 7, 20, whole.length - 1]) {
+    assert.deepStrictEqual(
+      parseStream([whole.slice(0, at), whole.slice(at)]),
+      [{ channel: 'sync:status', payload: { message: 'Shared', tone: 'success' } }],
+      `split at ${at} was dropped`
+    );
+  }
+});
+
+test('several frames in one read all arrive, in order', () => {
+  const events = parseStream([frame('a', 1) + frame('b', 2) + frame('c', 3)]);
+  assert.deepStrictEqual(events.map((e) => e.channel), ['a', 'b', 'c']);
+  assert.deepStrictEqual(events.map((e) => e.payload), [1, 2, 3]);
+});
+
+test('heartbeats and the retry hint are not events', () => {
+  const stream = 'retry: 2000\n\n' + ': ping\n\n' + frame('call:ring', { callId: 'c1' }) + ': ping\n\n';
+  assert.deepStrictEqual(parseStream([stream]), [
+    { channel: 'call:ring', payload: { callId: 'c1' } }
+  ]);
+});
+
+test('a payload containing a blank line survives', () => {
+  // JSON escapes newlines, so a chat message with a paragraph break must not
+  // look like the end of a frame.
+  const text = 'first line\n\nsecond line';
+  const [event] = parseStream([frame('chat:message', { content: text })]);
+  assert.strictEqual(event.payload.content, text);
+});
+
+test('a malformed frame is dropped without taking the stream with it', () => {
+  const events = parseStream(['event: bad\ndata: {not json\n\n' + frame('good', { ok: true })]);
+  assert.deepStrictEqual(events, [{ channel: 'good', payload: { ok: true } }]);
+});
+
+test('a trailing partial frame waits rather than firing early', () => {
+  assert.deepStrictEqual(parseStream(['event: half\ndata: {"a"']), []);
+});
+
+console.log('\n-- deep links --');
+
+/*
+ * A deep link is unvalidated input handed over by the operating system, and
+ * anyone who can put a URL in front of someone can call this. Every test below
+ * is really the same question: does anything other than a link we understand
+ * come back as null?
+ */
+
+test('the link a room QR code encodes is understood', () => {
+  // This exact shape is what `room:qr-code` has always produced.
+  assert.deepStrictEqual(parseDeepLink('campusconnect://join?code=AB12CD&room=Study%20Group'), {
+    kind: 'join',
+    code: 'AB12CD',
+    roomName: 'Study Group'
+  });
+});
+
+test('a link with no room name still joins', () => {
+  assert.deepStrictEqual(parseDeepLink('campusconnect://join?code=AB12CD'), {
+    kind: 'join',
+    code: 'AB12CD',
+    roomName: ''
+  });
+});
+
+test('the action may be spelled as a path instead of a host', () => {
+  assert.strictEqual(parseDeepLink('campusconnect:/join?code=AB12CD')?.code, 'AB12CD');
+});
+
+test('a join with no code is not a join', () => {
+  assert.strictEqual(parseDeepLink('campusconnect://join'), null);
+  assert.strictEqual(parseDeepLink('campusconnect://join?code='), null);
+  assert.strictEqual(parseDeepLink('campusconnect://join?code=%20%20'), null);
+});
+
+test('another application’s scheme is not ours to act on', () => {
+  assert.strictEqual(parseDeepLink('https://example.com/join?code=AB12CD'), null);
+  assert.strictEqual(parseDeepLink('file:///etc/passwd'), null);
+  assert.strictEqual(parseDeepLink('javascript:alert(1)'), null);
+  assert.strictEqual(parseDeepLink('campusconnectx://join?code=AB12CD'), null);
+});
+
+test('an action we do not have is refused rather than guessed at', () => {
+  assert.strictEqual(parseDeepLink('campusconnect://leave?code=AB12CD'), null);
+  assert.strictEqual(parseDeepLink('campusconnect://'), null);
+});
+
+test('rubbish is null, not a throw', () => {
+  for (const input of ['', 'not a url', '://', null, undefined, 42, {}]) {
+    assert.strictEqual(parseDeepLink(input), null, `threw or accepted: ${String(input)}`);
+  }
+});
+
+test('a link cannot carry an essay', () => {
+  const long = parseDeepLink(`campusconnect://join?code=${'A'.repeat(500)}&room=${'B'.repeat(500)}`);
+  assert.strictEqual(long.code.length, 64);
+  assert.strictEqual(long.roomName.length, 64);
+  assert.strictEqual(parseDeepLink(`campusconnect://join?code=${'A'.repeat(4000)}`), null);
+});
+
+test('the link is picked out of a command line, whatever else is on it', () => {
+  const argv = ['C:\\app\\Campus Connect.exe', '--hidden', 'campusconnect://join?code=ZZ99XX'];
+  assert.strictEqual(deepLinkFromArgv(argv).code, 'ZZ99XX');
+});
+
+test('a command line with no link yields nothing', () => {
+  assert.strictEqual(deepLinkFromArgv(['C:\\app\\Campus Connect.exe', '--hidden']), null);
+  assert.strictEqual(deepLinkFromArgv([]), null);
+});
+
+test('a malformed link on the command line is skipped, not half-taken', () => {
+  assert.strictEqual(deepLinkFromArgv(['app.exe', 'campusconnect://join']), null);
+});
+
+console.log('\n-- remote desktop: answering our own questions --');
+
+/*
+ * The session id is chosen by whoever speaks first, so an answer has to be
+ * matched back to a question this device actually asked. Without that, a `grant`
+ * is simply believed: any room member could open a session on a machine that
+ * never requested one, put their screen on it, and occupy its only session slot.
+ */
+
+test('an answer to a question we never asked is not ours to take', () => {
+  const { manager } = makeSessions();
+  assert.strictEqual(manager.takeOutgoingRequest('never-asked'), undefined);
+});
+
+test('an answer to our own question is matched to the device we asked', () => {
+  const { manager } = makeSessions();
+  manager.noteOutgoingRequest('s9', 'r1', 'B');
+
+  const asked = manager.takeOutgoingRequest('s9');
+  assert.strictEqual(asked.targetDeviceId, 'B');
+  assert.strictEqual(asked.roomId, 'r1');
+});
+
+test('a question can only be answered once', () => {
+  const { manager } = makeSessions();
+  manager.noteOutgoingRequest('s9', 'r1', 'B');
+  manager.takeOutgoingRequest('s9');
+
+  // A second `grant` for the same id — a replay — has nothing left to claim.
+  assert.strictEqual(manager.takeOutgoingRequest('s9'), undefined);
+});
+
+test('our own unanswered question lapses on the same clock as theirs', () => {
+  const { manager, clock } = makeSessions();
+  manager.noteOutgoingRequest('s9', 'r1', 'B');
+
+  clock.now += REQUEST_TIMEOUT_MS + 1;
+  manager.sweepRequests();
+
+  assert.strictEqual(
+    manager.takeOutgoingRequest('s9'),
+    undefined,
+    'a grant arriving long after the fact was still accepted'
+  );
+});
+
+test('blocking a device drops the question we asked it', () => {
+  const { manager } = makeSessions();
+  manager.noteOutgoingRequest('s9', 'r1', 'B');
+  manager.clearDevice('B');
+  assert.strictEqual(manager.takeOutgoingRequest('s9'), undefined);
+});
+
+test('a room going away drops the questions asked through it', () => {
+  const { manager } = makeSessions();
+  manager.noteOutgoingRequest('s9', 'r1', 'B');
+  manager.clearRoom('r1');
+  assert.strictEqual(manager.takeOutgoingRequest('s9'), undefined);
+});
+
+console.log('\n-- remote desktop: scroll at the trust boundary --');
+
+test('a scroll of a billion notches is clamped, not passed on', () => {
+  // The viewer reduces wheel deltas to a few notches, but that runs on the
+  // controller — the side being trusted — so it is not a limit.
+  const huge = parseRemoteInput({ t: 'scroll', dx: 1e9, dy: -1e9 });
+  assert.strictEqual(huge.dx, MAX_SCROLL_NOTCHES);
+  assert.strictEqual(huge.dy, -MAX_SCROLL_NOTCHES);
+});
+
+test('an ordinary scroll passes through untouched', () => {
+  assert.deepStrictEqual(parseRemoteInput({ t: 'scroll', dx: 0, dy: -3 }), {
+    t: 'scroll',
+    dx: 0,
+    dy: -3
+  });
+});
+
+test('a clamped scroll is what actually reaches the machine', () => {
+  const scrolls = [];
+  const robot = {
+    moveMouse() {},
+    mouseToggle() {},
+    scrollMouse: (x, y) => scrolls.push([x, y]),
+    keyToggle() {},
+    keyTap() {},
+    typeString() {}
+  };
+  const injector = createInjector(robot, () => ({ x: 0, y: 0, width: 1920, height: 1080 }));
+
+  injector.apply(parseRemoteInput({ t: 'scroll', dx: 1e9, dy: 1e9 }));
+  assert.deepStrictEqual(scrolls, [[MAX_SCROLL_NOTCHES, MAX_SCROLL_NOTCHES]]);
+});
+
+// -----------------------------------------------------------------------------
+
+const { FileShareManager, SLICE_BYTES, MAX_FILE_SHARE_BYTES } = require(
+  path.join(ROOT, 'fileShare.js')
+);
+
+deferred.push(async () => console.log('\n-- file sharing --'));
+
+const settle = (ms = 60) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Two managers wired into each other, standing in for two machines.
+ *
+ * `intercept` is where a hostile network goes: dropping, duplicating or
+ * reordering what the sender puts on the wire, which is the only way to test
+ * the receiver's placement logic without an actual lossy link.
+ */
+function twoDevices({ clock, intercept } = {}) {
+  const inbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-recv-'));
+  const outbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-send-'));
+  const now = clock ? () => clock.value : undefined;
+
+  let sender;
+  let receiver;
+  const toReceiver = (signal) => receiver.handleSignal('dev-a', 'Laptop A', signal);
+
+  sender = new FileShareManager({
+    now,
+    send: (_peerId, signal) => {
+      if (intercept) {
+        intercept(signal, (out) => setImmediate(() => toReceiver(out)));
+      } else {
+        setImmediate(() => toReceiver(signal));
+      }
+      return true;
+    },
+    downloadFolder: () => outbox,
+    onChanged: () => {}
+  });
+
+  receiver = new FileShareManager({
+    now,
+    send: (_peerId, signal) => {
+      setImmediate(() => sender.handleSignal('dev-b', 'Laptop B', signal));
+      return true;
+    },
+    downloadFolder: () => inbox,
+    onChanged: () => {}
+  });
+
+  return { sender, receiver, inbox, outbox };
+}
+
+function makeFile(dir, name, size, fill = 'x') {
+  const full = path.join(dir, name);
+  fs.writeFileSync(full, Buffer.alloc(size, fill));
+  return { path: full, name, size };
+}
+
+/** Runs the whole request → accept → send handshake and returns the result. */
+async function handshake(devices, files) {
+  devices.sender.request('dev-b', 'Laptop B');
+  await settle(20);
+  await devices.receiver.respond(devices.receiver.state.incoming.transferId, true);
+  await settle(20);
+  const transfer = devices.sender.state.transfers.find((candidate) => candidate.status === 'active');
+  const result = await devices.sender.sendFiles(transfer.transferId, files);
+  await settle(120);
+  return result;
+}
+
+const landed = (dir) => fs.readdirSync(dir).filter((name) => name !== '.partials');
+
+testAsync('one file arrives whole, and both sides finish', async () => {
+  const devices = twoDevices();
+  const file = makeFile(devices.outbox, 'notes.txt', 70 * 1024);
+
+  const result = await handshake(devices, [file]);
+
+  assert.strictEqual(result.ok, true, result.message);
+  assert.deepStrictEqual(landed(devices.inbox), ['notes.txt']);
+  assert.strictEqual(fs.statSync(path.join(devices.inbox, 'notes.txt')).size, 70 * 1024);
+  assert.strictEqual(devices.sender.busy(), false, 'sender stayed busy after finishing');
+  assert.strictEqual(devices.receiver.busy(), false, 'receiver stayed busy after finishing');
+});
+
+testAsync('every file in a batch arrives, not just the first', async () => {
+  // The regression this suite exists for: the sender used to check whether a
+  // file was confirmed the instant it finished writing it to the wire, before
+  // any confirmation could possibly have come back, and abandon the batch.
+  const devices = twoDevices();
+  const files = [
+    makeFile(devices.outbox, 'one.bin', 70 * 1024, 'a'),
+    makeFile(devices.outbox, 'two.bin', 30 * 1024, 'b'),
+    makeFile(devices.outbox, 'three.bin', 9 * 1024, 'c')
+  ];
+
+  const result = await handshake(devices, files);
+
+  assert.strictEqual(result.ok, true, result.message);
+  assert.deepStrictEqual(landed(devices.inbox).sort(), ['one.bin', 'three.bin', 'two.bin']);
+});
+
+testAsync('a finished transfer leaves no partial files behind', async () => {
+  const devices = twoDevices();
+  await handshake(devices, [makeFile(devices.outbox, 'clean.bin', 50 * 1024)]);
+
+  const partials = path.join(devices.inbox, '.partials');
+  const left = fs.existsSync(partials) ? fs.readdirSync(partials) : [];
+  assert.deepStrictEqual(left, []);
+});
+
+testAsync('an empty file does not stall the batch behind it', async () => {
+  // No slice is ever sent for a zero-byte file, and completion was only ever
+  // reached by way of one — so it used to hold up everything after it.
+  const devices = twoDevices();
+  const files = [
+    makeFile(devices.outbox, 'blank.txt', 0),
+    makeFile(devices.outbox, 'after.bin', 40 * 1024)
+  ];
+
+  const result = await handshake(devices, files);
+
+  assert.strictEqual(result.ok, true, result.message);
+  assert.deepStrictEqual(landed(devices.inbox).sort(), ['after.bin', 'blank.txt']);
+  assert.strictEqual(fs.statSync(path.join(devices.inbox, 'blank.txt')).size, 0);
+});
+
+testAsync('a file of exactly one slice completes', async () => {
+  const devices = twoDevices();
+  const result = await handshake(devices, [makeFile(devices.outbox, 'exact.bin', SLICE_BYTES)]);
+
+  assert.strictEqual(result.ok, true, result.message);
+  assert.strictEqual(fs.statSync(path.join(devices.inbox, 'exact.bin')).size, SLICE_BYTES);
+});
+
+testAsync('slices arriving out of order are placed by index, not by arrival', async () => {
+  // Held back and released backwards. Every byte still has to land in the
+  // right place, because the receiver goes by index and buffers the rest.
+  const held = [];
+  const devices = twoDevices({
+    intercept: (signal, deliver) => {
+      if (signal.kind !== 'data') {
+        deliver(signal);
+        return;
+      }
+      held.push(signal);
+      if (signal.index === signal.total - 1) {
+        for (const slice of held.reverse()) {
+          deliver(slice);
+        }
+        held.length = 0;
+      }
+    }
+  });
+
+  const source = makeFile(devices.outbox, 'jumbled.bin', 5 * SLICE_BYTES, 'j');
+  const expected = fs.readFileSync(source.path);
+  const result = await handshake(devices, [source]);
+
+  assert.strictEqual(result.ok, true, result.message);
+  assert.deepStrictEqual(fs.readFileSync(path.join(devices.inbox, 'jumbled.bin')), expected);
+});
+
+testAsync('a duplicated slice does not inflate progress past the total', async () => {
+  const devices = twoDevices({
+    intercept: (signal, deliver) => {
+      deliver(signal);
+      if (signal.kind === 'data') {
+        deliver(signal);
+      }
+    }
+  });
+
+  const source = makeFile(devices.outbox, 'twice.bin', 4 * SLICE_BYTES, 'd');
+  const expected = fs.readFileSync(source.path);
+  const result = await handshake(devices, [source]);
+  const transfer = devices.receiver.state.transfers[0];
+
+  assert.strictEqual(result.ok, true, result.message);
+  assert.ok(
+    transfer.bytesDone <= transfer.bytesTotal,
+    `progress ran past the total: ${transfer.bytesDone} of ${transfer.bytesTotal}`
+  );
+  // Byte-for-byte, not just the right length: a re-written slice corrupts the
+  // file rather than lengthening it when it lands at the wrong offset.
+  assert.deepStrictEqual(fs.readFileSync(path.join(devices.inbox, 'twice.bin')), expected);
+});
+
+testAsync('a second file of the same name never overwrites the first', async () => {
+  const devices = twoDevices();
+  await handshake(devices, [makeFile(devices.outbox, 'report.pdf', 8 * 1024, 'first')]);
+  await handshake(devices, [makeFile(devices.outbox, 'report.pdf', 8 * 1024, 'second')]);
+
+  assert.deepStrictEqual(landed(devices.inbox).sort(), ['report (1).pdf', 'report.pdf']);
+});
+
+testAsync('one transfer at a time, in either role', async () => {
+  const devices = twoDevices();
+  assert.strictEqual(devices.sender.request('dev-b', 'Laptop B').ok, true);
+  const second = devices.sender.request('dev-c', 'Laptop C');
+  assert.strictEqual(second.ok, false);
+  await settle(20);
+});
+
+testAsync('a declined request releases both sides', async () => {
+  const devices = twoDevices();
+  devices.sender.request('dev-b', 'Laptop B');
+  await settle(20);
+  await devices.receiver.respond(devices.receiver.state.incoming.transferId, false);
+  await settle(40);
+
+  assert.strictEqual(devices.sender.state.transfers[0].status, 'cancelled');
+  assert.strictEqual(devices.sender.busy(), false);
+  assert.strictEqual(devices.receiver.busy(), false);
+});
+
+testAsync('a request nobody answers is withdrawn by the sweep', async () => {
+  const clock = { value: 1_000_000 };
+  const devices = twoDevices({ clock });
+  devices.sender.request('dev-b', 'Laptop B');
+  await settle(20);
+
+  clock.value += 120_000;
+  devices.sender.sweep();
+  devices.receiver.sweep();
+  await settle(20);
+
+  assert.strictEqual(devices.sender.busy(), false, 'sender held a request nobody answered');
+  assert.strictEqual(devices.receiver.state.incoming, undefined);
+});
+
+testAsync('the receiver cancelling mid-transfer releases the sender', async () => {
+  /*
+   * Pinned to a slice rather than to a timer. Cancelling after a fixed delay
+   * races the transfer itself — on a fast loopback the file can already be
+   * finished, and cancelling a finished transfer proves nothing.
+   */
+  let devices;
+  devices = twoDevices({
+    intercept: (signal, deliver) => {
+      deliver(signal);
+      if (signal.kind === 'data' && signal.index === 2) {
+        devices.receiver.cancel(devices.receiver.state.transfers[0].transferId);
+      }
+    }
+  });
+
+  const file = makeFile(devices.outbox, 'large.bin', 8 * SLICE_BYTES);
+
+  devices.sender.request('dev-b', 'Laptop B');
+  await settle(20);
+  await devices.receiver.respond(devices.receiver.state.incoming.transferId, true);
+  await settle(20);
+
+  const transfer = devices.sender.state.transfers.find((candidate) => candidate.status === 'active');
+  const result = await devices.sender.sendFiles(transfer.transferId, [file]);
+  await settle(80);
+
+  assert.strictEqual(result.ok, false, 'a cancelled transfer reported success');
+  assert.strictEqual(devices.sender.busy(), false, 'sender was left waiting on a cancelled transfer');
+  assert.strictEqual(devices.receiver.busy(), false);
+  assert.deepStrictEqual(landed(devices.inbox), [], 'a cancelled file was still saved');
+});
+
+testAsync('a transfer that stops moving is ended rather than held open', async () => {
+  // Every eighth slice is dropped, which on this path is unrecoverable. What
+  // matters is that both sides give up and say so instead of hanging forever.
+  const clock = { value: 2_000_000 };
+  let seen = 0;
+  const devices = twoDevices({
+    clock,
+    intercept: (signal, deliver) => {
+      if (signal.kind === 'data' && seen++ % 8 === 3) {
+        return;
+      }
+      deliver(signal);
+    }
+  });
+
+  devices.sender.request('dev-b', 'Laptop B');
+  await settle(20);
+  await devices.receiver.respond(devices.receiver.state.incoming.transferId, true);
+  await settle(20);
+
+  const transfer = devices.sender.state.transfers.find((candidate) => candidate.status === 'active');
+  const sending = devices.sender.sendFiles(transfer.transferId, [
+    makeFile(devices.outbox, 'lossy.bin', 2 * 1024 * 1024)
+  ]);
+
+  await settle(150);
+  clock.value += 120_000;
+  devices.sender.sweep();
+  devices.receiver.sweep();
+
+  const result = await sending;
+  await settle(80);
+
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(devices.sender.busy(), false, 'a stalled transfer wedged the sender');
+  assert.strictEqual(devices.receiver.busy(), false, 'a stalled transfer wedged the receiver');
+});
+
+testAsync('going offline mid-receive closes handles and sweeps the partials', async () => {
+  const devices = twoDevices();
+  const file = makeFile(devices.outbox, 'interrupted.bin', 3 * 1024 * 1024);
+
+  devices.sender.request('dev-b', 'Laptop B');
+  await settle(20);
+  await devices.receiver.respond(devices.receiver.state.incoming.transferId, true);
+  await settle(20);
+
+  const transfer = devices.sender.state.transfers.find((candidate) => candidate.status === 'active');
+  devices.sender.sendFiles(transfer.transferId, [file]);
+  await settle(20);
+  devices.receiver.clear();
+  await settle(150);
+
+  const partials = path.join(devices.inbox, '.partials');
+  const left = fs.existsSync(partials) ? fs.readdirSync(partials) : [];
+  assert.deepStrictEqual(left, [], 'a partial file survived going offline');
+  assert.strictEqual(devices.receiver.busy(), false);
+});
+
+testAsync('a transfer ending while a file is being opened leaks nothing', async () => {
+  /*
+   * The receiver opens its temp file across two awaits. Anything that ends the
+   * transfer in that window — a cancel off the wire, the stall sweep, going
+   * offline — runs before the handle is registered, so the usual cleanup looks
+   * for it and does not find it. The handle was then leaked until the garbage
+   * collector noticed and killed the process, which is how this was found: as
+   * an intermittent crash in the suite above.
+   *
+   * Timed off the offer rather than a clock, so it lands in that window every
+   * run instead of two in five.
+   */
+  let devices;
+  devices = twoDevices({
+    intercept: (signal, deliver) => {
+      deliver(signal);
+      if (signal.kind === 'offer') {
+        devices.receiver.cancel(devices.receiver.state.transfers[0].transferId);
+      }
+    }
+  });
+
+  devices.sender.request('dev-b', 'Laptop B');
+  await settle(20);
+  await devices.receiver.respond(devices.receiver.state.incoming.transferId, true);
+  await settle(20);
+
+  const transfer = devices.sender.state.transfers.find((candidate) => candidate.status === 'active');
+  await devices.sender.sendFiles(transfer.transferId, [
+    makeFile(devices.outbox, 'aborted.bin', 4 * SLICE_BYTES)
+  ]);
+  await settle(200);
+
+  const partials = path.join(devices.inbox, '.partials');
+  const left = fs.existsSync(partials) ? fs.readdirSync(partials) : [];
+  assert.deepStrictEqual(left, [], 'a temp file was opened and then abandoned');
+  assert.strictEqual(devices.receiver.busy(), false);
+  assert.deepStrictEqual(landed(devices.inbox), []);
+});
+
+testAsync('a file past the ceiling is refused before anything is read', async () => {
+  const devices = twoDevices();
+  devices.sender.request('dev-b', 'Laptop B');
+  await settle(20);
+  await devices.receiver.respond(devices.receiver.state.incoming.transferId, true);
+  await settle(20);
+
+  const transfer = devices.sender.state.transfers.find((candidate) => candidate.status === 'active');
+  const result = await devices.sender.sendFiles(transfer.transferId, [
+    { path: path.join(devices.outbox, 'nope.bin'), name: 'nope.bin', size: MAX_FILE_SHARE_BYTES + 1 }
+  ]);
+
+  assert.strictEqual(result.ok, false);
+  assert.deepStrictEqual(landed(devices.inbox), []);
+});
+
+testAsync('a signal for somebody else’s transfer is ignored', async () => {
+  const devices = twoDevices();
+  devices.sender.request('dev-b', 'Laptop B');
+  await settle(20);
+  const transferId = devices.sender.state.transfers[0].transferId;
+
+  // Right transfer, wrong device: the accept must not take.
+  devices.sender.handleSignal('dev-intruder', 'Somebody Else', { kind: 'accept', transferId });
+  assert.strictEqual(devices.sender.state.transfers[0].status, 'requested');
+});
+
+(async () => {
+  for (const run of deferred) {
+    await run();
+  }
+  console.log(`\n${passed} passed, ${failed} failed\n`);
+})();

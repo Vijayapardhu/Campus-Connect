@@ -523,7 +523,14 @@ export type WireMessageType =
    * process routes these and enforces who may ask, but what a step means is
    * settled between the two peers.
    */
-  | 'remote';
+  | 'remote'
+  /**
+   * Peer-to-peer file sharing. One type carrying a union, like `remote` and
+   * `call`: the sender asks, the receiver accepts, and then file slices stream
+   * from one to the other over whatever transport is available — a direct TCP
+   * link when one exists, UDP chunks otherwise.
+   */
+  | 'file-xfer';
 
 /**
  * Every datagram on the wire. Bodies that belong to an encrypted room travel in
@@ -585,6 +592,8 @@ export type WireMessage = {
   call?: CallSignal;
   /** On `remote`: one step of setting up or ending a remote desktop session. */
   remote?: RemoteSignal;
+  /** On `file-xfer`: one step of a peer-to-peer file transfer. */
+  fileXfer?: FileXferSignal;
 };
 
 export type AppSettings = {
@@ -635,6 +644,45 @@ export type AppSettings = {
    * happens to be going on around it.
    */
   startCallsMuted: boolean;
+
+  /**
+   * Serve phone access over TLS with a self-signed certificate.
+   *
+   * On by default, and the reasoning is not really about calls. Without it the
+   * phone's own access token, every message it reads and everything it pastes
+   * cross the WiFi in clear text — on a campus network, to anyone who cares to
+   * look. The cost is a certificate warning the first time a phone pairs.
+   *
+   * It happens to also be what lets a phone join a call at all: browsers will
+   * not give a page a microphone unless it arrived over a secure origin.
+   */
+  phoneSecure: boolean;
+
+  /**
+   * Whether this device has been shown the tour.
+   *
+   * Per device rather than per account, like the theme: a laptop being set up
+   * by somebody who has used the app on their phone is still a laptop nobody
+   * has explained the tray to.
+   */
+  hasOnboarded: boolean;
+
+  /**
+   * Start with the machine.
+   *
+   * Off by default and asked for rather than assumed: an app that quietly adds
+   * itself to startup the first time it runs is the thing people go hunting
+   * through Task Manager to undo.
+   */
+  launchAtLogin: boolean;
+  /**
+   * When starting with the machine, go straight to the tray.
+   *
+   * The reason most people want it on at all: the clipboard, the quick-paste
+   * hotkey and file transfers all work with no window open, so the window
+   * appearing on every boot is the only unwelcome part of it.
+   */
+  launchMinimized: boolean;
 
   /**
    * Days to keep images and file attachments. Text is always kept.
@@ -761,6 +809,40 @@ export const FONT_SCALES = [
 export const MIN_FONT_SCALE = 0.9;
 export const MAX_FONT_SCALE = 1.3;
 
+/**
+ * What the window is doing, for the controls the application draws itself.
+ *
+ * `platform` is reported by the main process rather than sniffed in the
+ * renderer: it decides whether this window has its own controls to draw or
+ * whether the system is still drawing them, and getting that wrong means
+ * either two sets of buttons or none.
+ */
+/**
+ * A `campusconnect://` link, once it has been understood.
+ *
+ * Room QR codes have always encoded one of these; registering the scheme is
+ * what finally gives scanning one somewhere to go.
+ */
+export type DeepLink = {
+  kind: 'join';
+  /** The room's join code, as carried in the link. */
+  code: string;
+  /** The room's name, for the dialog. Cosmetic — never trusted for access. */
+  roomName: string;
+};
+
+export type WindowState = {
+  maximized: boolean;
+  fullScreen: boolean;
+  platform: 'darwin' | 'win32' | 'linux';
+  /**
+   * Pixels the window currently extends above the usable screen, which a
+   * maximised frameless window on Windows does. The interface pads itself by
+   * this much so its top edge is not quietly cut off.
+   */
+  topInset: number;
+};
+
 export type AppState = {
   deviceId: string;
   deviceName: string;
@@ -787,6 +869,8 @@ export type AppState = {
   phone: PhoneAccess;
   /** The remote desktop session this device is in, either role, if any. */
   remote?: RemoteSessionState;
+  /** Peer-to-peer file transfers, either role, if any. */
+  fileShare?: FileShareState;
   /** Whether this machine can accept being driven, and why not if it cannot. */
   remoteCapabilities: RemoteCapabilities;
   storage: StorageStats;
@@ -798,6 +882,82 @@ export type AppState = {
 export type ActionResult = {
   ok: boolean;
   message: string;
+};
+
+// --- peer-to-peer file sharing ------------------------------------------------
+
+/**
+ * One step of a peer-to-peer file transfer.
+ *
+ * Like `remote` and `call`, a single wire type carries a union. The sender asks
+ * (`request`), the receiver answers (`accept`/`decline`), and then the sender
+ * describes each file (`offer`) and streams it in base64 slices (`data`) until
+ * the receiver confirms it is whole (`file-done`). `finish` ends the batch and
+ * `cancel` aborts it at any point, from either side.
+ *
+ * Slices are deliberately small (well under one datagram) so every slice travels
+ * alone: over TCP it is one ordered frame, over UDP one datagram that the
+ * receiver places by index. Nothing here is persisted — transfers exist only
+ * for the lifetime of the app, and the receiver keeps whichever files it saved.
+ */
+export type FileXferSignal =
+  | { kind: 'request'; transferId: string }
+  | { kind: 'accept'; transferId: string }
+  | { kind: 'decline'; transferId: string; reason: string }
+  | { kind: 'offer'; transferId: string; fileId: string; name: string; size: number }
+  | { kind: 'data'; transferId: string; fileId: string; index: number; total: number; data: string }
+  | {
+      kind: 'file-done';
+      transferId: string;
+      fileId: string;
+      /** Receiver only: where the file was written. */
+      savedPath?: string;
+    }
+  | { kind: 'finish'; transferId: string; ok: boolean; error?: string }
+  | { kind: 'cancel'; transferId: string; reason?: string };
+
+/** One file inside a transfer, and how far it has got. */
+export type FileShareFileState = {
+  fileId: string;
+  name: string;
+  size: number;
+  /** Bytes moved so far — sent by the sender, received by the receiver. */
+  moved: number;
+  status: 'queued' | 'active' | 'done' | 'error';
+  /** Where the receiver wrote it, once done. */
+  savedPath?: string;
+};
+
+export type FileShareTransfer = {
+  transferId: string;
+  role: 'sender' | 'receiver';
+  peerId: string;
+  peerName: string;
+  status: 'requested' | 'active' | 'done' | 'cancelled' | 'error';
+  files: FileShareFileState[];
+  bytesDone: number;
+  bytesTotal: number;
+  error?: string;
+  startedAt: number;
+  finishedAt?: number;
+};
+
+/**
+ * The whole file-sharing surface for the renderer. Mirrors `remote`: transient
+ * (never persisted), one session at a time, with anything pending surfaced as
+ * `incoming` for the accept/decline dialog.
+ */
+export type FileShareState = {
+  /** A request waiting on this device, unanswered. */
+  incoming?: {
+    transferId: string;
+    fromDeviceId: string;
+    fromDeviceName: string;
+    at: number;
+  };
+  transfers: FileShareTransfer[];
+  /** Where received files land. Kept so the UI can offer to open it. */
+  downloadFolder: string;
 };
 
 /** Shown in Settings → About. Single source of truth for credit and links. */

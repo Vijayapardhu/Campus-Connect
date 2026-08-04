@@ -44,9 +44,6 @@ export function readClipboardImage(): ClipboardImage | null {
   };
 }
 
-export function readClipboardImageDataUrl(): string | null {
-  return readClipboardImage()?.toDataUrl() ?? null;
-}
 
 /**
  * PNG for anything small, and for anything with transparency to protect. For a

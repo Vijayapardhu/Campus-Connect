@@ -25,6 +25,7 @@ import {
 } from './icons';
 
 import { api } from './api';
+import { hasNativeFeatures } from './httpApi';
 /** What the window knows about the call this device is in. */
 export type CallSession = {
   callId: string;
@@ -304,18 +305,26 @@ export function useFullscreen(ref: React.RefObject<HTMLElement | null>) {
     return () => document.removeEventListener('fullscreenchange', sync);
   }, [ref]);
 
-  const toggle = React.useCallback(() => {
+  const toggle = React.useCallback(async () => {
     const element = ref.current;
     if (!element) {
       return;
     }
 
     if (document.fullscreenElement) {
-      void document.exitFullscreen().catch(() => undefined);
+      try {
+        await document.exitFullscreen();
+      } catch {
+        // Ignore errors
+      }
     } else {
-      // iOS Safari has no element fullscreen; failing quietly leaves the call
-      // working at its normal size rather than throwing at the user.
-      void element.requestFullscreen?.().catch(() => undefined);
+      try {
+        // Request fullscreen with video playback support
+        await element.requestFullscreen?.({ navigationUI: 'hide' });
+      } catch {
+        // iOS Safari has no element fullscreen; failing quietly leaves the call
+        // working at its normal size rather than throwing at the user.
+      }
     }
   }, [ref]);
 
@@ -797,9 +806,15 @@ export function ScreenPickerModal({
 
 function SourceCard({ source, onPick }: { source: ScreenSource; onPick: (id: string) => void }) {
   return (
-    <button className="picker__item" onClick={() => onPick(source.id)} title={source.name}>
+    <button
+      className="picker__item"
+      onClick={() => onPick(source.id)}
+      onDoubleClick={() => onPick(source.id)}
+      title={source.name}
+    >
       <img className="picker__thumb" src={source.thumbnail} alt="" />
       <span className="picker__name">{source.name}</span>
+      <span className="picker__check">✓</span>
     </button>
   );
 }

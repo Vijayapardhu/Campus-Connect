@@ -9,6 +9,7 @@ import {
   KeyIcon,
   LockIcon,
   MailIcon,
+  PaperclipIcon,
   PlusIcon,
   SettingsIcon
 } from './icons';
@@ -31,6 +32,10 @@ export function Sidebar({
   onJoinByCode,
   onJoinDiscovered,
   onOpenInvite,
+  onOpenFiles,
+  filesOpen,
+  showFiles,
+  runningTransfers,
   onOpenSettings,
   settingsOpen
 }: {
@@ -43,6 +48,12 @@ export function Sidebar({
   onJoinByCode: () => void;
   onJoinDiscovered: (room: DiscoveredRoom) => void;
   onOpenInvite: (invite: RoomInvite) => void;
+  onOpenFiles: () => void;
+  filesOpen: boolean;
+  /** False on a phone: file transfer is between two computers' disks. */
+  showFiles: boolean;
+  /** Transfers under way right now, in either direction. */
+  runningTransfers: number;
   onOpenSettings: () => void;
   settingsOpen: boolean;
 }) {
@@ -191,6 +202,33 @@ export function Sidebar({
       </div>
 
       <div className="sidebar__footer">
+        {/* Sending a file to one machine belongs to no room — it has no
+            history, no members and nobody else sees it — so it sits beside
+            Settings rather than inside a room, and works with none selected. */}
+        {showFiles ? (
+        <button
+          className={filesOpen ? 'room-item is-active' : 'room-item'}
+          onClick={onOpenFiles}
+          title="Send files to a nearby device"
+          aria-current={filesOpen}
+        >
+          <span className="room-item__icon">
+            <PaperclipIcon size={13} />
+          </span>
+          <span className="room-item__body">
+            <span className="room-item__name">Files</span>
+            <span className="room-item__meta">
+              {runningTransfers > 0
+                ? `${runningTransfers} in progress`
+                : online
+                  ? 'Send to a nearby device'
+                  : 'Switched off'}
+            </span>
+          </span>
+          {runningTransfers > 0 ? <span className="room-item__badge">{runningTransfers}</span> : null}
+        </button>
+        ) : null}
+
         <button
           className={settingsOpen ? 'device-card is-active' : 'device-card'}
           onClick={onOpenSettings}
