@@ -1,0 +1,33 @@
+{
+  "name": "campus-connect-site",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Campus Connect website. Builds into ../docs, which is what GitHub Pages serves.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.2.5",
+    "lenis": "^1.3.11",
+    "lucide-react": "^1.28.0",
+    "motion": "^12.23.12",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "simple-icons": "^16.28.0",
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.180.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}

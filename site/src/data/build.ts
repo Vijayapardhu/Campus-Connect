@@ -1,0 +1,402 @@
+/*
+ * The engineering record behind /build.html.
+ *
+ * Every figure and every line here came out of the repository, not out of
+ * memory. The commands are written beside each block so the page can be
+ * re-derived rather than believed:
+ *
+ *   commits    git rev-list --count HEAD
+ *   releases   git tag | wc -l
+ *   days       git log --date=short --pretty=%ad | sort -u
+ *   lines      find src -name '*.ts*' | xargs wc -l
+ *   tests      npm test
+ *   protocol   PROTOCOL_VERSION in src/shared/types.ts
+ *
+ * The "what broke" entries are real commit subjects, kept in the words they
+ * were committed in. A build log that only lists what went right is a
+ * marketing page wearing a lab coat.
+ */
+
+export interface Stat {
+  value: string;
+  label: string;
+  note: string;
+}
+
+export const STATS: Stat[] = [
+  { value: '43', label: 'commits', note: 'one author, no co-authors' },
+  { value: '19', label: 'tagged releases', note: 'v0.1.0 through v0.5.0' },
+  { value: '6', label: 'days with commits', note: 'inside a ten-day span' },
+  { value: '24k', label: 'lines of TypeScript', note: 'across 55 source files' },
+  { value: '248', label: 'tests', note: 'run on every build' },
+  { value: '6', label: 'wire protocol revisions', note: 'checked on every packet' }
+];
+
+/* ---------------------------------------------------------------- days -- */
+
+export interface Day {
+  date: string;
+  commits: number;
+  title: string;
+  body: string;
+  releases: string[];
+}
+
+export const TIMELINE: Day[] = [
+  {
+    date: '27 July',
+    commits: 10,
+    releases: ['v0.1.0', 'v0.1.1', 'v0.1.2', 'v0.1.3'],
+    title: 'Rooms, and a reason for them',
+    body:
+      'The first commit already had encrypted room-based clipboard sync in it, because a shared ' +
+      'clipboard with no boundary is not a feature anyone would switch on. Chunked transfer, QR ' +
+      'join codes, pinning and search followed the same day, then the rebrand and the release ' +
+      'automation. Four tags before midnight, mostly because packaging is where the surprises are.'
+  },
+  {
+    date: '28 July',
+    commits: 11,
+    releases: ['v0.1.4', 'v0.1.5', 'v0.2.0', 'v0.2.1', 'v0.2.2', 'v0.3.0', 'v0.3.1', 'v0.3.2', 'v0.3.3'],
+    title: 'The network gets serious',
+    body:
+      'Discovery was failing between devices on the same network — the bug that makes the whole ' +
+      'product pointless — and fixing it led to a second transport: TCP alongside UDP, for payloads ' +
+      'a datagram should never have been carrying. Auto-update landed the same day, and immediately ' +
+      'shipped a build that packaged the previous build inside itself.'
+  },
+  {
+    date: '29 July',
+    commits: 6,
+    releases: ['v0.3.4', 'v0.3.5', 'v0.3.6'],
+    title: 'Making it survivable',
+    body:
+      'Three releases spent on the difference between working and not falling over: a notification ' +
+      'storm silenced, images made to arrive quickly, and a failed save or a stalled update stopped ' +
+      'from taking the whole application down with it.'
+  },
+  {
+    date: '30 July',
+    commits: 4,
+    releases: ['v0.3.7'],
+    title: 'A day lost to CI',
+    body:
+      'None of this changed the product. A flaky Electron download was failing releases, the build ' +
+      'cache was in a directory the job-level environment could not name, and an unsigned build ' +
+      'turned out to be unable to install its own updates.'
+  },
+  {
+    date: '31 July',
+    commits: 3,
+    releases: ['v0.4.0'],
+    title: 'Calls, screens and a phone',
+    body:
+      'The largest single release: voice and video peer to peer over WebRTC with no signalling ' +
+      'server, remote desktop with an approval gate in front of every input event, phone access ' +
+      'served from the desktop itself, and the productivity layer — snippets, quick paste, the ' +
+      'command palette.'
+  },
+  {
+    date: '5 August',
+    commits: 9,
+    releases: ['v0.5.0'],
+    title: 'Direct files, and an app of its own',
+    body:
+      'Peer-to-peer file transfer with no room and no history behind it, calls from a paired phone ' +
+      'over TLS, and an application shell drawn by the app rather than the platform. The rest of ' +
+      'the day went on the website, and on an updater that had been downloading the same release ' +
+      'three and four times over.'
+  }
+];
+
+/* ------------------------------------------------------------- modules -- */
+
+export interface Module {
+  name: string;
+  lines: number;
+  role: string;
+  detail: string;
+  uses: string[];
+}
+
+/* The ones worth explaining. Descriptions follow ARCHITECTURE.md §7, which is
+   the document these were written against. */
+export const MODULES: Module[] = [
+  {
+    name: 'crypto.ts',
+    lines: 142,
+    role: 'Key derivation and sealing',
+    detail:
+      "A room's password goes through scrypt with a per-room salt and becomes a 32-byte key. " +
+      'Everything in the room is sealed with AES-256-GCM, and `open` returns null on any failure ' +
+      'rather than throwing — a tampered packet is simply not a message. Password knowledge is ' +
+      'proved against the room id, so the password itself is never sent, not even to prove you ' +
+      'have it. Pure functions with no Electron imports, which is what makes it testable.',
+    uses: ['node:crypto', 'scrypt', 'AES-256-GCM']
+  },
+  {
+    name: 'types.ts',
+    lines: 971,
+    role: 'The wire protocol',
+    detail:
+      'Every message that crosses the network is described here, and `PROTOCOL_VERSION` is checked ' +
+      'on each one. It has moved six times. When it moves, devices on the old number stop seeing ' +
+      'the new one by design — a version mismatch is reported rather than half-working, which was ' +
+      'itself the subject of a fix on the second day.',
+    uses: ['TypeScript', 'discriminated unions']
+  },
+  {
+    name: 'network.ts',
+    lines: 184,
+    role: 'Discovery',
+    detail:
+      'Devices announce themselves on the local network by UDP broadcast and find each other with ' +
+      'no lookup, no rendezvous and no account. The advert is deliberately thin — enough to know a ' +
+      'room exists and who owns it, and nothing about what is in it.',
+    uses: ['node:dgram', 'UDP broadcast']
+  },
+  {
+    name: 'tcp.ts + framing.ts',
+    lines: 416,
+    role: 'The second transport',
+    detail:
+      'A datagram is the wrong shape for anything large, so a direct TCP connection is dialled to ' +
+      'known peers and preferred for big payloads. Because TCP is a stream and not messages, ' +
+      'framing.ts puts a length in front of every one — 85 lines that exist entirely because the ' +
+      'first version assumed a read equalled a message.',
+    uses: ['node:net', 'length-prefixed framing']
+  },
+  {
+    name: 'roomManager.ts',
+    lines: 316,
+    role: 'Rooms, keys and members',
+    detail:
+      'Persists through an interface rather than reaching for electron-store directly, which is the ' +
+      'reason it can be tested at all. The invariants are the interesting part: the owner cannot be ' +
+      'removed, and a re-request from an accepted member can never quietly downgrade them back to ' +
+      'pending.',
+    uses: ['electron-store', 'injected persistence']
+  },
+  {
+    name: 'historyManager.ts',
+    lines: 499,
+    role: 'What is kept, and for how long',
+    detail:
+      'Caps are enforced per room — 100 clipboard entries, 500 messages — so a busy room cannot ' +
+      'evict a quiet one. Writes are debounced by 750ms because a clipboard poller would otherwise ' +
+      'touch the disk every second, and consecutive identical entries are dropped, which is what ' +
+      'stops polling producing duplicates.',
+    uses: ['electron-store', 'debounced writes']
+  },
+  {
+    name: 'fileShare.ts',
+    lines: 818,
+    role: 'Direct file transfer',
+    detail:
+      'A state machine with no persistence behind it: request, accept, stream, finish. Files land ' +
+      'in a partials directory and are renamed atomically on completion, so an interrupted transfer ' +
+      'never leaves a half-file wearing the right name. One session at a time in either direction, ' +
+      'and a 512MB ceiling checked before anything is read.',
+    uses: ['node:fs', 'TCP preferred, UDP fallback']
+  },
+  {
+    name: 'phoneSession.ts',
+    lines: 251,
+    role: 'The phone security boundary',
+    detail:
+      'PIN generation, constant-time comparison, brute-force lockout, token issue and expiry. The ' +
+      'rate limit is the load-bearing part: six digits is a million possibilities, which an ' +
+      'unthrottled attacker on the same WiFi exhausts in seconds. The PIN is only meaningful ' +
+      'because guessing is made slow.',
+    uses: ['constant-time compare', 'token expiry']
+  },
+  {
+    name: 'phoneServer.ts',
+    lines: 499,
+    role: 'The phone client, served locally',
+    detail:
+      'A small HTTPS server on port 37778, off unless switched on, serving one self-contained page ' +
+      'and four JSON endpoints. The token travels in an Authorization header rather than a cookie, ' +
+      'so there is no CSRF surface at all. It is also the one place the app hands out plaintext — a ' +
+      'browser cannot hold the room key, so the desktop decrypts and serves. That is documented in ' +
+      'the interface rather than hidden.',
+    uses: ['node:https', 'self-signed TLS', 'bearer tokens']
+  },
+  {
+    name: 'remoteSession.ts',
+    lines: 251,
+    role: 'Who may drive what',
+    detail:
+      'One session at a time in either role, an approval queue per session, and `mayInject` — the ' +
+      'single gate every input event has to pass. No Electron and no native module in here, so the ' +
+      'permission logic can be tested exhaustively. Given this is what lets another machine type on ' +
+      'your keyboard, that was not optional.',
+    uses: ['pure TypeScript']
+  },
+  {
+    name: 'remoteControl.ts + remoteInput.ts',
+    lines: 484,
+    role: 'Injecting the input',
+    detail:
+      'The injector is built by dependency injection, so the whole path can be tested against a ' +
+      'fake that records what it was asked to do. remoteInput.ts is the only file that touches the ' +
+      'native module: lazy require, capability detection for Wayland and macOS Accessibility, and ' +
+      'display bounds read fresh on every event so a screen unplugged mid-session cannot leave the ' +
+      'pointer mapped into a rectangle that no longer exists.',
+    uses: ['@jitsi/robotjs', 'Electron screen API']
+  },
+  {
+    name: 'callEngine.ts',
+    lines: 706,
+    role: 'Voice, video and screens',
+    detail:
+      'WebRTC peer connections with no signalling server anywhere — the offers and answers travel ' +
+      'over the same encrypted room the rest of the app uses. Media is encrypted by DTLS-SRTP, ' +
+      'which is WebRTC doing its own job rather than anything added on top. Calls cap at six, ' +
+      'because every participant holds a connection to every other one.',
+    uses: ['WebRTC', 'DTLS-SRTP']
+  },
+  {
+    name: 'callManager.ts',
+    lines: 184,
+    role: 'Who is in which call',
+    detail:
+      'And nothing else — no media, no Electron, no persistence. A call cannot survive a restart, ' +
+      'because a stale one would be worse than none. Participants that stop announcing are swept ' +
+      'after 20 seconds and an empty call ends itself. Tested against an injected clock.',
+    uses: ['injected clock']
+  },
+  {
+    name: 'updater.ts + updatePolicy.ts',
+    lines: 317,
+    role: 'Getting the next version',
+    detail:
+      'The only part of the application that ever touches the internet, and the source of more ' +
+      'fixes than anything else here: a build that packaged its predecessor inside itself, a ' +
+      'download that could not resume, an unsigned build that could not install its own update, and ' +
+      'a policy that fetched the same release three and four times over.',
+    uses: ['electron-updater', 'GitHub releases']
+  },
+  {
+    name: 'migrate.ts',
+    lines: 73,
+    role: 'Surviving the rename',
+    detail:
+      'Electron names the per-user data directory after the application, so renaming it to Campus ' +
+      'Connect moved everything. This copies the old directory across on first run — identity, ' +
+      'rooms, keys, history — so a rename does not read as a fresh install. It only runs when the ' +
+      'new directory has no settings of its own, leaves the old one in place, and logs a failure ' +
+      'rather than dying on it.',
+    uses: ['node:fs']
+  }
+];
+
+/* Everything, by area — the numbers behind the 24k. */
+export const AREAS: Array<{ area: string; files: number; lines: number; what: string }> = [
+  {
+    area: 'src/main',
+    files: 25,
+    lines: 11163,
+    what: 'The Node side: networking, crypto, storage, the phone server, remote input, updates.'
+  },
+  {
+    area: 'src/renderer',
+    files: 26,
+    lines: 11415,
+    what: 'The interface: panels, settings, call and remote UI, the WebRTC engine, the phone client.'
+  },
+  {
+    area: 'src/shared',
+    files: 4,
+    lines: 1555,
+    what: 'The wire protocol, the IPC contract, content typing and deep links — used by both sides.'
+  }
+];
+
+/* ------------------------------------------------------------ mistakes -- */
+
+export interface Misstep {
+  commit: string;
+  date: string;
+  lesson: string;
+}
+
+/*
+ * Real commit subjects, in the words they were committed in. Fifteen of the
+ * forty-three commits are shaped like this — a little over a third of the
+ * history is the project correcting itself, which is worth showing rather
+ * than quietly leaving out.
+ */
+export const MISSTEPS: Misstep[] = [
+  {
+    commit: 'Fix discovery failing between devices on the same network',
+    date: '28 July',
+    lesson:
+      'The one bug that makes the entire product pointless, and it shipped. Two devices on the same ' +
+      'WiFi could not see each other — everything else in the app is downstream of that working.'
+  },
+  {
+    commit: 'Make a version mismatch visible instead of invisible',
+    date: '28 July',
+    lesson:
+      'Devices on different protocol versions were failing silently, which looks exactly like a ' +
+      'network problem. A refusal you can read beats a failure you have to guess at.'
+  },
+  {
+    commit: 'Add auto-update, and stop packaging the previous build into the new one',
+    date: '28 July',
+    lesson:
+      'The installer was carrying the release before it inside itself. Caught by the size of the ' +
+      'artifact, not by any test.'
+  },
+  {
+    commit: 'Package dist/shared, and check the package can start before publishing',
+    date: '28 July',
+    lesson:
+      'v0.3.1 shipped installers that could not start: a narrowed files glob silently dropped a ' +
+      'directory that main.js requires before any logging exists. Typecheck and tests both passed, ' +
+      'because the fault was in the packaging rather than the code. The release pipeline now reads ' +
+      'the built asar and refuses to publish anything with a missing require.'
+  },
+  {
+    commit: 'Resume an update download that dies mid-transfer',
+    date: '28 July',
+    lesson: 'A dropped connection was restarting the whole download instead of continuing it.'
+  },
+  {
+    commit: 'Stop the notification storm, and make images arrive quickly',
+    date: '29 July',
+    lesson:
+      'Every arriving item was worth a notification, until forty of them arrived at once and it ' +
+      'became obvious that none of them were.'
+  },
+  {
+    commit: 'Never let a failed save, or a stalled update, take the app down',
+    date: '29 July',
+    lesson:
+      'Two unrelated paths that both ended in an unhandled rejection, and therefore in a closed ' +
+      'window.'
+  },
+  {
+    commit: 'Stop a flaky download from failing a release',
+    date: '30 July',
+    lesson:
+      'v0.3.6 died on "An existing connection was forcibly closed by the remote host", partway ' +
+      'through a 121MB Electron zip. The fetch is now cached and retried three times, because a ' +
+      'dropped byte should not cost a release.'
+  },
+  {
+    commit: 'Let an unsigned build actually install its own updates',
+    date: '30 July',
+    lesson:
+      'Auto-update was refusing its own artifacts because they carried no signature — correct ' +
+      'behaviour for a signed product, and completely wrong for this one.'
+  },
+  {
+    commit: 'Stop downloading the same update three and four times over',
+    date: '5 August',
+    lesson:
+      'Nothing was tracking whether a check was already in flight, so overlapping triggers each ' +
+      'started their own download of the same file.'
+  }
+];

@@ -194,6 +194,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The website is a Vite project now, and publishing a release means
+      # rebuilding it. Cached against the site's own lockfile, which has
+      # nothing to do with the application's.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
       - name: Collect installers
         uses: actions/download-artifact@v4
         with:
@@ -304,15 +313,26 @@ jobs:
           # the meantime would otherwise be rejected here.
           git fetch origin main
           git checkout -B main origin/main
+
+          # Writes site/src/data/release.json. docs/ is a build output now, so
+          # the release is recorded in source and the page is regenerated from
+          # it rather than being patched in place.
           node scripts/sync-site-version.js "$TAG" installers
 
-          if git diff --quiet -- docs/index.html; then
+          npm --prefix site ci
+          npm --prefix site run build
+
+          # --porcelain rather than `git diff`, because a rebuild can add or
+          # remove fingerprinted asset files and neither shows up as a
+          # modification to something already tracked. Identical content
+          # fingerprints identically, so an unchanged release is still a no-op.
+          if [ -z "$(git status --porcelain -- site/src/data/release.json docs)" ]; then
             echo "Site already points at ${TAG}."
             exit 0
           fi
 
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/index.html
+          git add -A site/src/data/release.json docs
           git commit -m "Point the download buttons at ${TAG}"
           git push origin main

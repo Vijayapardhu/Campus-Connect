@@ -2,10 +2,9 @@
 /*
  * Points the website's download buttons at a specific release's files.
  *
- * The buttons used to link to /releases/latest, which meant leaving the site
- * to fetch the app. They now link straight at the installers, because GitHub
- * serves those with `Content-Disposition: attachment` — the browser downloads
- * the file and the visitor never goes anywhere.
+ * The buttons link straight at the installers rather than at /releases/latest,
+ * because GitHub serves those with `Content-Disposition: attachment` — the
+ * browser downloads the file and the visitor never leaves the site.
  *
  * The cost of that is a version inside every URL, and a URL with a version in
  * it goes stale the moment the next release lands. A wrong version number on
@@ -19,6 +18,14 @@
  * where the sizes come from. Sizes are read rather than written by hand for
  * the same reason as everything else here: a number nobody can check is a
  * number that is eventually wrong.
+ *
+ * ---------------------------------------------------------------------------
+ * This used to rewrite docs/index.html in place with a pair of regular
+ * expressions. docs/ is now the *output* of the Vite project in site/, so
+ * editing it would be editing a build artifact — the next build would drop
+ * the change on the floor, and the markup it was matching against is minified
+ * and fingerprinted anyway. It writes site/src/data/release.json instead, and
+ * the caller rebuilds. See site/src/data/release.ts for the reading end.
  */
 'use strict';
 
@@ -48,15 +55,19 @@ const PLATFORMS = [
 ];
 
 const built = fs.readdirSync(assetDir);
-const page = path.join(__dirname, '..', 'docs', 'index.html');
-let html = fs.readFileSync(page, 'utf8');
-const before = html;
+const target = path.join(__dirname, '..', 'site', 'src', 'data', 'release.json');
+const before = fs.readFileSync(target, 'utf8');
+const data = JSON.parse(before);
+
+data.tag = tag;
+data.version = version;
+data.assets = {};
 
 for (const platform of PLATFORMS) {
   const file = built.find(platform.match);
 
   /*
-   * A missing installer must not quietly leave the old version's link in
+   * A missing installer must not quietly leave the old version's entry in
    * place: that link still resolves, so the page would keep handing out the
    * previous release with no sign anything was wrong.
    */
@@ -65,35 +76,19 @@ for (const platform of PLATFORMS) {
     process.exit(1);
   }
 
-  const size = fs.statSync(path.join(assetDir, file)).size;
-  const mb = `${Math.round(size / 1048576)} MB`;
-  const url = `https://github.com/Vijayapardhu/Clipboard/releases/download/${tag}/${file}`;
+  const bytes = fs.statSync(path.join(assetDir, file)).size;
+  const size = `${Math.round(bytes / 1048576)} MB`;
 
-  // Rewrite the href and the size that sit inside this platform's card. The
-  // card runs from its data-dl anchor to the closing </a>.
-  const card = new RegExp(`(<a[^>]*data-dl="${platform.key}"[^>]*href=")[^"]*(")([\\s\\S]*?</a>)`);
-  if (!card.test(html)) {
-    console.error(`No download card marked data-dl="${platform.key}" in docs/index.html.`);
-    process.exit(1);
-  }
-
-  html = html.replace(card, (_all, head, quote, rest) => {
-    const resized = rest.replace(/(<span data-size>)[^<]*(<\/span>)/, `$1${mb}$2`);
-    return `${head}${url}${quote}${resized}`;
-  });
-
-  console.log(`${platform.key.padEnd(6)} ${file}  (${mb})`);
+  data.assets[platform.key] = { file, size };
+  console.log(`${platform.key.padEnd(6)} ${file}  (${size})`);
 }
 
-// The two places the version is stated in prose.
-html = html
-  .replace(/(<i><\/i> Version )\d+\.\d+\.\d+/, `$1${version}`)
-  .replace(/(Version )\d+\.\d+\.\d+(\. Free, and open source\.)/, `$1${version}$2`);
+const after = `${JSON.stringify(data, null, 2)}\n`;
 
-if (html === before) {
+if (after === before) {
   console.log('Site already matches this release.');
   process.exit(0);
 }
 
-fs.writeFileSync(page, html);
-console.log(`docs/index.html now points at ${tag}.`);
+fs.writeFileSync(target, after);
+console.log(`site/src/data/release.json now describes ${tag}. Rebuild site/ to publish it.`);
