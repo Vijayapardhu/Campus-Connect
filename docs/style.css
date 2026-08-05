@@ -568,6 +568,14 @@ footer { padding: 54px 0 70px; border-top: 1px solid var(--line); color: var(--t
 .faq details[open] summary .plus { transform: rotate(180deg); }
 .faq details[open] summary .plus::after { opacity: 0; }
 
+/*
+ * Set while an answer is collapsing. The element has to stay `open` to be
+ * visible on the way down, so without this the mark would sit rotated until
+ * the answer had finished closing and then snap back on its own.
+ */
+.faq details.is-shut summary .plus { transform: none; }
+.faq details.is-shut summary .plus::after { opacity: 1; }
+
 .faq .answer { padding: 0 40px 26px 0; color: var(--text-dim); font-size: 16px; }
 .faq .answer p + p { margin-top: 14px; }
 .faq .answer a { color: var(--indigo-pale); }

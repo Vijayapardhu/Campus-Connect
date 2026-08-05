@@ -472,6 +472,81 @@
   addEventListener('scroll', onScroll, { passive: true });
   onScroll();
 
+  /* ------------------------------------------------------- faq opening --- */
+
+  /*
+   * A <details> snaps. There is nothing to transition, because the answer is
+   * not laid out at all until `open` flips — so the height it should animate
+   * to does not exist yet, and on the way back the element is gone before it
+   * can shrink.
+   *
+   * So the element drives the toggle instead of the browser: opening measures
+   * the answer and grows into it, closing runs first and sets `open = false`
+   * only once the animation has finished. `summary` is still a summary, so
+   * Enter, Space and the focus ring keep working; with the script absent or
+   * motion turned down, the native behaviour is what happens.
+   */
+  const EASE = 'cubic-bezier(.22,.61,.36,1)';
+
+  document.querySelectorAll('.faq details').forEach((item) => {
+    const summary = item.querySelector('summary');
+    const answer = item.querySelector('.answer');
+    if (!summary || !answer || calm || !answer.animate) return;
+
+    let running = null;
+
+    /*
+     * The padding animates with the height, and has to.
+     *
+     * Everything here is border-box, so a height of 0 on a box with 26px of
+     * bottom padding still renders 26px — padding does not compress. Animating
+     * height alone bottomed the answer out at 26 and then dropped the last of
+     * it in one frame, which is precisely the snap this is meant to remove.
+     */
+    const shut = { height: '0px', paddingBottom: '0px', opacity: 0 };
+    const full = () => ({
+      height: `${answer.offsetHeight}px`,
+      paddingBottom: getComputedStyle(answer).paddingBottom,
+      opacity: 1
+    });
+
+    const play = (frames, done) => {
+      // An interrupted toggle must not leave a fixed height behind.
+      if (running) running.cancel();
+      answer.style.overflow = 'hidden';
+      running = answer.animate(frames, { duration: 380, easing: EASE });
+      running.onfinish = () => {
+        running = null;
+        answer.style.overflow = '';
+        answer.style.height = '';
+        answer.style.paddingBottom = '';
+        if (done) done();
+      };
+    };
+
+    summary.addEventListener('click', (event) => {
+      event.preventDefault();
+
+      if (item.open) {
+        /*
+         * `open` has to stay true for the element to be visible while it
+         * collapses, which would hold the icon rotated until the very end.
+         * This marks the intent so the mark can turn back with the answer
+         * rather than after it.
+         */
+        item.classList.add('is-shut');
+        play([full(), shut], () => {
+          item.open = false;
+          item.classList.remove('is-shut');
+        });
+      } else {
+        item.classList.remove('is-shut');
+        item.open = true;                          // lay it out, then measure
+        play([shut, full()]);
+      }
+    });
+  });
+
   /* --------------------------------------------------- cursor on cards --- */
 
   if (!calm) {
