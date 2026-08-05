@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Changelog &mdash; Campus Connect</title>
+<meta name="description" content="Every Campus Connect release and what changed for the people using it.">
+<meta name="theme-color" content="#08080c">
+<link rel="icon" href="icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header id="head" class="is-stuck">
+  <div class="wrap bar">
+    <a class="brand" href="index.html"><img src="icon.png" alt=""> <span>Campus Connect</span></a>
+    <nav>
+      <a class="hide-sm" href="index.html#what">What it does</a>
+      <a class="hide-sm" href="index.html#faq">FAQ</a>
+      <a class="hide-sm" href="changelog.html">Changelog</a>
+      <a class="btn btn--go btn--sm" href="index.html#get">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main class="doc">
+  <div class="wrap">
+<h1>Changelog</h1>
+<p class="updated">Every release, and what actually changed for the people using it.</p>
+<p class="intro">Versions track the wire protocol as much as the features. When
+<code>PROTOCOL_VERSION</code> changes, devices still on the old one stop seeing the new one by
+design &mdash; that is called out wherever it happened.</p>
+
+<div class="release">
+  <div class="release__head">
+    <h2>0.5.0</h2>
+    <span class="release__now">Latest</span>
+    <span class="release__date">August 2026</span>
+  </div>
+
+  <h3>New</h3>
+  <ul>
+    <li><strong>Peer-to-peer file transfer.</strong> Send files straight to another machine from
+    the new Files screen. No room, no history, nothing stored &mdash; they accept, you pick, and
+    it streams over a direct connection.</li>
+    <li><strong>Calls from a phone.</strong> Phone access is served over TLS, which is what lets a
+    browser hand the page a microphone. A paired phone can now join voice and video calls.</li>
+    <li><strong>Encrypted phone access.</strong> Your computer issues its own certificate, so the
+    phone&rsquo;s session and its access token no longer cross the WiFi readable by anyone on it.</li>
+    <li><strong>Links that open the app.</strong> <code>campusconnect://</code> links work, so
+    scanning a room&rsquo;s QR code opens the join dialog with the code already filled in.</li>
+    <li><strong>Start with your computer.</strong> A real setting, with the option to start
+    straight to the tray. Earlier versions added themselves to startup with no way to decline.</li>
+    <li><strong>A window of its own.</strong> The application draws its own title bar and
+    controls, keeping the native traffic lights on macOS.</li>
+    <li><strong>A first run that explains itself</strong> &mdash; rooms, the tray, and the paste
+    shortcut.</li>
+  </ul>
+
+  <h3>Fixed</h3>
+  <ul>
+    <li>Notifications interrupt for things that expire &mdash; an incoming call, a transfer
+    request, somebody asking for your screen &mdash; instead of staying silent behind a window.</li>
+    <li>Remote desktop only accepts an answer to a request this device actually made.</li>
+    <li>Removing somebody from a room now ends any remote session they had with you.</li>
+    <li>Losing the shared display ends the session instead of freezing the far end.</li>
+    <li>Substantial layout work at small sizes; the interface no longer breaks between a phone
+    and a tablet.</li>
+  </ul>
+</div>
+
+<div class="release">
+  <div class="release__head">
+    <h2>0.4.0</h2>
+    <span class="release__date">31 July 2026</span>
+  </div>
+  <ul>
+    <li>Voice and video calls over the local network, peer to peer, with screen sharing.</li>
+    <li>Remote desktop, asked for every time and revocable from either end.</li>
+    <li>Phone access &mdash; scan a code and the whole interface runs in your phone&rsquo;s browser.</li>
+    <li>Quick-paste overlay, command palette and saved snippets.</li>
+    <li>Renamed from Shared Clipboard to Campus Connect.</li>
+  </ul>
+</div>
+
+<div class="release">
+  <div class="release__head">
+    <h2>0.3.7</h2>
+    <span class="release__date">30 July 2026</span>
+  </div>
+  <ul>
+    <li>Unsigned builds can install their own updates properly.</li>
+  </ul>
+</div>
+
+<div class="release">
+  <div class="release__head">
+    <h2>0.3.0 &ndash; 0.3.6</h2>
+    <span class="release__date">28&ndash;30 July 2026</span>
+  </div>
+  <ul>
+    <li>Chunked transfer, so large screenshots sync without falling over.</li>
+    <li>File attachments in chat.</li>
+    <li>QR codes for join codes.</li>
+    <li>Pinned clipboard items, and search across the whole history.</li>
+    <li>Keyboard shortcuts throughout.</li>
+  </ul>
+</div>
+
+<h2>Full history</h2>
+<p>Every release, with its installers and complete notes, is on
+<a href="https://github.com/Vijayapardhu/Clipboard/releases">the releases page</a>. The commits
+behind each of them are in <a href="https://github.com/Vijayapardhu/Clipboard">the repository</a>.</p>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span>Campus Connect &mdash; built by <a href="https://github.com/Vijayapardhu">Vijaya Pardhu</a></span>
+    <span class="sep"></span>
+    <a href="index.html">Home</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+    <a href="https://github.com/Vijayapardhu/Clipboard">Source</a>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,1728 +1,488 @@
 <!doctype html>
-<html lang="en" data-theme="auto">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Campus Connect — clipboard, calls and remote desktop on your own network</title>
-<meta name="description" content="Clipboard, files, chat, video calls and full remote control between the devices on your own network. No cloud, no account, nothing leaving your WiFi. Free and open source, by Vijaya Pardhu.">
+<title>Campus Connect — the campus network, finally useful</title>
+<meta name="description" content="Share your clipboard, send files, chat, call and take over a screen between the machines on your campus WiFi. No account, no server, nothing leaving the network. Free and open source.">
 <meta name="author" content="Vijaya Pardhu">
-<meta name="theme-color" content="#4f46e5">
+<meta name="theme-color" content="#08080c">
+<link rel="icon" href="icon.png">
 
 <meta property="og:type" content="website">
-<meta property="og:title" content="Campus Connect — clipboard, calls and remote desktop on your own network">
-<meta property="og:description" content="Clipboard, files, chat, calls and remote desktop across your own network. No cloud, no account. Built by Vijaya Pardhu.">
+<meta property="og:title" content="Campus Connect">
+<meta property="og:description" content="Everything between your devices. None of it online.">
 <meta property="og:url" content="https://vijayapardhu.github.io/Clipboard/">
-<meta property="og:image" content="https://vijayapardhu.github.io/Clipboard/screenshots/clipboard-light.png">
+<meta property="og:image" content="https://vijayapardhu.github.io/Clipboard/screenshots/clipboard-dark.png">
 <meta name="twitter:card" content="summary_large_image">
 
-<link rel="icon" type="image/png" sizes="256x256" href="icon.png">
-<link rel="apple-touch-icon" href="icon.png">
-
-<style>
-/* ============================================================ tokens ==== */
-:root{
-  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;
-  --space-6:24px;--space-8:32px;--space-10:40px;--space-12:56px;--space-16:80px;--space-20:112px;
-  --radius-sm:6px;--radius-md:8px;--radius-lg:12px;--radius-xl:16px;--radius-2xl:24px;--radius-full:999px;
-  --font-sans:'Segoe UI Variable Display','Segoe UI',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
-  --font-mono:'Cascadia Mono','SF Mono','JetBrains Mono',Consolas,monospace;
-  --ease:cubic-bezier(.32,.72,0,1);
-  --ease-out:cubic-bezier(.16,1,.3,1);
-  color-scheme:light;
-  --bg:#fbfbfc;--bg-elevated:#fff;--bg-sunken:#f2f2f4;
-  --bg-hover:rgba(16,17,21,.05);
-  --text:#18181b;--text-2:#52525b;--text-3:#8e8e98;--text-inv:#fff;
-  --border:rgba(16,17,21,.1);--border-2:rgba(16,17,21,.18);
-  --accent:#4f46e5;--accent-2:#4338ca;--accent-soft:rgba(79,70,229,.1);--accent-text:#4338ca;
-  --success:#15803d;--success-soft:rgba(21,128,61,.11);
-  --warning:#b45309;--warning-soft:rgba(180,83,9,.12);
-  --danger:#be123c;--danger-soft:rgba(190,18,60,.1);
-  --shadow-sm:0 1px 2px rgba(16,17,21,.06);
-  --shadow-md:0 6px 20px rgba(16,17,21,.09);
-  --shadow-lg:0 24px 60px rgba(16,17,21,.14);
-  --grid-line:rgba(16,17,21,.045);
-}
-@media (prefers-color-scheme:dark){
-  :root[data-theme="auto"]{
-    color-scheme:dark;
-    --bg:#0b0d11;--bg-elevated:#14171d;--bg-sunken:#080a0d;
-    --bg-hover:rgba(255,255,255,.06);
-    --text:#f4f4f5;--text-2:#a1a1aa;--text-3:#71717a;
-    --border:rgba(255,255,255,.09);--border-2:rgba(255,255,255,.16);
-    --accent:#6366f1;--accent-2:#818cf8;--accent-soft:rgba(99,102,241,.16);--accent-text:#a5b4fc;
-    --success:#4ade80;--success-soft:rgba(74,222,128,.13);
-    --warning:#fbbf24;--warning-soft:rgba(251,191,36,.13);
-    --danger:#fb7185;--danger-soft:rgba(251,113,133,.13);
-    --shadow-sm:0 1px 2px rgba(0,0,0,.4);
-    --shadow-md:0 6px 24px rgba(0,0,0,.5);
-    --shadow-lg:0 28px 70px rgba(0,0,0,.65);
-    --grid-line:rgba(255,255,255,.035);
-  }
-}
-:root[data-theme="dark"]{
-  color-scheme:dark;
-  --bg:#0b0d11;--bg-elevated:#14171d;--bg-sunken:#080a0d;
-  --bg-hover:rgba(255,255,255,.06);
-  --text:#f4f4f5;--text-2:#a1a1aa;--text-3:#71717a;
-  --border:rgba(255,255,255,.09);--border-2:rgba(255,255,255,.16);
-  --accent:#6366f1;--accent-2:#818cf8;--accent-soft:rgba(99,102,241,.16);--accent-text:#a5b4fc;
-  --success:#4ade80;--success-soft:rgba(74,222,128,.13);
-  --warning:#fbbf24;--warning-soft:rgba(251,191,36,.13);
-  --danger:#fb7185;--danger-soft:rgba(251,113,133,.13);
-  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
-  --shadow-md:0 6px 24px rgba(0,0,0,.5);
-  --shadow-lg:0 28px 70px rgba(0,0,0,.65);
-  --grid-line:rgba(255,255,255,.035);
-}
-
-/* ============================================================= reset ==== */
-*,*::before,*::after{box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{
-  margin:0;font-family:var(--font-sans);font-size:16px;line-height:1.6;
-  color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased;
-  overflow-x:hidden;
-}
-h1,h2,h3,h4,p,ul,ol,figure{margin:0}
-ul{padding:0;list-style:none}
-img{max-width:100%;height:auto;display:block}
-a{color:var(--accent-text);text-decoration:none}
-a:hover{text-decoration:underline}
-button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
-:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:var(--radius-sm)}
-code{font-family:var(--font-mono);font-size:.88em}
-
-/* ==================================================== scroll reveal ==== */
-.reveal{opacity:0;transform:translateY(18px);transition:opacity .7s var(--ease-out),transform .7s var(--ease-out)}
-.reveal.in{opacity:1;transform:none}
-.reveal[data-delay="1"]{transition-delay:.07s}
-.reveal[data-delay="2"]{transition-delay:.14s}
-.reveal[data-delay="3"]{transition-delay:.21s}
-.reveal[data-delay="4"]{transition-delay:.28s}
-.reveal[data-delay="5"]{transition-delay:.35s}
-
-@media (prefers-reduced-motion:reduce){
-  html{scroll-behavior:auto}
-  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
-  .reveal{opacity:1;transform:none}
-}
-
-/* ============================================================ layout ==== */
-.wrap{width:100%;max-width:1120px;margin:0 auto;padding:0 var(--space-6)}
-.narrow{max-width:820px}
-.section{padding:var(--space-20) 0}
-/* So an anchor link does not land underneath the sticky header. */
-section[id],[id]{scroll-margin-top:86px}
-.section--tight{padding:var(--space-12) 0}
-.section--sunken{background:var(--bg-sunken);border-block:1px solid var(--border)}
-@media (max-width:700px){.section{padding:var(--space-16) 0}}
-
-.eyebrow{
-  display:inline-flex;align-items:center;gap:var(--space-2);
-  font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
-  color:var(--accent-text);margin-bottom:var(--space-3);
-}
-/* The leading rule is opt-in. Making it the default meant it also appeared in
-   centred blocks, where it pushed the label off centre. */
-.eyebrow--rule::before{content:'';width:18px;height:2px;border-radius:2px;background:currentColor;opacity:.55}
-.h2{font-size:clamp(27px,3.6vw,40px);line-height:1.12;letter-spacing:-.025em;font-weight:720}
-.h3{font-size:19px;font-weight:650;letter-spacing:-.01em}
-.lede{font-size:clamp(16px,1.7vw,18px);color:var(--text-2);max-width:62ch;margin-top:var(--space-4)}
-.center{text-align:center}
-/*
- * `.lede` is width-capped, so centring its text is not enough — the box itself
- * has to be centred too. This covers all three ways a centred context arises:
- * a `.center` wrapper, `.center` on the element itself, and `.cta`.
- */
-.center .lede,
-.lede.center,
-.cta .lede{margin-left:auto;margin-right:auto}
-.cta .btn-row{justify-content:center}
-
-/* ============================================================ header ==== */
-.topnav{
-  position:sticky;top:0;z-index:50;
-  background:color-mix(in srgb,var(--bg) 80%,transparent);
-  -webkit-backdrop-filter:saturate(180%) blur(14px);
-  backdrop-filter:saturate(180%) blur(14px);
-  border-bottom:1px solid transparent;
-  transition:border-color .3s var(--ease),background .3s var(--ease);
-}
-.topnav.is-stuck{border-bottom-color:var(--border)}
-.topnav__inner{display:flex;align-items:center;gap:var(--space-4);height:62px}
-.brand{display:flex;align-items:center;gap:var(--space-3);font-weight:660;letter-spacing:-.015em}
-.brand:hover{text-decoration:none}
-.brand__mark{
-  width:30px;height:30px;border-radius:9px;flex-shrink:0;display:block;
-  box-shadow:0 2px 10px color-mix(in srgb,var(--accent) 40%,transparent);
-  transition:transform .3s var(--ease);
-}
-.brand:hover .brand__mark{transform:rotate(-8deg) scale(1.06)}
-.brand span{color:var(--text);white-space:nowrap}
-.topnav__links{display:flex;align-items:center;gap:var(--space-5);margin-left:auto}
-.topnav__links a:not(.btn){
-  position:relative;color:var(--text-2);font-size:14px;font-weight:500;
-}
-.topnav__links a:not(.btn)::after{
-  content:'';position:absolute;left:0;right:0;bottom:-5px;height:2px;border-radius:2px;
-  background:var(--accent);transform:scaleX(0);transform-origin:left;
-  transition:transform .25s var(--ease);
-}
-.topnav__links a:not(.btn):hover{color:var(--text)}
-.topnav__links a:not(.btn):hover::after{transform:scaleX(1)}
-.topnav__links a:hover{text-decoration:none}
-@media (max-width:900px){.topnav__links a:not(.btn){display:none}}
-
-/* ========================================================== buttons ==== */
-.btn{
-  position:relative;overflow:hidden;
-  display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);
-  height:44px;padding:0 var(--space-5);border-radius:var(--radius-md);
-  border:1px solid var(--border);background:var(--bg-elevated);color:var(--text);
-  font-size:15px;font-weight:560;white-space:nowrap;
-  transition:background .2s var(--ease),border-color .2s var(--ease),
-             transform .2s var(--ease),box-shadow .2s var(--ease);
-}
-.btn:hover{background:var(--bg-hover);border-color:var(--border-2);text-decoration:none;transform:translateY(-2px);box-shadow:var(--shadow-sm)}
-.btn:active{transform:translateY(0)}
-.btn--primary{background:var(--accent);border-color:transparent;color:#fff;box-shadow:0 3px 14px color-mix(in srgb,var(--accent) 34%,transparent)}
-.btn--primary:hover{background:var(--accent-2);border-color:transparent;box-shadow:0 8px 24px color-mix(in srgb,var(--accent) 40%,transparent)}
-.btn--sm{height:34px;padding:0 var(--space-3);font-size:14px}
-.btn--icon{width:34px;padding:0}
-.btn-row{display:flex;flex-wrap:wrap;gap:var(--space-3);margin-top:var(--space-6)}
-.center .btn-row{justify-content:center}
-
-.icon-moon{display:none}
-@media (prefers-color-scheme:dark){
-  :root[data-theme="auto"] .icon-sun{display:none}
-  :root[data-theme="auto"] .icon-moon{display:block}
-}
-:root[data-theme="dark"] .icon-sun{display:none}
-:root[data-theme="dark"] .icon-moon{display:block}
-:root[data-theme="light"] .icon-sun{display:block}
-:root[data-theme="light"] .icon-moon{display:none}
-
-/* ============================================================= hero ==== */
-.hero{position:relative;overflow:hidden;padding:var(--space-20) 0 var(--space-16)}
-.hero__grid{
-  position:absolute;inset:0;pointer-events:none;
-  background-image:linear-gradient(var(--grid-line) 1px,transparent 1px),
-                   linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);
-  background-size:56px 56px;
-  mask-image:radial-gradient(ellipse 70% 55% at 50% 30%,#000,transparent 75%);
-  -webkit-mask-image:radial-gradient(ellipse 70% 55% at 50% 30%,#000,transparent 75%);
-}
-.hero__glow{
-  position:absolute;left:50%;top:-160px;width:900px;height:620px;translate:-50% 0;
-  pointer-events:none;
-  background:radial-gradient(ellipse 50% 50% at 50% 50%,var(--accent-soft),transparent 70%);
-  animation:breathe 9s ease-in-out infinite;
-}
-@keyframes breathe{0%,100%{opacity:.75;transform:scale(1)}50%{opacity:1;transform:scale(1.08)}}
-.hero__inner{position:relative}
-.hero h1{
-  font-size:clamp(38px,6.4vw,66px);line-height:1.04;letter-spacing:-.04em;font-weight:760;
-  /* Wide enough that the headline breaks into three lines rather than four —
-     at 15ch the third line was a single stranded word. */
-  max-width:19ch;margin-inline:auto;
-}
-.hero h1 em{font-style:normal;color:var(--accent-text);position:relative;white-space:nowrap}
-.hero h1 em::after{
-  content:'';position:absolute;left:0;right:0;bottom:.08em;height:.1em;border-radius:99px;
-  background:currentColor;opacity:.22;
-  transform:scaleX(0);transform-origin:left;
-  animation:underline 1s var(--ease-out) .5s forwards;
-}
-@keyframes underline{to{transform:scaleX(1)}}
-.hero .lede{font-size:clamp(17px,2vw,20px);margin-top:var(--space-5)}
-.pill{
-  /* Height is not fixed: on a narrow screen the text wraps, and a fixed
-     height would let it spill outside the rounded shape. */
-  display:inline-flex;align-items:center;justify-content:center;flex-wrap:wrap;
-  gap:var(--space-2);max-width:100%;
-  padding:5px var(--space-4);margin-bottom:var(--space-5);
-  border-radius:var(--radius-xl);border:1px solid var(--border);
-  background:var(--bg-elevated);font-size:13px;font-weight:550;line-height:1.5;
-  color:var(--text-2);box-shadow:var(--shadow-sm);
-}
-@media (min-width:520px){.pill{border-radius:var(--radius-full);flex-wrap:nowrap;white-space:nowrap}}
-.pill b{color:var(--text)}
-.pill__dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 3px var(--success-soft)}
-.hero__note{margin-top:var(--space-4);font-size:13.5px;color:var(--text-3)}
-.hero__by{
-  display:inline-flex;align-items:center;gap:var(--space-3);margin-top:var(--space-8);
-  padding:var(--space-2) var(--space-4) var(--space-2) var(--space-2);
-  border-radius:var(--radius-full);border:1px solid var(--border);background:var(--bg-elevated);
-  font-size:14px;color:var(--text-2);transition:border-color .2s var(--ease),transform .2s var(--ease)
-}
-.hero__by:hover{border-color:var(--border-2);transform:translateY(-1px);text-decoration:none}
-.hero__by img,.hero__by .avatar-fallback{width:28px;height:28px;border-radius:50%;flex-shrink:0}
-.hero__by b{color:var(--text)}
-.avatar-fallback{
-  display:grid;place-items:center;background:var(--accent);color:#fff;
-  font-size:12px;font-weight:700;letter-spacing:.02em;
-}
-
-/* the live demo in the hero */
-.demo{
-  display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:var(--space-5);
-  margin-top:var(--space-12);
-}
-.laptop{
-  border-radius:var(--radius-xl);border:1px solid var(--border);background:var(--bg-elevated);
-  box-shadow:var(--shadow-md);overflow:hidden;
-  transition:transform .4s var(--ease),box-shadow .4s var(--ease);
-}
-.laptop:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg)}
-.laptop__bar{
-  display:flex;align-items:center;gap:var(--space-2);padding:var(--space-3) var(--space-4);
-  border-bottom:1px solid var(--border);background:var(--bg-sunken);
-  font-size:13px;font-weight:600;color:var(--text-2);
-}
-.laptop__dots{display:flex;gap:5px;margin-right:var(--space-1)}
-.laptop__dots i{width:9px;height:9px;border-radius:var(--radius-full);background:var(--border-2)}
-.laptop__body{padding:var(--space-4);min-height:118px;display:grid;align-content:center;gap:var(--space-2)}
-.laptop__label{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3)}
-.snippet{
-  font-family:var(--font-mono);font-size:13px;line-height:1.5;
-  padding:var(--space-3);border-radius:var(--radius-md);
-  background:var(--bg-sunken);border:1px solid var(--border);word-break:break-all;
-}
-.snippet--in{animation:land 3.2s var(--ease) infinite}
-@keyframes land{0%,60%{opacity:0;transform:translateY(6px) scale(.98)}72%,100%{opacity:1;transform:none}}
-.demo__link{display:grid;justify-items:center;gap:6px;color:var(--text-3)}
-.demo__track{position:relative;width:96px;height:2px;border-radius:2px;
-  background:linear-gradient(90deg,var(--border),var(--accent),var(--border))}
-.demo__packet{
-  position:absolute;top:-4px;left:0;width:10px;height:10px;border-radius:var(--radius-full);
-  background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft);
-  animation:travel 3.2s var(--ease) infinite;
-}
-@keyframes travel{
-  0%,12%{left:0;opacity:0}18%{opacity:1}
-  62%{left:calc(100% - 10px);opacity:1}72%,100%{left:calc(100% - 10px);opacity:0}
-}
-.demo__caption{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
-@media (max-width:760px){
-  .demo{grid-template-columns:1fr;gap:var(--space-4)}
-  .demo__link{grid-auto-flow:column;align-items:center;gap:var(--space-4);justify-self:center}
-  .demo__track{width:2px;height:54px;background:linear-gradient(180deg,var(--border),var(--accent),var(--border))}
-  .demo__packet{top:0;left:-4px;animation-name:travel-down}
-}
-@keyframes travel-down{
-  0%,12%{top:0;opacity:0}18%{opacity:1}
-  62%{top:calc(100% - 10px);opacity:1}72%,100%{top:calc(100% - 10px);opacity:0}
-}
-
-/* ========================================================== download === */
-.downloads{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--space-4);margin-top:var(--space-8)}
-.dl{
-  position:relative;display:grid;gap:var(--space-3);justify-items:center;text-align:center;
-  padding:var(--space-6) var(--space-5);border-radius:var(--radius-xl);
-  border:1px solid var(--border);background:var(--bg-elevated);color:var(--text);
-  transition:border-color .25s var(--ease),transform .25s var(--ease),box-shadow .25s var(--ease);
-}
-.dl:hover{border-color:var(--border-2);transform:translateY(-3px);box-shadow:var(--shadow-md);text-decoration:none}
-.dl.is-yours{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
-.dl__tag{
-  position:absolute;top:-11px;left:50%;translate:-50% 0;
-  padding:2px 10px;border-radius:var(--radius-full);
-  background:var(--accent);color:#fff;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
-}
-.dl__icon{color:var(--text-2)}
-.dl.is-yours .dl__icon{color:var(--accent-text)}
-.dl__name{font-size:17px;font-weight:640;letter-spacing:-.01em}
-.dl__meta{font-size:13px;color:var(--text-3);min-height:1.2em}
-.dl__cta{
-  display:inline-flex;align-items:center;gap:6px;margin-top:var(--space-1);
-  font-size:14px;font-weight:600;color:var(--accent-text);
-}
-.dl__cta svg{transition:transform .25s var(--ease)}
-.dl:hover .dl__cta svg{transform:translateY(2px)}
-.dl-note{margin-top:var(--space-5);font-size:13.5px;color:var(--text-3);text-align:center}
-
-/* Sets expectations about the SmartScreen warning before anyone hits it. */
-.notice{
-  display:flex;gap:var(--space-4);max-width:760px;margin:var(--space-8) auto 0;
-  padding:var(--space-5);border-radius:var(--radius-lg);text-align:left;
-  border:1px solid color-mix(in srgb,var(--warning) 32%,transparent);
-  background:var(--warning-soft);
-}
-.notice__icon{flex-shrink:0;color:var(--warning);margin-top:1px}
-.notice__body b{color:var(--text)}
-.notice__body>b{display:block;font-size:15.5px;margin-bottom:var(--space-2)}
-.notice__body p{font-size:14px;color:var(--text-2);line-height:1.6}
-.notice__body p+p{margin-top:var(--space-3)}
-
-/* =========================================================== cards ===== */
-.grid{display:grid;gap:var(--space-4)}
-.grid--2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
-.grid--3{grid-template-columns:repeat(auto-fit,minmax(268px,1fr))}
-/*
- * Four cards under auto-fit became three across with a lone orphan beneath.
- * Pin it to two columns so it always reads as a clean 2x2.
- */
-.grid--pair{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
-@media (min-width:880px){.grid--pair{grid-template-columns:repeat(2,minmax(0,1fr))}}
-.card{
-  padding:var(--space-6);border-radius:var(--radius-lg);
-  border:1px solid var(--border);background:var(--bg-elevated);
-  transition:border-color .25s var(--ease),transform .25s var(--ease),box-shadow .25s var(--ease);
-}
-.card:hover{border-color:var(--border-2);transform:translateY(-3px);box-shadow:var(--shadow-md)}
-.card__icon{
-  width:40px;height:40px;border-radius:var(--radius-md);display:grid;place-items:center;
-  background:var(--accent-soft);color:var(--accent-text);margin-bottom:var(--space-4);
-  transition:transform .25s var(--ease);
-}
-.card:hover .card__icon{transform:scale(1.08) rotate(-4deg)}
-.card p{color:var(--text-2);font-size:15px;margin-top:var(--space-2)}
-.card--persona .card__icon{background:var(--bg-sunken);color:var(--text-2)}
-.card--persona:hover .card__icon{color:var(--accent-text)}
-
-/* ====================================================== comparison ===== */
-.versus{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:var(--space-4)}
-.versus__col{padding:var(--space-6);border-radius:var(--radius-lg);border:1px solid var(--border)}
-.versus__col--bad{background:var(--bg-elevated)}
-.versus__col--good{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 35%,transparent)}
-.versus__col h3{margin-bottom:var(--space-4)}
-.versus__col li{display:flex;gap:var(--space-3);padding:var(--space-2) 0;font-size:15px;color:var(--text-2)}
-.versus__col li b{color:var(--text);font-weight:600}
-.tick{flex-shrink:0;margin-top:3px}
-.tick--no{color:var(--warning)}
-.tick--yes{color:var(--success)}
-
-/* ========================================== the journey (stepper) ====== */
-.journey{display:grid;grid-template-columns:300px minmax(0,1fr);gap:var(--space-8);margin-top:var(--space-10);align-items:start}
-@media (max-width:880px){.journey{grid-template-columns:1fr;gap:var(--space-6)}}
-
-.steps{display:grid;gap:var(--space-2)}
-.step{
-  position:relative;display:flex;gap:var(--space-4);width:100%;text-align:left;
-  padding:var(--space-4);border-radius:var(--radius-lg);
-  border:1px solid transparent;background:transparent;
-  transition:background .25s var(--ease),border-color .25s var(--ease);
-}
-.step:hover{background:var(--bg-hover)}
-.step.is-active{background:var(--bg-elevated);border-color:var(--border);box-shadow:var(--shadow-sm)}
-.step__n{
-  display:grid;place-items:center;flex-shrink:0;
-  width:28px;height:28px;border-radius:50%;
-  border:1.5px solid var(--border-2);color:var(--text-3);
-  font-size:13px;font-weight:700;
-  transition:background .25s var(--ease),color .25s var(--ease),border-color .25s var(--ease);
-}
-.step.is-active .step__n{background:var(--accent);border-color:transparent;color:#fff}
-.step__body h3{font-size:16px;font-weight:640;letter-spacing:-.01em}
-.step.is-active .step__body h3{color:var(--accent-text)}
-.step__body p{font-size:14px;color:var(--text-2);margin-top:2px}
-/* progress bar that fills while a step is on screen */
-.step__bar{position:absolute;left:0;bottom:0;height:2px;width:0;background:var(--accent);border-radius:2px}
-.step.is-active .step__bar{animation:fill 7s linear forwards}
-.journey.is-paused .step.is-active .step__bar{animation-play-state:paused}
-@keyframes fill{to{width:100%}}
-
-.stage{
-  position:relative;border-radius:var(--radius-xl);border:1px solid var(--border);
-  background:var(--bg-elevated);box-shadow:var(--shadow-sm);
-  padding:var(--space-6) var(--space-6) var(--space-5);min-height:330px;display:grid;place-items:center;overflow:hidden;
-}
-.stage__figure{width:100%;min-width:0}
-.stage__scene{grid-area:1/1;width:100%;opacity:0;transform:translateY(10px);pointer-events:none;
-  transition:opacity .5s var(--ease-out),transform .5s var(--ease-out)}
-.stage__scene.is-active{opacity:1;transform:none;pointer-events:auto}
-.stage__caption{
-  margin-top:var(--space-5);font-size:14px;color:var(--text-2);text-align:center;max-width:52ch;
-  margin-inline:auto;
-}
-.stage__caption b{color:var(--text)}
-
-/*
- * On a phone the stage is about 300px wide, which scaled a 560-unit diagram
- * down far enough that its labels became decoration rather than words. Below
- * this width it scrolls instead of shrinking — the same trade the pipeline
- * diagram makes, and the readable one.
- */
-@media (max-width:700px){
-  /*
-   * `place-items:center` sizes each scene to its content, so the diagram’s
-   * min-width made the caption 440px wide too and pushed it out of view.
-   * Stretching the scene and letting it shrink keeps the prose at phone width.
-   */
-  .stage{padding:var(--space-5) var(--space-4);justify-items:stretch}
-  .stage__scene{width:100%;min-width:0}
-  /* The picture scrolls; the caption below it stays put and wraps. */
-  .stage__figure{overflow-x:auto;overscroll-behavior-x:contain}
-  .dg{min-width:440px}
-}
-
-/* SVG diagram vocabulary, shared by every scene */
-.dg{width:100%;height:auto;display:block;overflow:visible}
-.dg-box{fill:var(--bg-sunken);stroke:var(--border-2);stroke-width:1.5}
-.dg-box--accent{fill:var(--accent-soft);stroke:var(--accent)}
-.dg-box--ok{fill:var(--success-soft);stroke:var(--success)}
-.dg-box--no{fill:var(--danger-soft);stroke:var(--danger)}
-.dg-bar{fill:var(--border);opacity:.6}
-.dg-t{fill:var(--text);font-family:var(--font-sans);font-size:13px;font-weight:600}
-.dg-t--sm{fill:var(--text-2);font-size:11.5px;font-weight:500}
-.dg-t--mono{fill:var(--accent-text);font-family:var(--font-mono);font-size:13px;font-weight:700;letter-spacing:.08em}
-.dg-line{stroke:var(--border-2);stroke-width:1.5;fill:none}
-.dg-line--accent{stroke:var(--accent);stroke-width:2}
-.dg-line--muted{stroke:var(--border-2);stroke-width:2}
-.dg-line--dash{stroke-dasharray:5 5}
-/* Arrowheads are drawn, not markers: a marker scales with stroke-width and
-   overshoots its own path end, which put every head on top of the box it was
-   meant to be pointing at. */
-.dg-head{fill:var(--accent);stroke:none}
-.dg-head--muted{fill:var(--border-2)}
-.dg-head--no{fill:var(--danger)}
-/* Only the top corners, so the bar meets the card wall instead of curving
-   away from it and floating inside the border. */
-.dg-chrome{fill:var(--border);opacity:.55;stroke:none}
-.dg-ico{fill:none;stroke:var(--text-2);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
-.dg-ico--accent{stroke:var(--accent)}
-.dg-ico--ok{stroke:var(--success)}
-.dg-ico--no{stroke:var(--danger)}
-
-/* animations used inside the scenes, only while the scene is active */
-.is-active .fly{animation:fly 2.6s var(--ease) infinite}
-@keyframes fly{0%,8%{opacity:0;transform:translateX(0)}16%{opacity:1}
-  70%{opacity:1;transform:translateX(var(--fly,190px))}80%,100%{opacity:0;transform:translateX(var(--fly,190px))}}
-.is-active .pop{animation:pop .55s var(--ease-out) both}
-.is-active .pop[data-d="1"]{animation-delay:.25s}
-.is-active .pop[data-d="2"]{animation-delay:.5s}
-.is-active .pop[data-d="3"]{animation-delay:.75s}
-.is-active .pop[data-d="4"]{animation-delay:1s}
-@keyframes pop{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:none}}
-.is-active .draw{stroke-dasharray:400;stroke-dashoffset:400;animation:draw 1.4s var(--ease-out) .2s forwards}
-@keyframes draw{to{stroke-dashoffset:0}}
-.is-active .pulse{animation:pulse 2.2s ease-in-out infinite}
-/* Movement along the wire itself, so nothing has to fly over a box to show
-   that something is travelling. */
-.is-active .flow{animation:flow 1.1s linear infinite}
-@keyframes flow{to{stroke-dashoffset:-20}}
-@keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
-
-/* ================================================ pipeline diagram ===== */
-.pipe{
-  margin-top:var(--space-10);padding:var(--space-8) var(--space-6);
-  border-radius:var(--radius-xl);border:1px solid var(--border);background:var(--bg-elevated);
-  overflow-x:auto;
-}
-.pipe__row{display:flex;align-items:stretch;gap:0;min-width:840px}
-.pipe__stage{flex:1;display:grid;justify-items:center;gap:var(--space-2);text-align:center;padding:0 var(--space-2)}
-.pipe__icon{
-  width:46px;height:46px;border-radius:var(--radius-lg);display:grid;place-items:center;
-  border:1px solid var(--border-2);background:var(--bg-sunken);color:var(--text-2);
-}
-.pipe__stage--key .pipe__icon{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-text)}
-.pipe__name{font-size:13px;font-weight:640}
-.pipe__desc{font-size:11.5px;color:var(--text-3);line-height:1.45;max-width:15ch}
-.pipe__arrow{display:grid;align-content:center;color:var(--border-2);padding-top:14px}
-.pipe__legend{display:flex;flex-wrap:wrap;justify-content:center;gap:var(--space-5);margin-top:var(--space-6);font-size:13px;color:var(--text-2)}
-.pipe__legend span{display:inline-flex;align-items:center;gap:7px}
-.pipe__legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
-
-/* ======================================================== security ===== */
-.checks{display:grid;gap:var(--space-3);margin-top:var(--space-8)}
-.check{
-  display:flex;gap:var(--space-4);padding:var(--space-4) var(--space-5);
-  border-radius:var(--radius-lg);border:1px solid var(--border);background:var(--bg-elevated);
-  transition:border-color .25s var(--ease),transform .25s var(--ease);
-}
-.check:hover{border-color:var(--border-2);transform:translateX(3px)}
-.check__n{
-  flex-shrink:0;width:26px;height:26px;border-radius:var(--radius-full);
-  display:grid;place-items:center;background:var(--accent);color:#fff;
-  font-size:13px;font-weight:700;
-}
-.check div{font-size:15px}
-.check strong{display:block;color:var(--text)}
-.check span{color:var(--text-2)}
-.honest{
-  margin-top:var(--space-6);padding:var(--space-6);border-radius:var(--radius-lg);
-  border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);background:var(--warning-soft);
-}
-.honest h3{margin-bottom:var(--space-2)}
-.honest p,.honest li{font-size:14.5px;color:var(--text-2)}
-.honest li{padding:3px 0 3px var(--space-5);position:relative}
-.honest li::before{content:'—';position:absolute;left:0;color:var(--text-3)}
-
-/* ===================================================== screenshots ===== */
-.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:var(--space-5)}
-.shot{border-radius:var(--radius-lg);overflow:hidden;border:1px solid var(--border);background:var(--bg-elevated);
-  transition:transform .3s var(--ease),box-shadow .3s var(--ease)}
-.shot:hover{transform:translateY(-4px);box-shadow:var(--shadow-lg)}
-.shot img{width:100%}
-.shot figcaption{padding:var(--space-3) var(--space-4);font-size:14px;color:var(--text-2);border-top:1px solid var(--border)}
-
-/* =========================================================== stack ===== */
-.stack-list{display:grid;gap:var(--space-1)}
-.stack-item{display:flex;align-items:baseline;gap:var(--space-4);padding:var(--space-3) 0;
-  border-bottom:1px solid var(--border);font-size:15px}
-.stack-item b{min-width:132px;flex-shrink:0;color:var(--text);font-weight:600}
-.stack-item span{color:var(--text-2)}
-/* Long commands wrap instead of producing a horizontal scrollbar inside the box. */
-.cmd{
-  display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap;
-  padding:var(--space-4) var(--space-5);border-radius:var(--radius-md);
-  background:var(--bg-sunken);border:1px solid var(--border);
-  font-family:var(--font-mono);font-size:13.5px;line-height:1.6;
-}
-.cmd::before{content:'$';color:var(--text-3);flex-shrink:0;align-self:flex-start}
-.cmd code{flex:1;min-width:0;white-space:pre-wrap;word-break:break-all}
-.copy{margin-left:auto;flex-shrink:0}
-
-/* ========================================================= roadmap ===== */
-.road{display:grid;gap:var(--space-2)}
-.road li{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);
-  border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-elevated);font-size:15px}
-.road .box{flex-shrink:0;width:18px;height:18px;border-radius:5px;border:1.5px solid var(--border-2)}
-.road .box--done{display:grid;place-items:center;border-color:transparent;background:var(--success);
-  color:#fff;font-size:11px;font-weight:800;line-height:1}
-.road li.is-done{color:var(--text-2)}
-.road .tag{margin-left:auto;flex-shrink:0;font-size:12px;font-weight:650;padding:2px 8px;
-  border-radius:var(--radius-full);background:var(--accent-soft);color:var(--accent-text)}
-.road .tag--done{background:var(--success-soft);color:var(--success)}
-
-/* ========================================================== author ===== */
-.author{
-  display:grid;grid-template-columns:auto minmax(0,1fr);gap:var(--space-6);align-items:start;
-  padding:var(--space-8);border-radius:var(--radius-2xl);
-  border:1px solid var(--border);background:var(--bg-elevated);box-shadow:var(--shadow-md);
-}
-@media (max-width:640px){.author{grid-template-columns:1fr;text-align:center;justify-items:center}}
-.author__avatar,.author .avatar-fallback{width:96px;height:96px;border-radius:var(--radius-2xl);flex-shrink:0;font-size:30px}
-.author__avatar{border:1px solid var(--border)}
-.author__name{font-size:23px;font-weight:700;letter-spacing:-.02em}
-.author__role{font-size:14px;font-weight:640;color:var(--accent-text);margin-top:2px;
-  text-transform:uppercase;letter-spacing:.08em}
-.author p{color:var(--text-2);font-size:15.5px;margin-top:var(--space-3)}
-.author__links{display:flex;flex-wrap:wrap;gap:var(--space-3);margin-top:var(--space-5)}
-@media (max-width:640px){.author__links{justify-content:center}}
-
-/* ======================================================= contribute ==== */
-.cta{
-  position:relative;overflow:hidden;
-  padding:var(--space-12) var(--space-8);border-radius:var(--radius-2xl);
-  border:1px solid var(--border);background:var(--bg-elevated);
-  box-shadow:var(--shadow-lg);text-align:center;
-}
-.cta::before{
-  content:'';position:absolute;left:50%;top:-50%;width:700px;height:520px;translate:-50% 0;
-  background:radial-gradient(ellipse 50% 50% at 50% 50%,var(--accent-soft),transparent 70%);
-  pointer-events:none;
-}
-.cta>*{position:relative}
-/* Six items: three across, so the second row is full rather than two orphans. */
-.help-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--space-3);margin-top:var(--space-8);text-align:left}
-@media (min-width:860px){.help-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-.help{padding:var(--space-4);border-radius:var(--radius-md);background:var(--bg-sunken);border:1px solid var(--border);
-  transition:transform .25s var(--ease),border-color .25s var(--ease)}
-.help:hover{transform:translateY(-2px);border-color:var(--border-2)}
-.help b{display:flex;align-items:center;gap:8px;font-size:15px;margin-bottom:4px}
-.help b svg{flex-shrink:0;color:var(--accent-text)}
-.help b span{font-weight:inherit}
-.help>span{display:block;font-size:14px;color:var(--text-2)}
-
-/* ==================================================== one-line install == */
-.oneline{max-width:640px;margin:var(--space-8) auto 0;text-align:center}
-.oneline .cmd{
-  justify-content:center;font-size:16px;padding:var(--space-4) var(--space-5);
-  background:var(--bg-elevated);border-color:var(--border-2);box-shadow:var(--shadow-sm);
-}
-.oneline .cmd code{flex:0 1 auto;font-weight:600;color:var(--text);word-break:normal}
-.oneline__note{margin-top:var(--space-3);font-size:13.5px;color:var(--text-3)}
-/* A rule with the word sitting in the gap, rather than floating above it. */
-.or{
-  display:flex;align-items:center;gap:var(--space-4);
-  max-width:640px;margin:var(--space-8) auto 0;
-  font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);
-}
-.or::before,.or::after{content:'';flex:1;height:1px;background:var(--border)}
-
-/* ========================================================= features ===== */
-/*
- * Six equal cards, three across. A six-column track rather than `auto-fit`
- * because auto-fit put four on the first row and two orphans on the second at
- * some widths, and the set reads as pairs of three.
- */
-.feat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(272px,1fr));gap:var(--space-4);margin-top:var(--space-10)}
-@media (min-width:940px){
-  .feat-grid{grid-template-columns:repeat(6,minmax(0,1fr))}
-  .feat{grid-column:span 2}
-}
-.feat{
-  position:relative;display:flex;flex-direction:column;
-  padding:var(--space-6);border-radius:var(--radius-xl);
-  border:1px solid var(--border);background:var(--bg-elevated);
-  transition:border-color .25s var(--ease),transform .25s var(--ease),box-shadow .25s var(--ease);
-}
-.feat:hover{border-color:var(--border-2);transform:translateY(-4px);box-shadow:var(--shadow-md)}
-.feat__icon{
-  width:44px;height:44px;border-radius:var(--radius-lg);display:grid;place-items:center;
-  background:var(--accent-soft);color:var(--accent-text);margin-bottom:var(--space-4);
-  transition:transform .3s var(--ease);
-}
-.feat:hover .feat__icon{transform:scale(1.08) rotate(-5deg)}
-.feat h3{font-size:18px;font-weight:660;letter-spacing:-.015em;padding-right:64px}
-.feat>p{margin-top:var(--space-2);font-size:14.5px;color:var(--text-2);line-height:1.6}
-.feat__list{margin-top:var(--space-4);display:grid;gap:7px}
-.feat__list li{position:relative;padding-left:var(--space-5);font-size:13.5px;color:var(--text-2);line-height:1.5}
-.feat__list li::before{
-  content:'';position:absolute;left:2px;top:.5em;width:6px;height:6px;border-radius:50%;
-  background:var(--accent);opacity:.45;
-}
-.feat__new{
-  position:absolute;top:var(--space-6);right:var(--space-6);
-  padding:3px 9px;border-radius:var(--radius-full);
-  background:var(--success-soft);color:var(--success);
-  font-size:10.5px;font-weight:750;letter-spacing:.06em;text-transform:uppercase;
-}
-
-/* =========================================================== footer ==== */
-.footer{border-top:1px solid var(--border);padding:var(--space-10) 0;color:var(--text-2);font-size:14px}
-.footer__inner{display:flex;flex-wrap:wrap;gap:var(--space-5);align-items:center}
-.footer nav{display:flex;flex-wrap:wrap;gap:var(--space-5);margin-left:auto}
-</style>
+<link rel="stylesheet" href="style.css">
 </head>
-
 <body>
 
-<!-- ============================================================ nav ==== -->
-<header class="topnav" id="topnav">
-  <div class="wrap topnav__inner">
-    <a class="brand" href="#top">
-      <img class="brand__mark" src="icon.png" alt="" width="30" height="30">
-      <span>Campus Connect</span>
-    </a>
-    <nav class="topnav__links">
-      <a href="#features">Features</a>
-      <a href="#how">How it works</a>
-      <a href="#inside">Under the hood</a>
-      <a href="#security">Security</a>
-      <a href="#author">Who made it</a>
-      <button class="btn btn--sm btn--icon" id="theme" aria-label="Switch between light and dark">
-        <svg class="icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
-        </svg>
-        <svg class="icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/>
-        </svg>
-      </button>
-      <a class="btn btn--sm btn--primary" href="#download">Download</a>
+<header id="head">
+  <div class="wrap bar">
+    <a class="brand" href="#top"><img src="icon.png" alt=""> <span>Campus Connect</span></a>
+    <nav>
+      <a class="hide-sm" href="#campus">For campuses</a>
+      <a class="hide-sm" href="#what">What it does</a>
+      <a class="hide-sm" href="#private">Privacy</a>
+      <a class="hide-sm" href="#faq">FAQ</a>
+      <a class="hide-sm" href="#maker">Developer</a>
+      <a class="btn btn--go btn--sm" href="#get">Download</a>
     </nav>
   </div>
 </header>
 
 <main id="top">
-<!-- =========================================================== hero ==== -->
-<section class="hero">
-  <div class="hero__grid" aria-hidden="true"></div>
-  <div class="hero__glow" aria-hidden="true"></div>
 
-  <div class="wrap hero__inner center">
-    <span class="pill reveal"><span class="pill__dot"></span> <b>v0.4.0</b> — calls, remote desktop and phone access &middot; Free and open source</span>
-
-    <h1 class="reveal" data-delay="1">Everything between your devices. <em>None of it online.</em></h1>
-
-    <p class="lede reveal" data-delay="2">
-      Clipboard, files, chat, video calls and full remote control — shared
-      between the machines on your own network. Nothing touches the internet,
-      nothing touches a server, and you can read every line of how it works.
-    </p>
-
-    <div class="btn-row reveal" data-delay="3">
-      <a class="btn btn--primary" href="#download">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>
-        Download free
-      </a>
-      <a class="btn" href="#how">See how it works</a>
-    </div>
-
-    <p class="hero__note reveal" data-delay="4">Windows &middot; macOS &middot; Ubuntu &middot; and your phone, from its browser</p>
-
-    <a class="hero__by reveal" data-delay="4" href="#author">
-      <img src="https://github.com/Vijayapardhu.png?size=80" alt="" width="28" height="28"
-           onerror="this.outerHTML='&lt;span class=&quot;avatar-fallback&quot;&gt;VP&lt;/span&gt;'">
-      <span>An MVP built by <b>Vijaya Pardhu</b></span>
-    </a>
-
-    <div class="demo reveal" data-delay="5" role="img" aria-label="A snippet copied on one machine appearing on another over the local network">
-      <div class="laptop">
-        <div class="laptop__bar"><span class="laptop__dots"><i></i><i></i><i></i></span> Your laptop</div>
-        <div class="laptop__body">
-          <span class="laptop__label">Ctrl + C</span>
-          <div class="snippet">https://example.com/a/very/long/link</div>
-        </div>
+  <section class="hero mid">
+    <div class="wrap">
+      <span class="tagline" data-reveal><i></i> Version 0.5.0<span class="tagline__more"> &mdash; now with peer-to-peer file transfer</span></span>
+      <h1 data-reveal>The campus network, <em>finally useful.</em></h1>
+      <p class="lede" data-reveal>
+        Share a clipboard, send a file, start a call or take over a screen — between the
+        machines already sitting on your college WiFi. No account, no server, and nothing
+        that has to leave the building to get to the desk beside you.
+      </p>
+      <div class="hero-actions" data-reveal>
+        <a class="btn btn--go" href="#get">Download for free</a>
+        <a class="btn btn--ghost" href="#campus">See what it solves</a>
       </div>
-      <div class="demo__link">
-        <span class="demo__caption">encrypted</span>
-        <span class="demo__track"><span class="demo__packet"></span></span>
-        <span class="demo__caption">over WiFi</span>
-      </div>
-      <div class="laptop">
-        <div class="laptop__bar"><span class="laptop__dots"><i></i><i></i><i></i></span> The other machine</div>
-        <div class="laptop__body">
-          <span class="laptop__label">Ctrl + V</span>
-          <div class="snippet snippet--in">https://example.com/a/very/long/link</div>
+      <p class="hero-note" data-reveal>Windows, macOS and Linux · and your phone, from its browser · MIT licensed</p>
+
+      <div class="showcase" data-reveal>
+        <div class="frame">
+          <img src="screenshots/clipboard-dark.png" alt="Campus Connect showing shared clipboard history" width="1320" height="880" fetchpriority="high">
         </div>
       </div>
     </div>
-  </div>
-</section>
+  </section>
 
-<!-- ======================================================= download ==== -->
-<section class="section section--tight section--sunken" id="download">
-  <div class="wrap">
-    <div class="center">
-      <p class="eyebrow reveal">Download</p>
-      <h2 class="h2 reveal" data-delay="1">Install it on both machines</h2>
-      <p class="lede reveal" data-delay="2">
-        That is the only setup step. Both copies find each other on the network
-        by themselves.
+  <section id="campus">
+    <div class="wrap">
+      <p class="eyebrow" data-reveal>Built for campuses</p>
+      <h2 class="statement" data-reveal>The lab machine cannot log in to anything. It does not need to.</h2>
+      <p class="lede" data-reveal>
+        College networks block half the internet, the shared machines are not yours to sign
+        in on, and the WiFi drops at the worst moment. Campus Connect never leaves the
+        network, so none of that is its problem.
       </p>
-    </div>
 
-    <div class="oneline reveal" data-delay="2">
-      <div class="cmd">
-        <code>npx campus-connect</code>
-        <button class="btn btn--sm copy" data-copy="npx campus-connect">Copy</button>
-      </div>
-      <p class="oneline__note">
-        If you have Node installed: picks the build for your machine, checks it
-        against the checksum published with the release, and runs it.
-      </p>
-    </div>
+      <div class="scenes" data-stagger>
+        <div class="scene" data-reveal>
+          <h3>
+            <span class="ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+            In the lab
+          </h3>
+          <dl class="swap">
+            <div class="was"><dt>Today</dt><dd>Sign in to a shared machine, email the error to yourself, sign out and hope you remembered to.</dd></div>
+            <div class="now"><dt>Instead</dt><dd>Copy it. It is on your laptop, and nothing of yours was ever on that computer.</dd></div>
+          </dl>
+        </div>
 
-    <p class="or reveal" data-delay="2">or download it</p>
+        <div class="scene" data-reveal>
+          <h3>
+            <span class="ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 19a6.5 6.5 0 0 1 13 0"/><path d="M16.5 5.2a3.2 3.2 0 0 1 0 5.6M18 13.4a6.5 6.5 0 0 1 3.5 5.6"/></svg></span>
+            Group project
+          </h3>
+          <dl class="swap">
+            <div class="was"><dt>Today</dt><dd>A group chat nobody scrolls back through, and four copies of the same file with different names.</dd></div>
+            <div class="now"><dt>Instead</dt><dd>One room. Snippets, screenshots and files reach all four of you, and the history stays on your machines.</dd></div>
+          </dl>
+        </div>
 
-    <div class="downloads reveal" data-delay="3">
-      <a class="dl" id="dl-win" href="https://github.com/Vijayapardhu/Clipboard/releases" data-os="windows">
-        <span class="dl__icon">
-          <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.6 10 4.6v6.9H3V5.6Zm0 12.8 7 1v-6.8H3v5.8Zm8 1.2L21 21V12.5h-10v7.1ZM11 4.4V11.5h10V3l-10 1.4Z"/></svg>
-        </span>
-        <span class="dl__name">Windows</span>
-        <span class="dl__meta" data-meta>Windows 10 and 11</span>
-        <span class="dl__cta">
-          Download .exe
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M7 12l5 5 5-5"/></svg>
-        </span>
-      </a>
+        <div class="scene" data-reveal>
+          <h3>
+            <span class="ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h18v11H3z"/><path d="M12 15v5M8 20h8"/></svg></span>
+            Presentation day
+          </h3>
+          <dl class="swap">
+            <div class="was"><dt>Today</dt><dd>A USB stick you left in the room, or a cloud drive that wants a login the podium machine will not give you.</dd></div>
+            <div class="now"><dt>Instead</dt><dd>Send the deck straight across. They accept, it arrives, and nothing is stored anywhere afterwards.</dd></div>
+          </dl>
+        </div>
 
-      <a class="dl" id="dl-mac" href="https://github.com/Vijayapardhu/Clipboard/releases" data-os="mac">
-        <span class="dl__icon">
-          <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9-.7 0-1.8-.9-3-.8-1.5 0-2.9.9-3.7 2.3-1.6 2.8-.4 6.9 1.1 9.1.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.2 0 2-1.1 2.8-2.2.9-1.3 1.2-2.5 1.3-2.6-.1 0-2.5-1-2.5-3.7ZM14.1 5.3c.6-.8 1-1.9.9-3-.9 0-2 .6-2.7 1.4-.6.7-1.1 1.8-.9 2.9 1 0 2-.5 2.7-1.3Z"/></svg>
-        </span>
-        <span class="dl__name">macOS</span>
-        <span class="dl__meta" data-meta>Intel and Apple silicon</span>
-        <span class="dl__cta">
-          Download .dmg
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M7 12l5 5 5-5"/></svg>
-        </span>
-      </a>
-
-      <a class="dl" id="dl-linux" href="https://github.com/Vijayapardhu/Clipboard/releases" data-os="linux">
-        <span class="dl__icon">
-          <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c-2.2 0-3.5 1.7-3.5 4.2 0 1.5.2 2.3-.3 3.3-.6 1.2-2 2.7-2.6 4.6-.3.9-.2 1.7.1 2.1-.5.5-.8 1.2-.4 1.8.3.5 1 .6 1.6.8.7.2 1.3.6 2 .8.6.2 1.4.1 1.8-.4.5.1 1 .1 1.5.1s1 0 1.5-.1c.4.5 1.2.6 1.8.4.7-.2 1.3-.6 2-.8.6-.2 1.3-.3 1.6-.8.4-.6.1-1.3-.4-1.8.3-.4.4-1.2.1-2.1-.6-1.9-2-3.4-2.6-4.6-.5-1-.3-1.8-.3-3.3C15.5 3.7 14.2 2 12 2Zm-1.6 4.1c.4 0 .7.4.7 1s-.3 1-.7 1-.7-.5-.7-1 .3-1 .7-1Zm3.2 0c.4 0 .7.4.7 1s-.3 1-.7 1-.7-.5-.7-1 .3-1 .7-1ZM12 8.6c.9 0 1.9.5 1.9.9 0 .3-.4.5-.8.8-.4.2-.8.5-1.1.5s-.7-.3-1.1-.5c-.4-.3-.8-.5-.8-.8 0-.4 1-.9 1.9-.9Z"/></svg>
-        </span>
-        <span class="dl__name">Ubuntu &amp; Linux</span>
-        <span class="dl__meta" data-meta>AppImage, runs anywhere</span>
-        <span class="dl__cta">
-          Download .AppImage
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M7 12l5 5 5-5"/></svg>
-        </span>
-      </a>
-    </div>
-
-    <div class="notice reveal" data-delay="4">
-      <span class="notice__icon">
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/></svg>
-      </span>
-      <div class="notice__body">
-        <b>Windows will say “Unknown publisher”. That is expected.</b>
-        <p>
-          Windows reads the publisher name out of a code-signing certificate, and
-          this project does not have one yet — so the field is blank. It is not a
-          claim that anything is wrong with the file. Once downloaded, right-click
-          it and choose <b>Properties → Details</b>: it says <b>Vijaya Pardhu</b>.
-        </p>
-        <p>
-          To run it: <b>More info → Run anyway</b> on Windows, right-click →
-          <b>Open</b> on macOS, <code>chmod +x</code> on Ubuntu. Or
-          <a href="https://github.com/Vijayapardhu/Clipboard#from-source">build it
-          from source</a> and trust a binary you compiled yourself — which is
-          rather the point of it being readable.
-        </p>
+        <div class="scene" data-reveal>
+          <h3>
+            <span class="ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19.5" r="1"/><path d="m3 3 18 18"/></svg></span>
+            WiFi with no way out
+          </h3>
+          <dl class="swap">
+            <div class="was"><dt>Today</dt><dd>The campus network blocks it, the connection drops, and everything that needed the internet stops working.</dd></div>
+            <div class="now"><dt>Instead</dt><dd>Nothing changes. It never used the internet, so there is nothing for a blocked or dead connection to break.</dd></div>
+          </dl>
+        </div>
       </div>
     </div>
+  </section>
 
-    <p class="dl-note reveal" data-delay="5">
-      Free forever, MIT licensed.
-      <a href="https://github.com/Vijayapardhu/Clipboard/releases">All releases and changelogs →</a>
-    </p>
-  </div>
-</section>
+  <section id="what">
+    <div class="wrap">
+      <p class="eyebrow" data-reveal>What it does</p>
+      <h2 class="statement" data-reveal>Six things, and none of them touch the internet.</h2>
 
-<!-- ======================================================== problem ==== -->
-<section class="section">
-  <div class="wrap">
-    <div class="center">
-      <p class="eyebrow reveal">The problem</p>
-      <h2 class="h2 reveal" data-delay="1">You have emailed yourself a link. Everyone has.</h2>
-      <p class="lede reveal" data-delay="2">
-        You are on one machine and you need something from another. So you message
-        it to yourself, or type out a forty-character URL by hand and get one
-        character wrong. Every workaround sends your clipboard to a server that
-        has no business seeing it.
-      </p>
-    </div>
+      <div class="grid" data-stagger>
+        <article class="card" data-reveal>
+          <span class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M16 5h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2"/></svg></span>
+          <h3>Clipboard sync</h3>
+          <p>Copy on one machine, paste on another. Text and images, sealed with the room's key, in a history you can search and pin things in.</p>
+        </article>
 
-    <div class="versus reveal" data-delay="3" style="margin-top:var(--space-10)">
-      <div class="versus__col versus__col--bad">
-        <h3 class="h3">Messaging it to yourself</h3>
-        <ul>
-          <li><svg class="tick tick--no" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Your clipboard goes to <b>someone else's server</b></span></li>
-          <li><svg class="tick tick--no" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Needs an <b>internet connection</b></span></li>
-          <li><svg class="tick tick--no" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Log in, compose, send, open, copy — <b>every single time</b></span></li>
-          <li><svg class="tick tick--no" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Screenshots and files are <b>even more painful</b></span></li>
-        </ul>
+        <article class="card" data-reveal>
+          <span class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></span>
+          <h3>File transfer <span class="tag">New</span></h3>
+          <p>Send files straight to another machine. No room, no history, nothing stored — they accept, you pick, and it streams over a direct connection.</p>
+        </article>
+
+        <article class="card" data-reveal>
+          <span class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 1 1-3.2-6.4"/><path d="M3 20l1.6-4"/><circle cx="12" cy="12" r="3"/></svg></span>
+          <h3>Rooms and chat</h3>
+          <p>A room is a shared space with a password only its members know. Messages, replies, reactions and read receipts, encrypted with it.</p>
+        </article>
+
+        <article class="card" data-reveal>
+          <span class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="13" height="12" rx="2.5"/><path d="m15 11 6-3.5v9L15 13"/></svg></span>
+          <h3>Voice and video <span class="tag">From a phone</span></h3>
+          <p>Call everyone in the room, peer to peer over WebRTC, with no signalling server anywhere. Share a screen while you talk.</p>
+        </article>
+
+        <article class="card" data-reveal>
+          <span class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+          <h3>Remote desktop</h3>
+          <p>See another machine's screen and take its mouse and keyboard — after its owner says yes, and only for as long as they allow.</p>
+        </article>
+
+        <article class="card" data-reveal>
+          <span class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg></span>
+          <h3>Your phone, paired once</h3>
+          <p>Scan a code and your phone has the whole app in its browser. Nothing to install, and the connection is encrypted.</p>
+        </article>
       </div>
-      <div class="versus__col versus__col--good">
-        <h3 class="h3">Campus Connect</h3>
-        <ul>
-          <li><svg class="tick tick--yes" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg><span>Stays on <b>your own network</b></span></li>
-          <li><svg class="tick tick--yes" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg><span>Works on <b>WiFi with no internet</b></span></li>
-          <li><svg class="tick tick--yes" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg><span><b>Ctrl+C here, Ctrl+V there.</b> That is the whole workflow</span></li>
-          <li><svg class="tick tick--yes" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg><span>Clipboard, files, chat, <b>calls and remote control</b> in one app</span></li>
-        </ul>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <p class="eyebrow" data-reveal>How it works</p>
+      <h2 class="statement" data-reveal>Four steps, then you forget it is there.</h2>
+
+      <div class="stepwrap">
+        <!-- Sticky stage. One scene per step; the scroll decides which is showing. -->
+        <div class="sticky" data-reveal>
+          <div class="stage" data-stage>
+            <figure class="stage__shot is-on">
+              <img src="screenshots/members-light.png" alt="The members list showing another device found on the network" width="1224" height="755" loading="lazy">
+              <figcaption>Devices find each other on their own</figcaption>
+            </figure>
+            <figure class="stage__shot">
+              <img src="screenshots/create-room.png" alt="Creating a room and setting its password" width="1224" height="755" loading="lazy">
+              <figcaption>The password becomes the room&rsquo;s key</figcaption>
+            </figure>
+            <figure class="stage__shot">
+              <img src="screenshots/qr-code.png" alt="A room's join code shown as a QR code" width="1224" height="795" loading="lazy">
+              <figcaption>Scan it, or type the six characters</figcaption>
+            </figure>
+            <figure class="stage__shot">
+              <img src="screenshots/clipboard-dark.png" alt="Shared clipboard history filling up across devices" width="1224" height="755" loading="lazy">
+              <figcaption>Everything you copy, on both machines</figcaption>
+            </figure>
+          </div>
+        </div>
+
+        <div class="steps" data-steps>
+          <div class="step" data-reveal><b>01</b><p>Install it on both machines and put them on the <strong>same WiFi</strong>. They find each other by themselves.</p></div>
+          <div class="step" data-reveal><b>02</b><p>Make a room and give it a password. That password becomes the <strong>encryption key</strong>, and never leaves your device.</p></div>
+          <div class="step" data-reveal><b>03</b><p>Share the join code, or let the other machine <strong>scan the QR</strong>. The owner approves who gets in.</p></div>
+          <div class="step" data-reveal><b>04</b><p>Copy something. It is on the other machine <strong>before you have turned your head</strong>.</p></div>
+        </div>
       </div>
     </div>
-  </div>
-</section>
+  </section>
 
-<!-- ====================================================== features ===== -->
-<section class="section" id="features">
-  <div class="wrap">
-    <div class="center">
-      <p class="eyebrow reveal">Everything it does</p>
-      <h2 class="h2 reveal" data-delay="1">Six things, one app, none of them online</h2>
-      <p class="lede center reveal" data-delay="2">
-        It started as a clipboard. It is now most of what you actually need two
-        machines to do together — and every one of these works on a network with
-        the internet unplugged.
+  <section id="private">
+    <div class="wrap">
+      <p class="eyebrow" data-reveal>Privacy</p>
+      <h2 class="statement" data-reveal>"Encrypted" gets claimed a lot. Here is exactly what happens.</h2>
+      <p class="lede" data-reveal>
+        All of it is checkable in the source. The parts that are <em>not</em> private are
+        listed too — a security page that only lists strengths is not telling you anything.
       </p>
-    </div>
 
-    <div class="feat-grid reveal" data-delay="3">
-
-      <article class="feat">
-        <span class="feat__icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2.5" width="8" height="4" rx="1.5"/><path d="M16 4.5h2a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2h2"/><path d="M8.5 12h7M8.5 16h4.5"/></svg></span>
-        <h3>Clipboard &amp; files</h3>
-        <p>Copy on one machine, paste on another. Text, images and files, all encrypted with the room.</p>
-        <ul class="feat__list">
-          <li>Searchable history you can pin to</li>
-          <li>Large screenshots sent in chunks</li>
-          <li>Anything you send is typed, tagged and previewed</li>
-        </ul>
-      </article>
-
-      <article class="feat">
-        <span class="feat__icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a7.5 7.5 0 0 1-10.9 6.7L4.5 19.5l1.4-4.9A7.5 7.5 0 1 1 21 11.5Z"/><path d="M9 11.5h.01M12 11.5h.01M15 11.5h.01"/></svg></span>
-        <h3>Rooms &amp; chat</h3>
-        <p>A room is a shared space with a password only its members know. Create one, share the code, done.</p>
-        <ul class="feat__list">
-          <li>Scannable join codes — never the password</li>
-          <li>Approve, block and remove members</li>
-          <li>Rename, retype or close a room whenever</li>
-        </ul>
-      </article>
-
-      <article class="feat">
-        <span class="feat__new">New</span>
-        <span class="feat__icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="6" width="13" height="12" rx="2.5"/><path d="m15.5 10.5 6-3.4v9.8l-6-3.4z"/></svg></span>
-        <h3>Voice &amp; video calls</h3>
-        <p>Call everyone in the room over WebRTC, peer to peer, with no signalling server anywhere.</p>
-        <ul class="feat__list">
-          <li>Full screen, focus and spotlight modes</li>
-          <li>Screen sharing, mute and camera controls</li>
-          <li>No STUN, no TURN, no account</li>
-        </ul>
-      </article>
-
-      <article class="feat">
-        <span class="feat__new">New</span>
-        <span class="feat__icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M8.5 20.5h7M12 16.5v4"/><path d="m10 7.5 5.2 4.3-2.4.5-.7 2.3z" fill="currentColor" stroke="none"/></svg></span>
-        <h3>Remote desktop</h3>
-        <p>See another machine&rsquo;s screen and take its mouse and keyboard — after its owner says yes.</p>
-        <ul class="feat__list">
-          <li>Watch first, control only once granted</li>
-          <li>Encrypted over a DTLS data channel</li>
-          <li>Revoke it instantly from either end</li>
-        </ul>
-      </article>
-
-      <article class="feat">
-        <span class="feat__new">New</span>
-        <span class="feat__icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M10.5 18.5h3"/><path d="M9.5 6.5h5"/></svg></span>
-        <h3>Your phone, paired once</h3>
-        <p>Scan the code and your phone gets the whole app in its browser. There is nothing to install.</p>
-        <ul class="feat__list">
-          <li>Only the phone that scanned gets in</li>
-          <li>Copy from and paste to the computer in a tap</li>
-          <li>Dark on the phone, light on the laptop, if you like</li>
-        </ul>
-      </article>
-
-      <article class="feat">
-        <span class="feat__new">New</span>
-        <span class="feat__icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2.5 4.8 13.8h6.1l-.9 7.7 8.2-11.3H12z"/></svg></span>
-        <h3>Out of your way</h3>
-        <p>The parts that make it something you leave running rather than something you go and open.</p>
-        <ul class="feat__list">
-          <li>A global overlay that pastes without switching window</li>
-          <li>A command palette for everything else</li>
-          <li>Saved snippets, and search across the lot</li>
-        </ul>
-      </article>
-
-    </div>
-  </div>
-</section>
-
-<!-- ======================================== how it works (stepper) ===== -->
-<section class="section section--sunken" id="how">
-  <div class="wrap">
-    <div class="center">
-      <p class="eyebrow reveal">How it works</p>
-      <h2 class="h2 reveal" data-delay="1">Four steps, then you forget it is there</h2>
-      <p class="lede reveal" data-delay="2">
-        Follow along — each step draws what is actually happening between your
-        two machines.
-      </p>
-    </div>
-
-    <div class="journey reveal" data-delay="3" id="journey">
-      <div class="steps" role="tablist" aria-label="How it works">
-        <button class="step is-active" role="tab" aria-selected="true" data-step="0">
-          <span class="step__n">1</span>
-          <span class="step__body">
-            <h3>Make a room</h3>
-            <p>A room is the boundary. Give it a password and it is encrypted.</p>
-          </span>
-          <span class="step__bar"></span>
-        </button>
-        <button class="step" role="tab" aria-selected="false" data-step="1">
-          <span class="step__n">2</span>
-          <span class="step__body">
-            <h3>Share the code</h3>
-            <p>Six characters, or a QR code the other device can scan.</p>
-          </span>
-          <span class="step__bar"></span>
-        </button>
-        <button class="step" role="tab" aria-selected="false" data-step="2">
-          <span class="step__n">3</span>
-          <span class="step__body">
-            <h3>Approve the request</h3>
-            <p>Nobody joins a private room without you saying yes.</p>
-          </span>
-          <span class="step__bar"></span>
-        </button>
-        <button class="step" role="tab" aria-selected="false" data-step="3">
-          <span class="step__n">4</span>
-          <span class="step__body">
-            <h3>Copy and paste</h3>
-            <p>Anything you copy appears on the other machine, ready to paste.</p>
-          </span>
-          <span class="step__bar"></span>
-        </button>
+      <div class="facts" data-stagger>
+        <div class="fact" data-reveal><span>Room contents</span><span>AES-256-GCM, key derived from your password</span></div>
+        <div class="fact" data-reveal><span>Where the password goes</span><span>Nowhere. It only feeds key derivation, locally</span></div>
+        <div class="fact" data-reveal><span>Calls and screen sharing</span><span>Peer to peer, DTLS-SRTP, no server involved</span></div>
+        <div class="fact" data-reveal><span>Your phone's connection</span><span>TLS, with a certificate this machine issues</span></div>
+        <div class="fact" data-reveal><span>A tampered packet</span><span>Rejected outright by the authentication tag</span></div>
+        <div class="fact" data-reveal><span>Publicly visible</span><span>Room and owner names — devices have to find rooms</span></div>
+        <div class="fact" data-reveal><span>Visible on the network</span><span>That a room is busy, and roughly how large messages are</span></div>
+        <div class="fact" data-reveal><span>A room with no password</span><span>Plain text. The app labels it "Not encrypted"</span></div>
       </div>
+    </div>
+  </section>
 
-      <div class="stage">
-        <!-- step 1 -->
-        <div class="stage__scene is-active" data-scene="0" role="tabpanel">
-          <div class="stage__figure"><svg class="dg" viewBox="0 0 560 210" aria-label="A room being created on one machine, with the password stretched into a key and a separate public join code">
-  <g class="pop"><rect class="dg-box" x="24" y="26" width="192" height="158" rx="12"/><path class="dg-chrome" d="M24 52 V38 A12 12 0 0 1 36 26 H204 A12 12 0 0 1 216 38 V52 Z"/><text class="dg-t--sm" x="38" y="44">Your laptop</text></g>
-  <text class="dg-t pop" data-d="1" x="44" y="84">Room: &#8220;Project&#8221;</text>
-  <g class="pop" data-d="2">
-    <rect class="dg-box dg-box--accent" x="44" y="100" width="152" height="36" rx="8"/>
-    <path class="dg-ico dg-ico--accent" d="M62 118v-4a4 4 0 0 1 8 0v4M60 118h12v9h-12z"/>
-    <text class="dg-t--sm" x="80" y="123">Your password</text>
-  </g>
+  <section id="maker">
+    <div class="wrap">
+      <p class="eyebrow" data-reveal>The developer</p>
+      <h2 class="statement" data-reveal>One student, one protocol, and a lot of evenings.</h2>
 
-  <g class="pop" data-d="3"><path class="dg-line dg-line--accent draw" d="M230 72 H320"/><path class="dg-head" d="M330 72 320 66.5 320 77.5z"/><text class="dg-t--sm" x="280" y="62" text-anchor="middle">scrypt</text></g>
-  <g class="pop" data-d="3">
-    <rect class="dg-box dg-box--ok" x="344" y="46" width="192" height="52" rx="10"/>
-    <path class="dg-ico dg-ico--ok" d="M366 78a6 6 0 1 0 0-12 6 6 0 0 0 0 12Zm5-9 14-14 6 6-4 4-4-4-3 3 4 4-6 6"/>
-    <text class="dg-t" x="396" y="77">Encryption key</text>
-  </g>
-
-  <g class="pop" data-d="4"><path class="dg-line dg-line--muted draw" d="M230 148 H320"/><path class="dg-head dg-head--muted" d="M330 148 320 142.5 320 153.5z"/><text class="dg-t--sm" x="280" y="138" text-anchor="middle">generated</text></g>
-  <g class="pop" data-d="4">
-    <rect class="dg-box" x="344" y="120" width="192" height="56" rx="10"/>
-    <text class="dg-t--sm" x="360" y="143">Join code</text>
-    <text class="dg-t--mono" x="360" y="165">K7QM2X</text>
-    <rect class="dg-box dg-box--accent pulse" x="456" y="133" width="64" height="26" rx="6"/>
-    <text class="dg-t--sm" x="488" y="150" text-anchor="middle" style="fill:var(--accent-text)">public</text>
-  </g>
-</svg></div>
-          <p class="stage__caption">
-            The password never leaves your machine. It is stretched into an
-            encryption key locally. The <b>join code is public</b> — it is only
-            useful to someone who also knows the password.
+      <div class="maker" data-reveal>
+        <div class="avatar" aria-hidden="true">VP</div>
+        <div>
+          <h3>Vijaya Pardhu</h3>
+          <p class="role">Creator and maintainer &middot; Campus Connect</p>
+          <p>
+            Campus Connect started as a small annoyance — two machines on the same desk and
+            no sane way to move a line of text between them — and turned into a full
+            local-network stack: a versioned wire protocol, AES-256-GCM encrypted rooms,
+            WebRTC calls and screen control, a phone client served over TLS, and a test
+            suite that runs on every build. All of it written in the open, and all of it
+            readable by anyone who wants to check the claims on this page.
           </p>
-        </div>
-
-        <!-- step 2 -->
-        <div class="stage__scene" data-scene="1" role="tabpanel">
-          <div class="stage__figure"><svg class="dg" viewBox="0 0 560 210" aria-label="A join code travelling from one machine to another, by code or by QR">
-  <rect class="dg-box" x="24" y="30" width="192" height="150" rx="12"/><path class="dg-chrome" d="M24 56 V42 A12 12 0 0 1 36 30 H204 A12 12 0 0 1 216 42 V56 Z"/><text class="dg-t--sm" x="38" y="48">Your laptop</text>
-  <text class="dg-t--mono" x="48" y="94">K7QM2X</text>
-  <rect class="dg-box" x="48" y="110" width="40" height="40" rx="6"/>
-  <g stroke="var(--text-2)" stroke-width="3.4" stroke-linecap="round">
-    <path d="M56 120h7M56 127h7M56 134h12M56 141h7M70 120h11M70 127h5M75 134h6M70 141h11"/>
-  </g>
-  <text class="dg-t--sm" x="100" y="136">or a QR code</text>
-
-  <path class="dg-line dg-line--dash flow" d="M222 105 H338"/>
-  <g class="fly" style="--fly:44px">
-    <rect class="dg-box dg-box--accent" x="224" y="90" width="64" height="30" rx="8"/>
-    <text class="dg-t--mono" x="256" y="110" text-anchor="middle" style="font-size:11px">K7QM2X</text>
-  </g>
-
-  <rect class="dg-box" x="344" y="30" width="192" height="150" rx="12"/><path class="dg-chrome" d="M344 56 V42 A12 12 0 0 1 356 30 H524 A12 12 0 0 1 536 42 V56 Z"/><text class="dg-t--sm" x="358" y="48">The other machine</text>
-  <rect class="dg-box" x="364" y="76" width="152" height="30" rx="6"/>
-  <text class="dg-t--sm" x="378" y="96">code</text>
-  <rect class="dg-box" x="364" y="118" width="152" height="30" rx="6"/>
-  <text class="dg-t--sm" x="378" y="138">password</text>
-</svg></div>
-          <p class="stage__caption">
-            You pass on the code however you like — read it out, or let them scan
-            the QR. The <b>password is shared separately</b>, and never appears in
-            the QR code.
-          </p>
-        </div>
-
-        <!-- step 3 -->
-        <div class="stage__scene" data-scene="2" role="tabpanel">
-          <div class="stage__figure"><svg class="dg" viewBox="0 0 560 210" aria-label="A join request being approved by the room owner, while a wrong password is rejected">
-  <rect class="dg-box" x="24" y="24" width="192" height="92" rx="12"/><path class="dg-chrome" d="M24 50 V36 A12 12 0 0 1 36 24 H204 A12 12 0 0 1 216 36 V50 Z"/><text class="dg-t--sm" x="38" y="42">The other machine</text>
-  <text class="dg-t--sm" x="40" y="76">proves it knows</text>
-  <text class="dg-t--sm" x="40" y="94">the password</text>
-
-  <path class="dg-line dg-line--accent draw" d="M230 70 H320"/><path class="dg-head" d="M330 70 320 64.5 320 75.5z"/>
-  <text class="dg-t--sm" x="280" y="60" text-anchor="middle">request + proof</text>
-
-  <rect class="dg-box dg-box--accent" x="344" y="24" width="192" height="104" rx="12"/>
-  <text class="dg-t" x="364" y="50">Your laptop</text>
-  <text class="dg-t--sm" x="364" y="72">&#8220;Meghana-Air wants</text>
-  <text class="dg-t--sm" x="364" y="88">to join.&#8221;</text>
-  <g class="pulse">
-    <rect class="dg-box dg-box--ok" x="364" y="98" width="72" height="22" rx="6"/>
-    <text class="dg-t--sm" x="400" y="113" text-anchor="middle" style="fill:var(--success)">Approve</text>
-  </g>
-
-  <rect class="dg-box dg-box--no" x="24" y="148" width="192" height="56" rx="12"/>
-  <text class="dg-t--sm" x="40" y="172">wrong password</text>
-  <text class="dg-t--sm" x="40" y="190">or wrong code</text>
-
-  <path class="dg-line dg-line--dash" d="M230 176 H320"/>
-  <path class="dg-head dg-head--no" d="M330 176 320 170.5 320 181.5z"/>
-
-  <rect class="dg-box dg-box--no" x="344" y="148" width="192" height="56" rx="12"/>
-  <path class="dg-ico dg-ico--no" d="M362 168l13 13M375 168l-13 13"/>
-  <text class="dg-t--sm" x="388" y="172" style="fill:var(--danger)">Rejected before</text>
-  <text class="dg-t--sm" x="388" y="190" style="fill:var(--danger)">anything is shared</text>
-</svg></div>
-          <p class="stage__caption">
-            The request carries a <b>proof</b>, not the password. Only a device
-            holding the right key can produce something you are able to open — and
-            a private room still needs your explicit approval.
-          </p>
-        </div>
-
-        <!-- step 4 -->
-        <div class="stage__scene" data-scene="3" role="tabpanel">
-          <div class="stage__figure"><svg class="dg" viewBox="0 0 560 210" aria-label="Copied text sealed, sent across the network and unsealed on the other machine, while a third device receives only ciphertext">
-  <rect class="dg-box" x="24" y="20" width="192" height="90" rx="12"/><path class="dg-chrome" d="M24 46 V32 A12 12 0 0 1 36 20 H204 A12 12 0 0 1 216 32 V46 Z"/><text class="dg-t--sm" x="38" y="38">Your laptop</text>
-  <text class="dg-t--sm" x="40" y="66">Ctrl + C</text>
-  <rect class="dg-box dg-box--accent" x="40" y="74" width="160" height="26" rx="6"/>
-  <text class="dg-t--sm" x="52" y="92">&#8220;meeting at 4pm&#8221;</text>
-
-  <path class="dg-line dg-line--dash flow" d="M222 64 H338"/>
-  <g>
-    <rect x="236" y="50" width="88" height="28" rx="8" fill="var(--bg-elevated)" stroke="none"/>
-    <rect class="dg-box dg-box--ok" x="236" y="50" width="88" height="28" rx="8"/>
-    <path class="dg-ico dg-ico--ok" d="M256 63v-3a3 3 0 0 1 6 0v3M254 63h10v8h-10z"/>
-    <text class="dg-t--sm" x="272" y="69" style="fill:var(--success)">sealed</text>
-  </g>
-
-  <rect class="dg-box" x="344" y="20" width="192" height="90" rx="12"/><path class="dg-chrome" d="M344 46 V32 A12 12 0 0 1 356 20 H524 A12 12 0 0 1 536 32 V46 Z"/><text class="dg-t--sm" x="358" y="38">The other machine</text>
-  <text class="dg-t--sm" x="360" y="66">Ctrl + V</text>
-  <rect class="dg-box dg-box--accent" x="360" y="74" width="160" height="26" rx="6"/>
-  <text class="dg-t--sm" x="372" y="92">&#8220;meeting at 4pm&#8221;</text>
-
-  <path class="dg-line dg-line--dash" d="M280 84 V132"/>
-  <rect class="dg-box dg-box--no" x="168" y="138" width="224" height="68" rx="12"/>
-  <path class="dg-chrome" d="M168 164 V150 A12 12 0 0 1 180 138 H380 A12 12 0 0 1 392 150 V164 Z"/>
-  <text class="dg-t--sm" x="182" y="156">Someone else on the WiFi</text>
-  <text class="dg-t--mono" x="182" y="182" style="fill:var(--danger);font-size:11px;letter-spacing:.02em">8f2a91c0e7&#8230;</text>
-  <text class="dg-t--sm" x="182" y="199" style="fill:var(--danger)">receives it, cannot read it</text>
-</svg></div>
-          <p class="stage__caption">
-            Everything is sealed before it leaves. Other devices on the same WiFi
-            receive the same packets and see <b>nothing but ciphertext</b> — no
-            password, no key, no content.
-          </p>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- =============================================== under the hood ====== -->
-<section class="section" id="inside">
-  <div class="wrap">
-    <div class="center">
-      <p class="eyebrow reveal">Under the hood</p>
-      <h2 class="h2 reveal" data-delay="1">What happens in the second after you press Ctrl+C</h2>
-      <p class="lede reveal" data-delay="2">
-        Seven stages, all on your own machine and your own network. The two
-        highlighted ones are where the privacy comes from.
-      </p>
-    </div>
-
-    <div class="pipe reveal" data-delay="3">
-      <div class="pipe__row">
-        <div class="pipe__stage">
-          <span class="pipe__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg></span>
-          <span class="pipe__name">You copy</span>
-          <span class="pipe__desc">Text, an image, or a file</span>
-        </div>
-        <span class="pipe__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-
-        <div class="pipe__stage">
-          <span class="pipe__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span>
-          <span class="pipe__name">Noticed</span>
-          <span class="pipe__desc">Checked once a second</span>
-        </div>
-        <span class="pipe__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-
-        <div class="pipe__stage pipe__stage--key">
-          <span class="pipe__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
-          <span class="pipe__name">Sealed</span>
-          <span class="pipe__desc">AES-256-GCM, with your room key</span>
-        </div>
-        <span class="pipe__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-
-        <div class="pipe__stage">
-          <span class="pipe__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
-          <span class="pipe__name">Split up</span>
-          <span class="pipe__desc">Only if it is too big for one packet</span>
-        </div>
-        <span class="pipe__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-
-        <div class="pipe__stage">
-          <span class="pipe__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13a9.5 9.5 0 0 1 14 0M8 16.5a5 5 0 0 1 8 0M2 9.5a14 14 0 0 1 20 0M12 20v.01"/></svg></span>
-          <span class="pipe__name">Your WiFi</span>
-          <span class="pipe__desc">Straight to the other device</span>
-        </div>
-        <span class="pipe__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-
-        <div class="pipe__stage pipe__stage--key">
-          <span class="pipe__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5.5c0 4.3 2.9 8.3 7 9.5 4.1-1.2 7-5.2 7-9.5V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg></span>
-          <span class="pipe__name">Checked</span>
-          <span class="pipe__desc">Is the sender really in this room?</span>
-        </div>
-        <span class="pipe__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-
-        <div class="pipe__stage">
-          <span class="pipe__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9h12v12H9z"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg></span>
-          <span class="pipe__name">Ready to paste</span>
-          <span class="pipe__desc">Ctrl+V on the other machine</span>
+          <div class="links">
+            <a class="btn btn--ghost btn--sm" href="https://github.com/Vijayapardhu">GitHub profile</a>
+            <a class="btn btn--ghost btn--sm" href="https://github.com/Vijayapardhu/Clipboard">Read the source</a>
+            <a class="btn btn--ghost btn--sm" href="https://github.com/Vijayapardhu/Clipboard/issues">Contribute</a>
+          </div>
         </div>
       </div>
 
-      <div class="pipe__legend">
-        <span><i style="background:var(--accent)"></i> Where your privacy is enforced</span>
-        <span><i style="background:var(--border-2)"></i> Ordinary plumbing</span>
+      <div class="numbers" data-stagger>
+        <div class="num" data-reveal><b>37</b><span>commits, all by one person</span></div>
+        <div class="num" data-reveal><b>29k</b><span>lines of TypeScript</span></div>
+        <div class="num" data-reveal><b>242</b><span>tests on every build</span></div>
+        <div class="num" data-reveal><b>0</b><span>servers involved</span></div>
       </div>
     </div>
+  </section>
 
-    <p class="lede center reveal" data-delay="4" style="margin-top:var(--space-8)">
-      No step in that chain is a server. There is nothing to sign up for and
-      nothing to take offline.
-    </p>
-  </div>
-</section>
 
-<!-- ========================================================== who ====== -->
-<section class="section section--sunken">
-  <div class="wrap">
-    <div class="center">
-      <p class="eyebrow reveal">Who it is for</p>
-      <h2 class="h2 reveal" data-delay="1">Anyone with more than one screen</h2>
-    </div>
+  <section id="faq">
+    <div class="wrap">
+      <p class="eyebrow" data-reveal>Questions</p>
+      <h2 class="statement" data-reveal>The things people ask first.</h2>
 
-    <div class="grid grid--pair reveal" data-delay="2" style="margin-top:var(--space-10)">
-      <article class="card card--persona">
-        <div class="card__icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 9l10 5 10-5-10-5Z"/><path d="M6 11.5V17c0 1.7 2.7 3 6 3s6-1.3 6-3v-5.5"/><path d="M22 9v6"/></svg></div>
-        <h3 class="h3">Students</h3>
-        <p>
-          Your laptop and the lab machine, working on the same thing. Move error
-          messages, documentation links and code between them without emailing
-          yourself.
-        </p>
-        <p>
-          Working in a group? One room turns everyone's clipboard into a shared
-          scratchpad for the afternoon. Close the room when you are done and it is
-          gone.
-        </p>
-      </article>
+      <div class="faq" data-reveal>
+        <details>
+          <summary>Does it really work without the internet?<span class="plus"></span></summary>
+          <div class="answer">
+            <p>Yes, and that is the whole design. Devices find each other by broadcasting on the
+            local network and then talk directly. If your campus WiFi has no route out — or the
+            connection drops entirely — nothing changes, because nothing was going that way.</p>
+            <p>The only time it touches the internet is when you ask it to check for a new version.</p>
+          </div>
+        </details>
 
-      <article class="card card--persona">
-        <div class="card__icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="7" width="19" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M2.5 12.5h19"/></svg></div>
-        <h3 class="h3">Office and remote teams</h3>
-        <p>
-          Pair programming, shared debugging, moving a config value onto a test
-          machine. A password-protected room stays private even though the whole
-          floor is on the same WiFi.
-        </p>
-        <p>
-          For credentials, internal URLs or customer data, the fact that nothing
-          reaches a third-party server is the entire point.
-        </p>
-      </article>
+        <details>
+          <summary>Is my clipboard sent to a server somewhere?<span class="plus"></span></summary>
+          <div class="answer">
+            <p>There is no server. No account to make, nothing to sign in to, and no company
+            holding your data — including us. What you copy goes to the other devices in your
+            room and nowhere else.</p>
+          </div>
+        </details>
 
-      <article class="card card--persona">
-        <div class="card__icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="13" height="9" rx="1.5"/><path d="M6 17h5M8.5 13v4"/><rect x="16" y="9" width="6" height="11" rx="1.5"/></svg></div>
-        <h3 class="h3">Two machines, one desk</h3>
-        <p>
-          Desktop and laptop. Work machine and personal machine. A Windows box and
-          an Ubuntu box side by side. One room and your clipboard simply follows
-          you between them.
-        </p>
-      </article>
+        <details>
+          <summary>Will it work on university WiFi?<span class="plus"></span></summary>
+          <div class="answer">
+            <p>Usually. It needs the two machines to be able to reach each other on the network,
+            which most campus WiFi allows. Some networks turn on <em>client isolation</em>, which
+            deliberately stops devices seeing one another — that blocks this and every other
+            direct tool. Settings &rarr; Network will tell you which situation you are in.</p>
+          </div>
+        </details>
 
-      <article class="card card--persona">
-        <div class="card__icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20V9l9-5 9 5v11"/><path d="M3 20h18"/><path d="M9 20v-5h6v5"/><path d="M12 4V2"/></svg></div>
-        <h3 class="h3">Classrooms and workshops</h3>
-        <p>
-          Put a command into an open room and everyone in the room has it
-          instantly — instead of reading it out character by character while
-          everybody mistypes it.
-        </p>
-      </article>
-    </div>
-  </div>
-</section>
+        <details>
+          <summary>How is it encrypted, exactly?<span class="plus"></span></summary>
+          <div class="answer">
+            <p>A room's password is put through a key derivation function and the result encrypts
+            everything in that room with AES-256-GCM. The password itself never leaves your device
+            and is never sent, not even to prove you know it.</p>
+            <p>Calls and screen sharing go peer to peer over WebRTC, encrypted by DTLS-SRTP.
+            The <a href="#private">privacy section</a> lists what is <em>not</em> private too.</p>
+          </div>
+        </details>
 
-<!-- ====================================================== security ===== -->
-<section class="section" id="security">
-  <div class="wrap">
-    <div class="center">
-      <p class="eyebrow reveal">Security</p>
-      <h2 class="h2 reveal" data-delay="1">"Encrypted" gets claimed a lot</h2>
-      <p class="lede reveal" data-delay="2">
-        So here is exactly what happens, and exactly what it does not cover.
-        Everything security-related uses the standard library — there is no
-        cryptography dependency to audit or trust.
-      </p>
-    </div>
+        <details>
+          <summary>Why does Windows say "Unknown publisher"?<span class="plus"></span></summary>
+          <div class="answer">
+            <p>Because the installer is not code-signed. A signing certificate costs a few hundred
+            pounds a year, which is not something a student project has. The warning is Windows
+            being honest that it cannot verify who built it.</p>
+            <p>If that is a problem for you, build it from source — the instructions are in the
+            repository and the result is identical.</p>
+          </div>
+        </details>
 
-    <div class="checks">
-      <div class="check reveal"><span class="check__n">1</span>
-        <div><strong>The password is never sent</strong>
-        <span>It only ever feeds the key derivation, locally. To join, your device seals a known phrase with the derived key and sends <em>that</em>. Only someone who knows the password could produce something the owner can open.</span></div>
-      </div>
-      <div class="check reveal" data-delay="1"><span class="check__n">2</span>
-        <div><strong>Four checks before anything is applied</strong>
-        <span>A packet is acted on only when the room exists here, <em>you</em> are an accepted member, the <em>sender</em> is an accepted member, and the payload actually decrypts. Anything else is dropped.</span></div>
-      </div>
-      <div class="check reveal" data-delay="2"><span class="check__n">3</span>
-        <div><strong>Tampering is detected, not just decryption failure</strong>
-        <span>The authentication tag means a modified packet is rejected outright instead of quietly producing garbage.</span></div>
-      </div>
-      <div class="check reveal" data-delay="3"><span class="check__n">4</span>
-        <div><strong>Proofs cannot be replayed</strong>
-        <span>Each proof is bound to its own room, so one captured from elsewhere is useless.</span></div>
-      </div>
-      <div class="check reveal" data-delay="4"><span class="check__n">5</span>
-        <div><strong>Removal is immediate</strong>
-        <span>The room owner is the single source of truth for who is in it. Remove someone and every device updates — they cannot read anything sent afterwards.</span></div>
+        <details>
+          <summary>Can I use it on my phone?<span class="plus"></span></summary>
+          <div class="answer">
+            <p>Yes. Turn on phone access on the computer, scan the code, and your phone has the
+            whole application in its browser — nothing to install. Since 0.5.0 that connection is
+            served over TLS, which is also what lets a phone join a voice or video call.</p>
+            <p>The first time you pair, your phone will warn you about the certificate. That is
+            expected: the certificate is issued by your own computer, which no browser has any
+            reason to trust in advance.</p>
+          </div>
+        </details>
+
+        <details>
+          <summary>Is it free? What is the catch?<span class="plus"></span></summary>
+          <div class="answer">
+            <p>Free, MIT licensed, and there is no catch. There is nothing to upsell, because there
+            is no server to run and therefore nothing that costs money to keep alive.</p>
+          </div>
+        </details>
+
+        <details>
+          <summary>How many people can be in a room?<span class="plus"></span></summary>
+          <div class="answer">
+            <p>Clipboard, chat and files have no fixed limit beyond what your network will carry.
+            Calls cap at six, because every participant holds a connection to every other one and
+            past roughly that the encoders give out before the network does.</p>
+          </div>
+        </details>
       </div>
     </div>
+  </section>
 
-    <div class="honest reveal">
-      <h3 class="h3">And what it does <em>not</em> protect against</h3>
-      <p style="margin-bottom:var(--space-3)">
-        Overclaiming is worse than a smaller claim, so these are written down
-        plainly rather than buried:
-      </p>
-      <ul>
-        <li>Room names and owner names are public — devices have to be able to find rooms. Member lists, join codes and content are not.</li>
-        <li>Someone watching the network can tell that a room is busy and roughly how large its messages are.</li>
-        <li>Keys are cached on your disk so you do not retype the password every launch. Anyone with access to your user account can read them.</li>
-        <li>An open room with no password is plain text. That is what it means, and the app labels it "Not encrypted".</li>
-        <li>Physical or administrator access to a machine defeats all of it.</li>
-      </ul>
-      <p style="margin-top:var(--space-3)">
-        The full model is in <a href="https://github.com/Vijayapardhu/Clipboard/blob/main/SECURITY.md">SECURITY.md</a>.
-        If you can break one of the five claims above, please report it.
-      </p>
-    </div>
-  </div>
-</section>
-
-<!-- =================================================== screenshots ===== -->
-<section class="section section--sunken" id="screens">
-  <div class="wrap">
-    <div class="center">
-      <p class="eyebrow reveal">The app</p>
-      <h2 class="h2 reveal" data-delay="1">Light or dark, and out of your way</h2>
-    </div>
-
-    <div class="shots reveal" data-delay="2" style="margin-top:var(--space-10)">
-      <figure class="shot">
-        <img src="screenshots/clipboard-light.png" alt="Clipboard history for a room, with search and a pinned item" loading="lazy" width="1240" height="860">
-        <figcaption>History you can search, with items you can pin</figcaption>
-      </figure>
-      <figure class="shot">
-        <img src="screenshots/clipboard-dark.png" alt="The same clipboard history in dark mode" loading="lazy" width="1240" height="820">
-        <figcaption>The same view in dark mode</figcaption>
-      </figure>
-      <figure class="shot">
-        <img src="screenshots/members-light.png" alt="Members panel showing a pending approval request" loading="lazy" width="1240" height="820">
-        <figcaption>Approvals, members and per-room security</figcaption>
-      </figure>
-      <figure class="shot">
-        <img src="screenshots/chat-files.png" alt="Chat showing a shared PDF with a save button" loading="lazy" width="1240" height="860">
-        <figcaption>Chat with file transfer, encrypted with the room</figcaption>
-      </figure>
-      <figure class="shot">
-        <img src="screenshots/qr-code.png" alt="A QR code for a room's join code" loading="lazy" width="1240" height="860">
-        <figcaption>Scannable join codes — never the password</figcaption>
-      </figure>
-      <figure class="shot">
-        <img src="screenshots/settings.png" alt="Settings with theme, text size and font options" loading="lazy" width="1240" height="835">
-        <figcaption>Theme, text size and a system font picker</figcaption>
-      </figure>
-    </div>
-  </div>
-</section>
-
-<!-- ========================================================== stack ==== -->
-<section class="section">
-  <div class="wrap">
-    <div class="grid grid--2" style="gap:var(--space-10);align-items:start">
-      <div class="reveal">
-        <p class="eyebrow eyebrow--rule">Built with</p>
-        <h2 class="h2">Boring, readable technology</h2>
-        <p class="lede">
-          Every choice here was made so that someone can clone the repository and
-          understand the whole thing. No message broker, no backend, and no
-          cryptography dependency.
-        </p>
-        <div class="stack-list" style="margin-top:var(--space-6)">
-          <div class="stack-item"><b>Electron 35</b><span>One codebase, three desktop platforms, real clipboard access</span></div>
-          <div class="stack-item"><b>TypeScript 5.8</b><span>Strict mode — a network protocol is easy to get wrong</span></div>
-          <div class="stack-item"><b>React 19</b><span>The whole interface is state-driven</span></div>
-          <div class="stack-item"><b>Vite 6</b><span>Fast dev server, small production build</span></div>
-          <div class="stack-item"><b>Node dgram</b><span>UDP on the LAN. No server, no broker</span></div>
-          <div class="stack-item"><b>Node crypto</b><span>scrypt and AES-256-GCM from the standard library</span></div>
-          <div class="stack-item"><b>WebRTC</b><span>Calls and remote control, peer to peer, no STUN or TURN server</span></div>
-        </div>
-      </div>
-
-      <div class="reveal" data-delay="2">
-        <p class="eyebrow eyebrow--rule">Run it yourself</p>
-        <h2 class="h2">From source in a minute</h2>
-        <p class="lede">Node.js 20 or newer is the only prerequisite.</p>
-        <div style="display:grid;gap:var(--space-2);margin-top:var(--space-6)">
-          <div class="cmd"><code>git clone https://github.com/Vijayapardhu/Clipboard.git</code>
-            <button class="btn btn--sm copy" data-copy="git clone https://github.com/Vijayapardhu/Clipboard.git">Copy</button></div>
-          <div class="cmd"><code>cd Clipboard &amp;&amp; npm install</code>
-            <button class="btn btn--sm copy" data-copy="cd Clipboard && npm install">Copy</button></div>
-          <div class="cmd"><code>npm run dev</code>
-            <button class="btn btn--sm copy" data-copy="npm run dev">Copy</button></div>
-        </div>
-        <p style="margin-top:var(--space-5);color:var(--text-2);font-size:15px">
-          <code>npm test</code> runs 174 assertions covering key derivation,
-          tampered packets, forged proofs, chunk reassembly, the membership
-          rules and who is allowed to move your mouse — in plain Node, with no
-          framework.
-        </p>
-        <div class="btn-row">
-          <a class="btn" href="https://github.com/Vijayapardhu/Clipboard/blob/main/ARCHITECTURE.md">Read the architecture</a>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ======================================================== roadmap ==== -->
-<section class="section section--sunken">
-  <div class="wrap narrow">
-    <div class="center">
-      <p class="eyebrow reveal">Roadmap</p>
-      <h2 class="h2 reveal" data-delay="1">Shipped, and what is next</h2>
-    </div>
-
-    <ul class="road reveal" data-delay="2" style="margin-top:var(--space-8)">
-      <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Chunked transfer so large screenshots sync <span class="tag tag--done">Shipped</span></li>
-      <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> File transfer in chat <span class="tag tag--done">Shipped</span></li>
-      <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> QR codes for join codes <span class="tag tag--done">Shipped</span></li>
-      <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Pinned clipboard items <span class="tag tag--done">Shipped</span></li>
-      <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Search across clipboard history <span class="tag tag--done">Shipped</span></li>
-      <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Keyboard shortcuts <span class="tag tag--done">Shipped</span></li>
-      <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Voice and video calls over the LAN <span class="tag tag--done">0.4.0</span></li>
-      <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Remote desktop with permission and revocation <span class="tag tag--done">0.4.0</span></li>
-      <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Phone access, paired by scanning once <span class="tag tag--done">0.4.0</span></li>
-      <li class="is-done"><span class="box box--done"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></span> Quick-paste overlay, command palette and snippets <span class="tag tag--done">0.4.0</span></li>
-      <li><span class="box"></span> Translations <span class="tag">Open</span></li>
-      <li><span class="box"></span> Working on networks that block UDP broadcast <span class="tag">Open</span></li>
-      <li><span class="box"></span> Signed installers, so the SmartScreen warning goes away <span class="tag">Open</span></li>
-    </ul>
-
-    <p class="lede center reveal" data-delay="3" style="margin-top:var(--space-6)">
-      The three that are left are the interesting ones —
-      <a href="https://github.com/Vijayapardhu/Clipboard/issues">each has an issue</a>
-      explaining where to start and what "done" looks like.
-    </p>
-  </div>
-</section>
-
-<!-- ========================================================= author ==== -->
-<section class="section" id="author">
-  <div class="wrap narrow">
-    <div class="author reveal">
-      <img class="author__avatar" src="https://github.com/Vijayapardhu.png?size=200" alt="Vijaya Pardhu" width="96" height="96"
-           onerror="this.outerHTML='&lt;span class=&quot;avatar-fallback&quot;&gt;VP&lt;/span&gt;'">
-      <div>
-        <p class="author__role">MVP designed and built by</p>
-        <h2 class="author__name">Vijaya Pardhu</h2>
-        <p>
-          The protocol, the cryptography, the interface and the documentation —
-          all of it. Campus Connect exists because moving something between two
-          machines you already own should not require a round trip through
-          somebody else's server.
-        </p>
-        <p>
-          It is open source so anyone can check that claim for themselves, and so
-          anyone who wants to make it better can.
-        </p>
-        <div class="author__links">
-          <a class="btn btn--primary" href="https://github.com/Vijayapardhu">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2A10 10 0 0 0 8.8 21.5c.5.1.7-.2.7-.5v-1.7C6.7 19.9 6.1 18 6.1 18c-.4-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.7 1a9.4 9.4 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .3.3.7 1 .7 2v2.9c0 .3.2.6.7.5A10 10 0 0 0 12 2Z"/></svg>
-            @Vijayapardhu
-          </a>
-          <a class="btn" href="https://github.com/Vijayapardhu/Clipboard">This project</a>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ===================================================== contribute ==== -->
-<section class="section section--tight" id="contribute">
-  <div class="wrap">
-    <div class="cta reveal">
-      <p class="eyebrow">Collaborators wanted</p>
-      <h2 class="h2">This project is looking for people</h2>
-      <p class="lede">
-        It works, it is documented, and there is a lot of obvious room to grow —
-        which is a good place to join. You do not need to be an expert. If you
-        know some TypeScript, or React, or you just want to fix a wording
-        mistake, there is something here for you.
+  <section id="get">
+    <div class="wrap">
+      <p class="eyebrow" data-reveal>Download</p>
+      <h2 class="statement" data-reveal>Version 0.5.0. Free, and open source.</h2>
+      <p class="lede" data-reveal>
+        Windows will say "Unknown publisher" — the installer is not code-signed yet.
+        That is expected, and the source is right there if you would rather build it.
       </p>
 
-      <div class="btn-row">
-        <a class="btn btn--primary" href="https://github.com/Vijayapardhu/Clipboard/blob/main/CONTRIBUTING.md">Read the contributing guide</a>
-        <a class="btn" href="https://github.com/Vijayapardhu/Clipboard/issues/new/choose">Open an issue</a>
-        <a class="btn" href="https://github.com/Vijayapardhu/Clipboard/discussions">Start a discussion</a>
+      <div class="dl" data-stagger>
+        <a data-reveal href="https://github.com/Vijayapardhu/Clipboard/releases/latest">
+          <span class="logo"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.6 10.4 4.6v6.9H3zM11.4 4.4 21 3v8.5h-9.6zM3 12.5h7.4v6.9L3 18.4zM11.4 12.5H21V21l-9.6-1.4z"/></svg></span>
+          <b>Windows</b>
+          <small>Installer &middot; 64-bit and ARM</small>
+          <span class="get">Download <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg></span>
+        </a>
+
+        <a data-reveal href="https://github.com/Vijayapardhu/Clipboard/releases/latest">
+          <span class="logo"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.7c0-2.2 1.8-3.3 1.9-3.3-1-1.5-2.6-1.7-3.2-1.7-1.4-.1-2.7.8-3.3.8-.7 0-1.7-.8-2.8-.8-1.5 0-2.8.8-3.6 2.1-1.5 2.6-.4 6.5 1.1 8.7.7 1 1.6 2.2 2.7 2.2 1.1 0 1.5-.7 2.8-.7 1.3 0 1.6.7 2.8.7 1.2 0 1.9-1.1 2.6-2.1.8-1.2 1.2-2.4 1.2-2.4s-2.2-.9-2.2-3.5zM14.3 5.9c.6-.7 1-1.7.9-2.7-.9 0-2 .6-2.6 1.3-.6.6-1.1 1.7-.9 2.6 1 .1 2-.5 2.6-1.2z"/></svg></span>
+          <b>macOS</b>
+          <small>Universal &middot; Apple silicon and Intel</small>
+          <span class="get">Download <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg></span>
+        </a>
+
+        <a data-reveal href="https://github.com/Vijayapardhu/Clipboard/releases/latest">
+          <span class="logo"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><ellipse cx="12" cy="14.4" rx="5.1" ry="6.2"/><ellipse cx="12" cy="15.6" rx="3" ry="4.4" fill="var(--void)" opacity=".55"/><circle cx="12" cy="6.6" r="4.2"/><circle cx="10.4" cy="6" r="1.15" fill="var(--void)"/><circle cx="13.6" cy="6" r="1.15" fill="var(--void)"/><path d="M12 7.6c.85 0 1.5.5 1.5.95 0 .4-.65.75-1.5.75s-1.5-.35-1.5-.75c0-.45.65-.95 1.5-.95z" fill="#f5a623"/><path d="M8.6 20.4c-.7.8-1.9 1.2-2.6.8-.6-.4-.2-1.3.5-2 .5-.5 1.2-.9 1.8-1zM15.4 20.4c.7.8 1.9 1.2 2.6.8.6-.4.2-1.3-.5-2-.5-.5-1.2-.9-1.8-1z" fill="#f5a623"/></svg></span>
+          <b>Linux</b>
+          <small>AppImage and .deb</small>
+          <span class="get">Download <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg></span>
+        </a>
       </div>
 
-      <div class="help-grid">
-        <div class="help"><b><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg><span>macOS &amp; Linux</span></b><span>Development has been on Windows. Real testing elsewhere would be genuinely valuable.</span></div>
-        <div class="help"><b><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 5 6v5.5c0 4.3 2.9 8.3 7 9.5 4.1-1.2 7-5.2 7-9.5V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg><span>Security review</span></b><span>The model is written down. Try to break it — that is the most useful thing you can do here.</span></div>
-        <div class="help"><b><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="8" r="1.4"/><path d="M8 11h8M12 11v9M9 20l3-4 3 4"/></svg><span>Design &amp; accessibility</span></b><span>Screen reader support, keyboard navigation, colour contrast.</span></div>
-        <div class="help"><b><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18Z"/></svg><span>Translations</span></b><span>Every user-facing string lives in two files.</span></div>
-        <div class="help"><b><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg><span>Mobile</span></b><span>The protocol is documented. An Android or iOS client is wide open.</span></div>
-        <div class="help"><b><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg><span>Documentation</span></b><span>Tutorials, videos, or just fixing whatever confused you first.</span></div>
-      </div>
+      <p class="cmd" data-reveal><span>Or from a terminal</span><b>npx campus-connect</b></p>
     </div>
-  </div>
-</section>
+  </section>
+
 </main>
 
-<!-- ========================================================= footer ==== -->
-<footer class="footer">
-  <div class="wrap footer__inner">
-    <span>
-      Campus Connect — built by
-      <a href="https://github.com/Vijayapardhu">Vijaya Pardhu</a>. MIT licensed, free forever.
-    </span>
-    <nav>
-      <a href="https://github.com/Vijayapardhu/Clipboard">GitHub</a>
-      <a href="https://github.com/Vijayapardhu/Clipboard/releases">Downloads</a>
-      <a href="https://github.com/Vijayapardhu/Clipboard/blob/main/ARCHITECTURE.md">Architecture</a>
-      <a href="https://github.com/Vijayapardhu/Clipboard/blob/main/SECURITY.md">Security</a>
-    </nav>
+<footer>
+  <div class="wrap foot">
+    <span>Campus Connect — built by <a href="https://github.com/Vijayapardhu">Vijaya Pardhu</a></span>
+    <span class="sep"></span>
+    <a href="changelog.html">Changelog</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+    <a href="https://github.com/Vijayapardhu/Clipboard">Source</a>
+    <a href="https://github.com/Vijayapardhu/Clipboard/issues">Issues</a>
   </div>
 </footer>
 
 <script>
-(function () {
+(() => {
   'use strict';
-  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // ---------------------------------------------------------------- theme
-  var root = document.documentElement;
-  try {
-    var saved = localStorage.getItem('theme');
-    if (saved === 'light' || saved === 'dark') root.setAttribute('data-theme', saved);
-  } catch (e) {}
+  /* ---------------------------------------------------------- reveals ---- */
 
-  document.getElementById('theme').addEventListener('click', function () {
-    var dark = getComputedStyle(root).getPropertyValue('color-scheme').trim() === 'dark';
-    var next = dark ? 'light' : 'dark';
-    root.setAttribute('data-theme', next);
-    try { localStorage.setItem('theme', next); } catch (e) {}
+  document.querySelectorAll('[data-stagger]').forEach((group) => {
+    [...group.children].forEach((child, i) => child.style.setProperty('--d', `${i * 70}ms`));
   });
 
-  // -------------------------------------------------------- sticky header
-  var nav = document.getElementById('topnav');
-  var onScroll = function () { nav.classList.toggle('is-stuck', window.scrollY > 8); };
+  const targets = [...document.querySelectorAll('[data-reveal]')];
+
+  if (calm || !('IntersectionObserver' in window)) {
+    targets.forEach((el) => el.classList.add('is-in'));
+  } else {
+    /*
+     * The opening screen arrives on load as one sequence, rather than waiting
+     * for a scroll that may never come. Left to the observer alone, anything
+     * low in the first viewport sat inside its bottom margin and stayed
+     * invisible — which on a 900px window included the download button, the
+     * one thing that has to be there the moment the page opens.
+     */
+    const opening = targets.filter((el) => el.getBoundingClientRect().top < innerHeight);
+    const rest = targets.filter((el) => !opening.includes(el));
+
+    requestAnimationFrame(() => {
+      opening.forEach((el, i) => {
+        el.style.setProperty('--d', `${100 + i * 105}ms`);
+        el.classList.add('is-in');
+      });
+    });
+
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add('is-in');
+        io.unobserve(entry.target);          // An arrival happens once.
+      });
+    }, { rootMargin: '0px 0px -12% 0px', threshold: 0.08 });
+    rest.forEach((el) => io.observe(el));
+  }
+
+  /* ------------------------------------------- progress, header, steps --- */
+
+  const head = document.getElementById('head');
+  const steps = [...document.querySelectorAll('[data-steps] .step')];
+  const scenes = [...document.querySelectorAll('[data-stage] .stage__shot')];
+
+  let ticking = false;
+  const onScroll = () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      head.classList.toggle('is-stuck', window.scrollY > 12);
+
+      // Whichever step is nearest the reading line is the live one.
+      if (steps.length) {
+        const line = innerHeight * 0.42;
+        let best = 0, dist = Infinity;
+        steps.forEach((s, i) => {
+          const r = s.getBoundingClientRect();
+          const d = Math.abs(r.top + r.height / 2 - line);
+          if (d < dist) { dist = d; best = i; }
+        });
+        steps.forEach((s, i) => s.classList.toggle('is-on', i === best));
+        // The stage shows whichever step is being read.
+        scenes.forEach((scene, i) => scene.classList.toggle('is-on', i === best));
+      }
+      ticking = false;
+    });
+  };
   addEventListener('scroll', onScroll, { passive: true });
   onScroll();
 
-  // --------------------------------------------------------- reveal on scroll
-  var revealables = document.querySelectorAll('.reveal');
-  if (reduced || !('IntersectionObserver' in window)) {
-    revealables.forEach(function (el) { el.classList.add('in'); });
-  } else {
-    var observer = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('in');
-          observer.unobserve(entry.target);
-        }
-      });
-    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
-    revealables.forEach(function (el) { observer.observe(el); });
-  }
+  /* --------------------------------------------------- cursor on cards --- */
 
-  // ------------------------------------------------------- the step-through
-  var journey = document.getElementById('journey');
-  var steps = journey.querySelectorAll('.step');
-  var scenes = journey.querySelectorAll('.stage__scene');
-  var current = 0;
-  var timer = null;
-  var STEP_MS = 7000;
-
-  function show(index) {
-    current = index;
-    steps.forEach(function (step, i) {
-      step.classList.toggle('is-active', i === index);
-      step.setAttribute('aria-selected', i === index ? 'true' : 'false');
-    });
-    scenes.forEach(function (scene, i) {
-      scene.classList.toggle('is-active', i === index);
-    });
-  }
-
-  function play() {
-    if (reduced) return;
-    stop();
-    timer = setInterval(function () { show((current + 1) % steps.length); }, STEP_MS);
-    journey.classList.remove('is-paused');
-  }
-
-  function stop() {
-    if (timer) { clearInterval(timer); timer = null; }
-    journey.classList.add('is-paused');
-  }
-
-  steps.forEach(function (step, index) {
-    step.addEventListener('click', function () { show(index); play(); });
-  });
-
-  // Pause while the pointer is over it, and while it is off screen.
-  journey.addEventListener('mouseenter', stop);
-  journey.addEventListener('mouseleave', play);
-
-  if ('IntersectionObserver' in window) {
-    new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) { entry.isIntersecting ? play() : stop(); });
-    }, { threshold: 0.25 }).observe(journey);
-  } else {
-    play();
-  }
-
-  // ------------------------------------------------- live download links
-  var REPO = 'Vijayapardhu/Clipboard';
-  var targets = [
-    { id: 'dl-win', test: /\.exe$/i },
-    { id: 'dl-mac', test: /\.dmg$/i },
-    { id: 'dl-linux', test: /\.AppImage$/i }
-  ];
-
-  function megabytes(bytes) { return (bytes / 1024 / 1024).toFixed(0) + ' MB'; }
-
-  fetch('https://api.github.com/repos/' + REPO + '/releases/latest', {
-    headers: { Accept: 'application/vnd.github+json' }
-  })
-    .then(function (response) { return response.ok ? response.json() : null; })
-    .then(function (release) {
-      if (!release || !release.assets) return;
-
-      targets.forEach(function (target) {
-        var element = document.getElementById(target.id);
-        var asset = release.assets.filter(function (a) { return target.test.test(a.name); })[0];
-        if (!element) return;
-
-        if (asset) {
-          element.href = asset.browser_download_url;
-          element.querySelector('[data-meta]').textContent =
-            release.tag_name + ' · ' + megabytes(asset.size);
-        } else {
-          // Nothing built for this platform in the latest release.
-          element.querySelector('[data-meta]').textContent = 'Build from source';
-        }
-      });
-    })
-    .catch(function () {
-      // Offline, rate-limited, or no release yet: the buttons already point at
-      // the releases page, which is a perfectly good destination.
-    });
-
-  // Highlight whichever platform the visitor is on.
-  var platform = (navigator.userAgentData && navigator.userAgentData.platform) ||
-                 navigator.platform || navigator.userAgent || '';
-  var yours = /Win/i.test(platform) ? 'dl-win'
-            : /Mac/i.test(platform) ? 'dl-mac'
-            : /Linux|X11|Ubuntu/i.test(platform) ? 'dl-linux'
-            : null;
-
-  if (yours) {
-    var card = document.getElementById(yours);
-    card.classList.add('is-yours');
-    var tag = document.createElement('span');
-    tag.className = 'dl__tag';
-    tag.textContent = 'Your system';
-    card.appendChild(tag);
-  }
-
-  // --------------------------------------------------------- copy buttons
-  document.querySelectorAll('.copy').forEach(function (button) {
-    button.addEventListener('click', function () {
-      navigator.clipboard.writeText(button.dataset.copy).then(function () {
-        var original = button.textContent;
-        button.textContent = 'Copied';
-        setTimeout(function () { button.textContent = original; }, 1400);
+  if (!calm) {
+    document.querySelectorAll('.card').forEach((card) => {
+      card.addEventListener('pointermove', (e) => {
+        const r = card.getBoundingClientRect();
+        card.style.setProperty('--mx', `${e.clientX - r.left}px`);
+        card.style.setProperty('--my', `${e.clientY - r.top}px`);
       });
     });
-  });
+  }
 })();
 </script>
 

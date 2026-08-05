@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy &mdash; Campus Connect</title>
+<meta name="description" content="Campus Connect collects nothing, sends nothing, and has no servers. This policy names the one place anything leaves your machine.">
+<meta name="theme-color" content="#08080c">
+<link rel="icon" href="icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header id="head" class="is-stuck">
+  <div class="wrap bar">
+    <a class="brand" href="index.html"><img src="icon.png" alt=""> <span>Campus Connect</span></a>
+    <nav>
+      <a class="hide-sm" href="index.html#what">What it does</a>
+      <a class="hide-sm" href="index.html#faq">FAQ</a>
+      <a class="hide-sm" href="changelog.html">Changelog</a>
+      <a class="btn btn--go btn--sm" href="index.html#get">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main class="doc">
+  <div class="wrap">
+<h1>Privacy Policy</h1>
+<p class="updated">Last updated 5 August 2026</p>
+<p class="intro">Campus Connect has no servers, no accounts and no analytics, so this policy is
+mostly a list of things that do not happen. Where something <em>does</em> leave your machine, it
+is named below.</p>
+
+<div class="callout">
+  <p><strong>The short version.</strong> The application collects nothing about you and sends
+  nothing to us. There is no &ldquo;us&rdquo; to send it to &mdash; no backend exists. Your
+  clipboard, messages, files and calls travel directly between your own devices on your own
+  network.</p>
+</div>
+
+<h2>What the application stores</h2>
+<p>Everything is kept locally, in your operating system&rsquo;s application-data folder for your
+user account. None of it is uploaded anywhere.</p>
+<ul>
+  <li><strong>Rooms and their members</strong> &mdash; names, join codes, and the salt used to derive the room key.</li>
+  <li><strong>Clipboard history and chat</strong> &mdash; what you shared, kept until it ages out under your retention setting or you clear it.</li>
+  <li><strong>Settings</strong> &mdash; your device name, theme, shortcuts and preferences.</li>
+  <li><strong>Room keys</strong> &mdash; cached so you are not asked for the password on every launch.</li>
+</ul>
+<p>Deleting the application&rsquo;s data folder removes all of it. Anyone with access to your user
+account on your computer can read those files, exactly as they could read any other document you
+own.</p>
+
+<h2>What it never stores</h2>
+<ul>
+  <li>Your room passwords. They derive a key and are then discarded.</li>
+  <li>Any identifier that could recognise you across sessions or devices.</li>
+  <li>Usage data, crash reports, feature analytics or telemetry of any kind.</li>
+</ul>
+
+<h2>What crosses the network</h2>
+<p>Within a room, contents are encrypted with AES-256-GCM using a key derived from that
+room&rsquo;s password. Calls and screen sharing are peer to peer, encrypted by DTLS-SRTP.</p>
+<p>Somebody watching your local network can still observe <strong>that</strong> a room is active
+and roughly how large its messages are, and room and owner names are broadcast openly so devices
+can find each other at all. A room created without a password is not encrypted, and the
+application labels it <code>Not encrypted</code> wherever it appears.</p>
+
+<h2>When it contacts the internet</h2>
+<p>Once, and only if you leave it switched on:</p>
+<ul>
+  <li><strong>Update checks.</strong> The application asks GitHub whether a newer release exists.
+  That request necessarily tells GitHub your IP address and the time, as any web request would.
+  It carries nothing about you, your rooms or your data, and you can turn it off in
+  Settings &rarr; Updates.</li>
+</ul>
+<p>There is nothing else. No first-run ping, no licence check, no error reporting.</p>
+
+<h2>Your phone</h2>
+<p>Phone access is off until you switch it on, and pairing requires scanning a code shown on your
+computer. Since version 0.5.0 that connection is served over TLS, using a certificate your own
+computer generates and keeps &mdash; the private key never leaves that machine.</p>
+<p>Your phone will warn you the first time, because no browser has any reason to trust a
+certificate your laptop issued. The page your phone loads is served by your computer, not by a
+website, and nothing about that session reaches anybody else.</p>
+
+<h2>This website</h2>
+<p>These pages are static files on GitHub Pages. They set no cookies, run no analytics, and make
+no requests to any third party &mdash; the typefaces are the ones already on your device, and the
+only external links are ones you can see and choose to click.</p>
+<p>GitHub serves the files and, like any host, keeps standard server logs. That is covered by
+<a href="https://docs.github.com/site-policy/privacy-policies/github-privacy-statement">GitHub&rsquo;s
+privacy statement</a> and is outside our control.</p>
+
+<h2>Children</h2>
+<p>The application is a local utility that collects no personal information from anyone of any
+age. Nothing is gathered, so nothing is gathered about children either.</p>
+
+<h2>Changes</h2>
+<p>If this policy changes, the date at the top changes with it &mdash; and because the page lives
+in the repository, you can see exactly what was altered and when.</p>
+
+<h2>Contact</h2>
+<p>Questions belong in <a href="https://github.com/Vijayapardhu/Clipboard/issues">the issue
+tracker</a>, in the open, where the answer is useful to the next person who wonders the same
+thing.</p>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span>Campus Connect &mdash; built by <a href="https://github.com/Vijayapardhu">Vijaya Pardhu</a></span>
+    <span class="sep"></span>
+    <a href="index.html">Home</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+    <a href="https://github.com/Vijayapardhu/Clipboard">Source</a>
+  </div>
+</footer>
+
+</body>
+</html>
