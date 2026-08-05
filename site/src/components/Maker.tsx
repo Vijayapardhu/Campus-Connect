@@ -17,7 +17,7 @@ import { useTilt, CountUp, Words } from '../lib/effects';
 const STATS: Array<{ value: string; label: string; note: string }> = [
   { value: '43', label: 'commits', note: 'all by one person' },
   { value: '24k', label: 'lines of TypeScript', note: 'main, renderer and shared' },
-  { value: '248', label: 'tests', note: 'green on every build' },
+  { value: '260', label: 'tests', note: 'green on every build' },
   { value: '6', label: 'wire protocol revisions', note: 'versioned, and checked on every packet' }
 ];
 
@@ -82,7 +82,7 @@ function Lead() {
 /*
  * The proof, rather than another claim about it.
  *
- * "248 tests" in a statistics tile is a number you are asked to believe. The
+ * "260 tests" in a statistics tile is a number you are asked to believe. The
  * same number as the last line of a test run is a thing you can go and
  * reproduce in one command, which is the entire argument this section is
  * making — so it is shown the way you would actually see it.
@@ -104,7 +104,7 @@ function Proof() {
           <code className="term__dim">PASS  a tampered packet is rejected by the auth tag</code>
           <code className="term__dim">PASS  the password never leaves the device</code>
           <code className="term__dim">PASS  a file past the ceiling is refused before anything is read</code>
-          <code className="term__ok">248 passed, 0 failed</code>
+          <code className="term__ok">260 passed, 0 failed</code>
         </div>
       </div>
     </motion.article>

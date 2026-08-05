@@ -72,16 +72,20 @@ export const NOT_PROTECTED: Array<{ what: string; why: string }> = [
     why: 'An observer on the network sees that a room is busy, and roughly how large its messages are.'
   },
   {
-    what: 'Derived keys are cached on disk',
-    why: 'So the password is not retyped on every launch. Anyone with access to your user profile can read them; deleting the room removes its key.'
+    what: 'Anything running as you can read the keys',
+    why: 'Cached keys are encrypted by the operating system — DPAPI, Keychain, libsecret — so a copied profile folder, a backup or another account cannot read them. Code already running in your session can, because it can ask the credential store to decrypt exactly as the app does.'
   },
   {
     what: 'Unencrypted public rooms are plain text',
     why: 'By definition. The interface says so rather than implying otherwise.'
   },
   {
-    what: 'Device identity is a UUID, not a certificate',
-    why: 'A removed device cannot decrypt new traffic, but nothing stops it presenting a fresh UUID and asking to join again.'
+    what: 'A device is not yet cryptographically identified',
+    why: 'A device id is asserted rather than proved, so within a room a member holding the key can still send a message under another member’s id. Leaving a room now requires proof of the key, but the general fix is per-device signing keys, which is a wire-format change and not done yet.'
+  },
+  {
+    what: 'Removal does not invalidate the password',
+    why: 'A removed device cannot come back as itself, but it still knows the room password and can ask to join again as a new device. Until removal re-keys the room, change the password after removing someone you do not trust.'
   }
 ];
 

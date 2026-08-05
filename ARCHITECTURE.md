@@ -223,8 +223,12 @@ State these honestly rather than overclaiming:
 - **Room names and owner names are public.** Adverts are broadcast in the clear so devices can
   discover rooms. The roster, the join code, and all content are not.
 - **Traffic analysis.** An observer sees that a room is busy and how large its messages are.
-- **Derived keys are cached on disk** in electron-store so you do not retype the password on every
-  launch. Anyone with access to your user profile can read them. Delete the room to remove its key.
+- **Derived keys are cached, encrypted by the OS credential store**, so you do not retype the
+  password on every launch — DPAPI, Keychain, or libsecret/kwallet, via Electron's `safeStorage`
+  and `keyVault.ts`. The ciphertext is bound to your user account, so a copied profile directory or
+  another account cannot read it. It does **not** stop code running as you, which can ask the
+  credential store to decrypt just as the app does. Where no credential store is available the keys
+  are kept in memory for the session and never written. Delete the room to remove its key.
 - **Unencrypted public rooms are plain text** by definition. The UI labels them "Not encrypted".
 - **Device identity is a UUID**, not a certificate. A device that has been removed cannot decrypt
   new traffic, but nothing stops it presenting a fresh UUID and asking to join again.
@@ -911,7 +915,7 @@ transfers are swept and their memory released; progress resets the deadline.
 |-----------|------------------|
 | Payloads over ~60 KB are not transmitted | Chunk large images across datagrams and reassemble |
 | Chat file transfer | The type exists; the picker and transfer are not implemented |
-| Derived keys cached on disk | Optionally hold keys in memory only, prompting per session |
+| Keys readable by code running as you | A passphrase the user types and the app never stores |
 | Room names are public | Advertise a hash instead, discoverable only by those who know the name |
 | No forward secrecy | Rotating the password re-keys the room; consider per-session keys |
 | Device identity is a UUID | Certificate pinning would stop a removed device rejoining anonymously |

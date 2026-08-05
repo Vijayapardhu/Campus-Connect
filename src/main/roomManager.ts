@@ -163,6 +163,41 @@ export class RoomManager {
     return this.rooms.get(roomId)?.ownerId === deviceId;
   }
 
+  /**
+   * Whether a `room-leave` naming this device should be acted on.
+   *
+   * A device id on the wire is a claim, not a fact — nothing in the protocol
+   * binds a message to the identity it names. The owner used to remove
+   * whoever a leave pointed at, which meant any device on the network that
+   * knew a room id could evict any member of it, without the password and
+   * without ever being in the room.
+   *
+   * `provedKey` is the caller's answer to "did this message carry a proof
+   * that opens with the room key?" — passed in rather than checked here so
+   * this file stays free of anything that needs a Buffer of key material,
+   * and so the rule itself can be tested on its own.
+   *
+   * An unencrypted room has no key and so no proof to demand; membership is
+   * the whole of what is available there, and its traffic is plain text by
+   * definition anyway.
+   *
+   * This still does not prove the sender *is* the device it names — a member
+   * holding the key can name another member. Closing that needs per-device
+   * signing keys and a wire-format change.
+   */
+  mayLeave(roomId: string, deviceId: string, provedKey: boolean): boolean {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      return false;
+    }
+
+    if (!room.members.some((member) => member.deviceId === deviceId)) {
+      return false;
+    }
+
+    return room.encrypted ? provedKey : true;
+  }
+
   getMembers(roomId: string, status?: RoomMember['status']): RoomMember[] {
     const members = this.rooms.get(roomId)?.members ?? [];
     return status ? members.filter((member) => member.status === status) : members;

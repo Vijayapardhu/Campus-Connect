@@ -27,8 +27,8 @@ export const STATS: Stat[] = [
   { value: '43', label: 'commits', note: 'one author, no co-authors' },
   { value: '19', label: 'tagged releases', note: 'v0.1.0 through v0.5.0' },
   { value: '6', label: 'days with commits', note: 'inside a ten-day span' },
-  { value: '24k', label: 'lines of TypeScript', note: 'across 55 source files' },
-  { value: '248', label: 'tests', note: 'run on every build' },
+  { value: '24k', label: 'lines of TypeScript', note: 'across 56 source files' },
+  { value: '260', label: 'tests', note: 'run on every build' },
   { value: '6', label: 'wire protocol revisions', note: 'checked on every packet' }
 ];
 
@@ -167,8 +167,21 @@ export const MODULES: Module[] = [
     uses: ['node:net', 'length-prefixed framing']
   },
   {
+    name: 'keyVault.ts',
+    lines: 162,
+    role: 'Where the keys sleep',
+    detail:
+      'Derived room keys used to sit in config.json as plain hex, so anyone who could read the user ' +
+      'profile — another account, a copied folder, a backup — held every key this device had ever ' +
+      'derived. They now go through the OS credential store: DPAPI, Keychain, libsecret. The ' +
+      'ciphertext is bound to your account, so a copied profile is useless. Where no keyring exists ' +
+      'the keys are held for the session and never written, because a fallback to plaintext would ' +
+      'mean the fix quietly not applying on exactly the systems that need it.',
+    uses: ['Electron safeStorage', 'DPAPI / Keychain / libsecret']
+  },
+  {
     name: 'roomManager.ts',
-    lines: 316,
+    lines: 351,
     role: 'Rooms, keys and members',
     detail:
       'Persists through an interface rather than reaching for electron-store directly, which is the ' +
@@ -295,8 +308,8 @@ export const MODULES: Module[] = [
 export const AREAS: Array<{ area: string; files: number; lines: number; what: string }> = [
   {
     area: 'src/main',
-    files: 25,
-    lines: 11163,
+    files: 26,
+    lines: 11445,
     what: 'The Node side: networking, crypto, storage, the phone server, remote input, updates.'
   },
   {

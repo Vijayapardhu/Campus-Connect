@@ -584,7 +584,7 @@ garbage.
 every device updates; they cannot read anything sent afterwards.
 
 Everything the project deliberately does **not** protect against — public room
-names, traffic analysis, keys cached on disk — is written down honestly in
+names, traffic analysis, code running as your own user — is written down honestly in
 [SECURITY.md](SECURITY.md). Section 5 of [ARCHITECTURE.md](ARCHITECTURE.md) has
 the full design.
 

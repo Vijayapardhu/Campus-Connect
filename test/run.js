@@ -2860,6 +2860,167 @@ test('a failure that cannot come out differently is not retried', () => {
   }
 });
 
+
+// -----------------------------------------------------------------------------
+
+const { KeyVault } = require(path.join(ROOT, 'keyVault.js'));
+
+console.log('\n-- the key vault --');
+
+/*
+ * Room keys used to sit in config.json as plain hex, so anyone who could read
+ * the user profile held every key this device had derived. They now go through
+ * the OS credential store. What matters is not that encryption happens — that
+ * is the platform's job — but that the vault never falls back to writing them
+ * in the clear, and that an upgrade does not lock anyone out of a room.
+ */
+
+/** A stand-in for safeStorage: reversible, and obviously not real encryption. */
+function fakeCrypto(available = true) {
+  return {
+    available: () => available,
+    encrypt: (plaintext) => Buffer.from(`sealed:${plaintext}`, 'utf8'),
+    decrypt: (payload) => {
+      const text = payload.toString('utf8');
+      if (!text.startsWith('sealed:')) throw new Error('not ours');
+      return text.slice('sealed:'.length);
+    }
+  };
+}
+
+function fakeStore(initial = {}) {
+  const state = { vault: initial.vault, legacy: { ...(initial.legacy ?? {}) } };
+  return {
+    state,
+    readVault: () => state.vault,
+    writeVault: (blob) => { state.vault = blob; },
+    readLegacy: () => ({ ...state.legacy }),
+    clearLegacy: () => { state.legacy = {}; }
+  };
+}
+
+test('keys written to the vault are not readable in the stored blob', () => {
+  const store = fakeStore();
+  const vault = new KeyVault(store, fakeCrypto());
+  vault.write({ room: 'a1b2c3d4' });
+
+  assert.strictEqual(vault.sealed, true);
+  assert.ok(store.state.vault, 'something was written');
+  assert.ok(!store.state.vault.includes('a1b2c3d4'), 'the key is not sitting in the blob');
+  assert.deepStrictEqual(store.state.legacy, {}, 'nothing was left in the plaintext map');
+});
+
+test('a vault round-trips through a fresh instance', () => {
+  const store = fakeStore();
+  new KeyVault(store, fakeCrypto()).write({ one: 'aa', two: 'bb' });
+  assert.deepStrictEqual(new KeyVault(store, fakeCrypto()).read(), { one: 'aa', two: 'bb' });
+});
+
+test('existing plaintext keys are migrated and then erased', () => {
+  const store = fakeStore({ legacy: { room: 'deadbeef' } });
+  const vault = new KeyVault(store, fakeCrypto());
+
+  assert.deepStrictEqual(vault.read(), { room: 'deadbeef' }, 'the key still works this run');
+  assert.deepStrictEqual(store.state.legacy, {}, 'the plaintext copy is gone');
+  assert.ok(store.state.vault && !store.state.vault.includes('deadbeef'));
+});
+
+test('with no credential store, keys are kept for the session and never written', () => {
+  const store = fakeStore({ legacy: { room: 'deadbeef' } });
+  const warnings = [];
+  const vault = new KeyVault(store, fakeCrypto(false), (m) => warnings.push(m));
+
+  assert.strictEqual(vault.sealed, false);
+  assert.deepStrictEqual(vault.read(), { room: 'deadbeef' }, 'this run still works');
+
+  vault.write({ room: 'deadbeef', other: 'cafe' });
+  assert.strictEqual(store.state.vault, undefined, 'nothing encrypted was written');
+  assert.deepStrictEqual(store.state.legacy, {}, 'and nothing plaintext either');
+  assert.deepStrictEqual(vault.read(), { room: 'deadbeef', other: 'cafe' }, 'memory still holds them');
+  assert.ok(warnings.some((m) => /session only/i.test(m)), 'and it says so');
+});
+
+test('a vault written by another account is refused rather than trusted', () => {
+  const store = fakeStore();
+  store.state.vault = Buffer.from('somebody-elses-ciphertext', 'utf8').toString('base64');
+
+  const warnings = [];
+  const vault = new KeyVault(store, fakeCrypto(), (m) => warnings.push(m));
+
+  assert.deepStrictEqual(vault.read(), {}, 'the rooms simply report as locked');
+  assert.ok(warnings.some((m) => /could not be decrypted/i.test(m)));
+});
+
+test('emptying the vault clears the stored blob', () => {
+  const store = fakeStore();
+  const vault = new KeyVault(store, fakeCrypto());
+  vault.write({ room: 'aa' });
+  vault.write({});
+  assert.strictEqual(store.state.vault, undefined);
+});
+
+
+
+// -----------------------------------------------------------------------------
+
+console.log('\n-- leaving a room --');
+
+/*
+ * A device id on the wire is a claim, not a fact. The owner used to remove
+ * whoever a `room-leave` named, which meant any device on the network that
+ * knew a room id could evict any member of it — no password, no membership,
+ * and `room-leave` is not behind the decryption gate that clipboard and chat
+ * payloads pass through.
+ */
+
+function roomWithMember(encrypted) {
+  const rooms = makeManager();
+  const room = rooms.createRoom({
+    name: 'Lab',
+    type: 'private',
+    password: encrypted ? 'a-good-password' : '',
+    ownerId: 'owner',
+    ownerName: 'Owner'
+  });
+  rooms.addPendingMember(room.roomId, 'member', 'Member');
+  rooms.approveMember(room.roomId, 'member');
+  return { rooms, room };
+}
+
+test('a stranger cannot evict a member of an encrypted room', () => {
+  const { rooms, room } = roomWithMember(true);
+  assert.strictEqual(rooms.mayLeave(room.roomId, 'member', false), false);
+});
+
+test('a device outside the room cannot leave on a member’s behalf', () => {
+  const { rooms, room } = roomWithMember(true);
+  assert.strictEqual(rooms.mayLeave(room.roomId, 'stranger', true), false);
+});
+
+test('a member holding the room key can leave', () => {
+  const { rooms, room } = roomWithMember(true);
+  assert.strictEqual(rooms.mayLeave(room.roomId, 'member', true), true);
+});
+
+test('an unencrypted room has no proof to demand, so membership is the gate', () => {
+  const { rooms, room } = roomWithMember(false);
+  assert.strictEqual(rooms.mayLeave(room.roomId, 'member', false), true);
+  assert.strictEqual(rooms.mayLeave(room.roomId, 'stranger', false), false);
+});
+
+test('a leave for a room that does not exist is ignored', () => {
+  const { rooms } = roomWithMember(true);
+  assert.strictEqual(rooms.mayLeave('no-such-room', 'member', true), false);
+});
+
+test('the proof a leaving member sends verifies only for its own room', () => {
+  const salt = crypto.generateSalt();
+  const key = crypto.deriveRoomKey('a-good-password', salt);
+  const proof = crypto.createProof(key, 'room-a');
+  assert.strictEqual(crypto.verifyProof(key, 'room-a', proof), true);
+  assert.strictEqual(crypto.verifyProof(key, 'room-b', proof), false);
+});
+
 (async () => {
   for (const run of deferred) {
     await run();

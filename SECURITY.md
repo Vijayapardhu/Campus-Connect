@@ -56,9 +56,15 @@ vulnerabilities, though improvements are very welcome as feature requests:
   so devices can discover rooms. Rosters, join codes and content are not.
 - **Traffic analysis.** An observer on the network can see that a room is busy
   and roughly how large its messages are.
-- **Derived keys are cached on disk** in `electron-store` so you do not retype
-  the password every launch. Anyone with access to your user profile can read
-  them. Deleting the room deletes its key.
+- **Derived keys are cached, encrypted by the operating system**, so you do not
+  retype the password every launch. They go through the OS credential store —
+  DPAPI on Windows, the Keychain on macOS, libsecret or kwallet on Linux — and
+  the ciphertext is bound to your user account, so a copied profile directory,
+  a backup, or another account on the same machine cannot read them. It is
+  **not** protection against code running as you: malware in your session can
+  ask the credential store to decrypt exactly as the app does. Where no
+  credential store exists, keys are held for the session only and never
+  written. Deleting the room deletes its key.
 - **Unencrypted public rooms are plain text.** That is what "public, no password"
   means, and the interface labels those rooms "Not encrypted".
 - **Device identity is a UUID, not a certificate.** A removed device cannot read

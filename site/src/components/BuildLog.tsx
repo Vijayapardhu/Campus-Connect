@@ -140,7 +140,7 @@ export default function BuildLog() {
           <div className="wrap">
             <motion.p className="eyebrow" {...reveal()}>The modules</motion.p>
             <h2 className="statement">
-              <Words inView>Fifty-five files.</Words>{' '}
+              <Words inView>Fifty-six files.</Words>{' '}
               <em><Words inView delay={0.2}>These are the ones that matter.</Words></em>
             </h2>
 
@@ -369,7 +369,7 @@ export default function BuildLog() {
           <div className="wrap">
             <motion.p className="eyebrow" {...reveal()}>Testing</motion.p>
             <h2 className="statement">
-              <Words inView>248 assertions,</Words>{' '}
+              <Words inView>260 assertions,</Words>{' '}
               <em><Words inView delay={0.2}>and no test framework.</Words></em>
             </h2>
             <motion.p className="lede" {...reveal(0.12)}>

@@ -11,6 +11,7 @@ import {
   Tray,
   nativeImage,
   nativeTheme,
+  safeStorage,
   screen,
   shell
 } from 'electron';
@@ -32,6 +33,7 @@ import {
   writeClipboardText
 } from './clipboardStore';
 import { getSystemDeviceName } from './systemInfo';
+import { KeyVault } from './keyVault';
 import { RoomManager } from './roomManager';
 import { HistoryManager } from './historyManager';
 import { CallManager } from './callManager';
@@ -113,7 +115,15 @@ type AppStore = {
   currentRoomId?: string;
   settings: AppSettings;
   rooms: RoomInfo[];
+  /**
+   * The old plaintext map of roomId to hex key.
+   *
+   * Superseded by `roomKeyVault` and emptied on first launch after the
+   * upgrade. It stays in the type so the migration has something to read.
+   */
   roomKeys: Record<string, string>;
+  /** Base64 of the room keys, encrypted by the OS credential store. */
+  roomKeyVault?: string;
   clipboardHistory: ClipboardHistoryEntry[];
   chatHistory: ChatMessage[];
   blocked: BlockedDevice[];
@@ -376,11 +386,35 @@ function persist<K extends keyof AppStore>(key: K): void {
   }
 }
 
+/*
+ * Derived room keys go through the OS credential store rather than into
+ * config.json in the clear. safeStorage is the Electron half of it; the logic
+ * lives in keyVault.ts, which imports no Electron so the tests can run it.
+ */
+const keyVault = new KeyVault(
+  {
+    readVault: () => read('roomKeyVault'),
+    writeVault: (blob) => write('roomKeyVault', blob),
+    readLegacy: () => read('roomKeys'),
+    clearLegacy: () => {
+      if (Object.keys(read('roomKeys')).length > 0) {
+        write('roomKeys', {});
+      }
+    }
+  },
+  {
+    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (plaintext) => safeStorage.encryptString(plaintext),
+    decrypt: (payload) => safeStorage.decryptString(payload)
+  },
+  (message) => log.warn(`[keys] ${message}`)
+);
+
 const roomManager = new RoomManager({
   readRooms: () => read('rooms'),
   writeRooms: (rooms) => write('rooms', rooms),
-  readKeys: () => read('roomKeys'),
-  writeKeys: (keys) => write('roomKeys', keys)
+  readKeys: () => keyVault.read(),
+  writeKeys: (keys) => keyVault.write(keys)
 });
 
 const historyManager = new HistoryManager({
@@ -1535,16 +1569,54 @@ function handleRoomRoster(message: WireMessage) {
   sendStateToRenderer();
 }
 
+/**
+ * Someone leaving a room of ours.
+ *
+ * `deviceId` on the wire is a claim, not a fact — nothing in the protocol
+ * binds a message to the identity it names. This used to remove whoever the
+ * message pointed at after checking only that the room existed and that we
+ * owned it, which meant any device on the network that knew a room id could
+ * evict any member of it, without the password and without ever being in the
+ * room. `room-leave` is not behind the decryption gate that clipboard and
+ * chat payloads pass through, so there was nothing else in the way.
+ *
+ * Two checks close it:
+ *
+ *   - the named device has to actually be in the roster, so a stranger can no
+ *     longer name an arbitrary id; and
+ *   - for an encrypted room, the message has to carry a proof that opens with
+ *     the room key, so only somebody who holds the password can trigger a
+ *     removal at all.
+ *
+ * That is as far as this can go without signed messages: the proof shows the
+ * sender knows the room key, not that it is the device it claims to be, so a
+ * member can still spoof another member. Fixing *that* needs per-device
+ * keypairs, which is a wire-format change and a separate piece of work.
+ *
+ * An unencrypted room has no key and therefore no proof to demand. Its
+ * traffic is plain text by definition, so the roster check is the whole of
+ * what is available.
+ */
 function handleRoomLeave(message: WireMessage) {
   const room = message.roomId ? roomManager.getRoom(message.roomId) : undefined;
   if (!room || room.ownerId !== deviceId()) {
     return;
   }
 
+  const member = room.members.find((candidate) => candidate.deviceId === message.deviceId);
+  const key = roomManager.getKey(room.roomId);
+  const provedKey = Boolean(key && verifyProof(key, room.roomId, message.proof));
+
+  if (!roomManager.mayLeave(room.roomId, message.deviceId, provedKey)) {
+    log.warn(`[rooms] Ignored an unauthenticated leave for ${room.name}.`);
+    return;
+  }
+
   roomManager.removeMember(room.roomId, message.deviceId);
   broadcastRoster(room);
   sendStateToRenderer();
-  sendStatus(`${message.deviceName} left ${room.name}`, 'info');
+  /* The roster's name for them, not the one the message asked to be called. */
+  sendStatus(`${member?.deviceName ?? 'A device'} left ${room.name}`, 'info');
 }
 
 /**
@@ -4098,6 +4170,19 @@ handle('room:leave', (_event, roomId: string): ActionResult => {
 
   const message = baseMessage(isOwner ? 'room-closed' : 'room-leave');
   message.roomId = roomId;
+
+  /*
+   * The owner will not act on a leave it cannot attribute to somebody holding
+   * the room key — see handleRoomLeave. Without this the departure is ignored
+   * and the roster keeps a member who has gone.
+   */
+  if (!isOwner && room.encrypted) {
+    const key = roomManager.getKey(roomId);
+    if (key) {
+      message.proof = createProof(key, roomId);
+    }
+  }
+
   fanOut(message, memberHosts(roomId));
 
   endCallsForRoom(roomId);
