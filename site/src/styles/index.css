@@ -388,14 +388,32 @@ section { position: relative; padding: var(--gap) 0; }
 }
 
 /*
- * The last band runs straight into the footer.
+ * The last band dissolves rather than ending.
  *
- * The footer's gradient begins on this same wash, so the two surfaces are
- * already continuous — the rule between them was drawing a seam across
- * something that does not have one, and it undid the whole point of the long
- * ramp underneath it.
+ * The footer below it begins fully transparent — it has to, so it can sit on
+ * a washed band here and on plain white on the build log without drawing a
+ * step against either. But that means the footer opens on the page's own
+ * white, and this band is #fafafa, so the two met in a five-unit edge.
+ *
+ * Five units out of 255 sounds like nothing and is nothing anywhere else on
+ * the page. Across the full width, dead straight, with no border to explain
+ * it, the eye finds it immediately — a hard edge is legible at a contrast
+ * far below where a shape would be. So the band fades out over its last
+ * third and hands the footer the same white the footer expects.
+ *
+ * Written as a zero-alpha wash rather than the `transparent` keyword, which
+ * some engines interpolate through transparent black and would dirty the
+ * fade on the way down.
  */
-#get { border-bottom: 0; }
+#get {
+  border-bottom: 0;
+  background: linear-gradient(
+    180deg,
+    var(--wash) 0%,
+    var(--wash) 64%,
+    rgba(250, 250, 250, 0) 100%
+  );
+}
 
 /* The header is fixed, so an anchor lands with the section's first line
    underneath it. Every jump from the nav was hiding its own heading. */
