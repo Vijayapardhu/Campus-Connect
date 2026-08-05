@@ -966,6 +966,6 @@ export const APP_INFO = {
   author: 'Vijaya Pardhu',
   authorUrl: 'https://github.com/Vijayapardhu',
   repositoryUrl: 'https://github.com/Vijayapardhu/Clipboard',
-  websiteUrl: 'https://vijayapardhu.github.io/Clipboard/',
+  websiteUrl: 'https://vijayaapardhu.dev/Clipboard/',
   license: 'MIT'
 } as const;

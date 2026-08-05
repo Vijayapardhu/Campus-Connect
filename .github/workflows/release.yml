@@ -268,7 +268,7 @@ jobs:
             echo
             echo "---"
             echo
-            echo "Built by [Vijaya Pardhu](https://github.com/Vijayapardhu) · [Documentation](https://vijayapardhu.github.io/Clipboard/) · MIT licensed"
+            echo "Built by [Vijaya Pardhu](https://github.com/Vijayapardhu) · [Documentation](https://vijayaapardhu.dev/Clipboard/) · MIT licensed"
           } >> notes.md
 
           cat notes.md

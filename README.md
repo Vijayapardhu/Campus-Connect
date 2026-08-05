@@ -13,7 +13,7 @@ No cloud, no account, no data leaving your network.
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#installing)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-[**Website**](https://vijayapardhu.github.io/Clipboard/) ·
+[**Website**](https://vijayaapardhu.dev/Clipboard/) ·
 [**Architecture**](ARCHITECTURE.md) ·
 [**Contributing**](CONTRIBUTING.md) ·
 [**Security**](SECURITY.md)
@@ -826,6 +826,6 @@ interface and the documentation.
 
 **[Star this repo](https://github.com/Vijayapardhu/Clipboard)** ·
 **[Contribute](CONTRIBUTING.md)** ·
-**[Website](https://vijayapardhu.github.io/Clipboard/)**
+**[Website](https://vijayaapardhu.dev/Clipboard/)**
 
 </div>
