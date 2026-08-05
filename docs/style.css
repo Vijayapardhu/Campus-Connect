@@ -652,7 +652,7 @@ footer { padding: 54px 0 70px; border-top: 1px solid var(--line); color: var(--t
  */
 .stage {
   position: relative;
-  aspect-ratio: 1224 / 755;
+  aspect-ratio: 1320 / 880;
   border: 1px solid var(--line-lit);
   border-radius: 16px;
   overflow: hidden;
