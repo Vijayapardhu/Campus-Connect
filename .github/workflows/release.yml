@@ -283,3 +283,36 @@ jobs:
           draft: false
           # A tag with a suffix (v1.0.0-beta.1) publishes as a prerelease.
           prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
+
+      # The site's download buttons link straight at these installers rather
+      # than at the releases page, so a visitor never leaves to fetch the app.
+      # That puts the version inside three URLs, and a URL with a version in it
+      # is dead the day the next release lands — so the page is updated from
+      # what was actually published, not from memory.
+      #
+      # After Publish, because pointing the site at files that do not exist yet
+      # is the failure this is meant to prevent. A prerelease is skipped: it is
+      # not what the front page should be handing to visitors.
+      - name: Point the website at this release
+        if: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # The job starts on the tag. Take main as it stands now rather than as
+          # it stood when this run began: the builds take minutes, and a push in
+          # the meantime would otherwise be rejected here.
+          git fetch origin main
+          git checkout -B main origin/main
+          node scripts/sync-site-version.js "$TAG" installers
+
+          if git diff --quiet -- docs/index.html; then
+            echo "Site already points at ${TAG}."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          git commit -m "Point the download buttons at ${TAG}"
+          git push origin main
