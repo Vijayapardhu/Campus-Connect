@@ -71,7 +71,7 @@ function Lead() {
       </p>
 
       <div className="links">
-        <a className="btn btn--go btn--sm" href="./build.html">How it is built</a>
+        <a className="btn btn--go btn--sm" href="./build/">How it is built</a>
         <a className="btn btn--ghost btn--sm" href="https://github.com/Vijayapardhu/Clipboard">Read the source</a>
         <a className="btn btn--ghost btn--sm" href="https://github.com/Vijayapardhu">GitHub profile</a>
       </div>

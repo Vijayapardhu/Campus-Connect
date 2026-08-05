@@ -1,37 +1,55 @@
 import { useRef } from 'react';
 import { motion, useScroll, useTransform, useReducedMotion } from 'motion/react';
 import { Magnetic } from '../lib/Magnetic';
+import { ICON } from '../lib/assets';
 import { release } from '../data/release';
 import { ArrowIcon } from './icons';
 
 const MARK = 'Campus Connect';
 
-const COLUMNS: Array<{ heading: string; links: Array<{ label: string; href: string }> }> = [
+/*
+ * Three kinds of link, because the footer is rendered at two depths.
+ *
+ *   hash — a section of the landing page. On the landing page itself it stays
+ *          a bare `#what`, so Lenis intercepts it and scrolls; anywhere else
+ *          it has to become a real navigation to index.html.
+ *   page — a file at the site root, prefixed to get back there.
+ *   to   — absolute, used as written.
+ *
+ * The build log lives one directory down so its URL can drop the extension,
+ * which is what makes all of this necessary.
+ */
+interface Column {
+  heading: string;
+  links: Array<{ label: string; hash?: string; page?: string; to?: string }>;
+}
+
+const COLUMNS: Column[] = [
   {
     heading: 'Product',
     links: [
-      { label: 'What it does', href: '#what' },
-      { label: 'How it works', href: '#how' },
-      { label: 'Privacy', href: '#private' },
-      { label: 'Download', href: '#get' }
+      { label: 'What it does', hash: 'what' },
+      { label: 'How it works', hash: 'how' },
+      { label: 'Privacy', hash: 'private' },
+      { label: 'Download', hash: 'get' }
     ]
   },
   {
     heading: 'Project',
     links: [
-      { label: 'How it is built', href: './build.html' },
-      { label: 'Source', href: 'https://github.com/Vijayapardhu/Clipboard' },
-      { label: 'Issues', href: 'https://github.com/Vijayapardhu/Clipboard/issues' },
-      { label: 'Releases', href: 'https://github.com/Vijayapardhu/Clipboard/releases' },
-      { label: 'Changelog', href: './changelog.html' }
+      { label: 'How it is built', page: 'build/' },
+      { label: 'Source', to: 'https://github.com/Vijayapardhu/Clipboard' },
+      { label: 'Issues', to: 'https://github.com/Vijayapardhu/Clipboard/issues' },
+      { label: 'Releases', to: 'https://github.com/Vijayapardhu/Clipboard/releases' },
+      { label: 'Changelog', page: 'changelog.html' }
     ]
   },
   {
     heading: 'Legal',
     links: [
-      { label: 'Privacy policy', href: './privacy.html' },
-      { label: 'Terms', href: './terms.html' },
-      { label: 'MIT licence', href: 'https://github.com/Vijayapardhu/Clipboard/blob/main/LICENSE' }
+      { label: 'Privacy policy', page: 'privacy.html' },
+      { label: 'Terms', page: 'terms.html' },
+      { label: 'MIT licence', to: 'https://github.com/Vijayapardhu/Clipboard/blob/main/LICENSE' }
     ]
   }
 ];
@@ -67,20 +85,31 @@ function Wordmark() {
   );
 }
 
-export function Footer() {
+/**
+ * @param prefix Path back to the site root — `./` from a root page, `../`
+ *   from the build log, which sits in its own directory so its URL can drop
+ *   the .html extension.
+ */
+export function Footer({ prefix = './' }: { prefix?: string }) {
+  const atRoot = prefix === './';
+  const home = atRoot ? '#top' : `${prefix}index.html`;
+  /* Bare hash on the landing page so the smooth scroll survives; a real
+     navigation from anywhere else, where the target is another document. */
+  const section = (id: string) => (atRoot ? `#${id}` : `${prefix}index.html#${id}`);
+
   return (
     <footer className="footer">
       <div className="wrap footer__top">
         <div className="footer__pitch">
-          <a className="brand" href="#top">
-            <img src="./icon.png" alt="" width={27} height={27} />
+          <a className="brand" href={home}>
+            <img src={ICON} alt="" width={27} height={27} />
             <span>Campus Connect</span>
           </a>
           <p>
             Everything between your devices. <em>None of it online.</em>
           </p>
           <Magnetic strength={8}>
-            <a className="btn btn--glass btn--sm" href="#get">
+            <a className="btn btn--glass btn--sm" href={section('get')}>
               Download {release.version} <ArrowIcon />
             </a>
           </Magnetic>
@@ -93,7 +122,9 @@ export function Footer() {
               <ul>
                 {column.links.map((link) => (
                   <li key={link.label}>
-                    <a href={link.href}>{link.label}</a>
+                    <a href={link.to ?? (link.hash ? section(link.hash) : `${prefix}${link.page}`)}>
+                      {link.label}
+                    </a>
                   </li>
                 ))}
               </ul>

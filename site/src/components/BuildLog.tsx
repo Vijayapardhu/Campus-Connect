@@ -4,6 +4,7 @@ import { useSmoothScroll } from '../lib/useSmoothScroll';
 import { CountUp, ScrollProgress, Words } from '../lib/effects';
 import { useReducedMotion } from 'motion/react';
 import { Magnetic } from '../lib/Magnetic';
+import { ICON } from '../lib/assets';
 import { Footer } from './Footer';
 import { ArrowIcon } from './icons';
 import { STATS, TIMELINE, MODULES, AREAS, MISSTEPS } from '../data/build';
@@ -19,20 +20,26 @@ import {
 
 /* ---------------------------------------------------------------- chrome -- */
 
+/*
+ * This page is served from /build/, so everything at the site root is one
+ * directory up. The same goes for the footer, which takes a prefix.
+ */
+const ROOT = '../';
+
 function Header() {
   return (
     <header className="is-stuck">
       <div className="wrap bar">
-        <a className="brand" href="./index.html">
-          <img src="./icon.png" alt="" width={27} height={27} />
+        <a className="brand" href={`${ROOT}index.html`}>
+          <img src={ICON} alt="" width={27} height={27} />
           <span>Campus Connect</span>
         </a>
         <nav>
-          <a className="hide-sm" href="./index.html#what">What it does</a>
-          <a className="hide-sm" href="./index.html#private">Privacy</a>
-          <a className="hide-sm" href="./changelog.html">Changelog</a>
+          <a className="hide-sm" href={`${ROOT}index.html#what`}>What it does</a>
+          <a className="hide-sm" href={`${ROOT}index.html#private`}>Privacy</a>
+          <a className="hide-sm" href={`${ROOT}changelog.html`}>Changelog</a>
           <Magnetic strength={7}>
-            <a className="btn btn--go btn--sm" href="./index.html#get">Download</a>
+            <a className="btn btn--go btn--sm" href={`${ROOT}index.html#get`}>Download</a>
           </Magnetic>
         </nav>
       </div>
@@ -429,14 +436,14 @@ export default function BuildLog() {
                 </a>
               </Magnetic>
               <Magnetic>
-                <a className="btn btn--ghost" href="./index.html#get">Download the app</a>
+                <a className="btn btn--ghost" href={`${ROOT}index.html#get`}>Download the app</a>
               </Magnetic>
             </motion.div>
           </div>
         </section>
       </main>
 
-      <Footer />
+      <Footer prefix={ROOT} />
     </>
   );
 }

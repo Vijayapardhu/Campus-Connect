@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Magnetic } from '../lib/Magnetic';
+import { ICON } from '../lib/assets';
 
 const NAV = [
   { href: '#campus', label: 'For campuses' },
@@ -31,7 +32,7 @@ export function Header() {
     <header className={stuck ? 'is-stuck' : undefined}>
       <div className="wrap bar">
         <a className="brand" href="#top">
-          <img src="./icon.png" alt="" width={27} height={27} />
+          <img src={ICON} alt="" width={27} height={27} />
           <span>Campus Connect</span>
         </a>
         <nav>
