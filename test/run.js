@@ -2799,6 +2799,67 @@ testAsync('a signal for somebody else’s transfer is ignored', async () => {
   assert.strictEqual(devices.sender.state.transfers[0].status, 'requested');
 });
 
+// -----------------------------------------------------------------------------
+
+console.log('\n-- not downloading the same update four times --');
+
+const { shouldOfferDownload, isWorthRetrying } = require(path.join(ROOT, 'updatePolicy.js'));
+
+/*
+ * From a real report: the same version downloading three or four times over
+ * before it finally installed.
+ *
+ * `update-available` fires on every check, and it was acted on unconditionally.
+ * So a finished download was demoted from 'ready' back to 'available' seconds
+ * after the next launch, the button came back, and ~85 MB was fetched again for
+ * a file already on disk.
+ */
+
+test('an update already downloaded is not offered again', () => {
+  assert.strictEqual(shouldOfferDownload('ready', '0.6.0', '0.6.0'), false);
+});
+
+test('a newer version still gets through once one is downloaded', () => {
+  assert.strictEqual(shouldOfferDownload('ready', '0.6.0', '0.6.1'), true);
+});
+
+test('nothing downloaded yet always offers the download', () => {
+  assert.strictEqual(shouldOfferDownload('available', undefined, '0.6.0'), true);
+  assert.strictEqual(shouldOfferDownload('idle', undefined, '0.6.0'), true);
+});
+
+test('a download that did not finish is still offered', () => {
+  // Same version, but the state says it never landed — the cache may hold only
+  // a partial file, so the offer has to stand.
+  assert.strictEqual(shouldOfferDownload('error', undefined, '0.6.0'), true);
+  assert.strictEqual(shouldOfferDownload('downloading', undefined, '0.6.0'), true);
+});
+
+test('a dropped connection is worth another go', () => {
+  for (const message of [
+    'net::ERR_CONNECTION_RESET',
+    'socket hang up',
+    'read ECONNRESET',
+    'connect ETIMEDOUT 140.82.121.4:443',
+    'getaddrinfo ENOTFOUND objects.githubusercontent.com',
+    'Unexpected end of stream'
+  ]) {
+    assert.strictEqual(isWorthRetrying(message), true, message);
+  }
+});
+
+test('a failure that cannot come out differently is not retried', () => {
+  for (const message of [
+    'sha512 checksum mismatch, expected abc, got def',
+    'New version 0.6.0 is not signed by the application owner',
+    'Cannot download "https://github.com/...", status 404: Not Found',
+    "ENOENT: no such file or directory, open 'C:\\pending\\update.exe'",
+    'ENOSPC: no space left on device'
+  ]) {
+    assert.strictEqual(isWorthRetrying(message), false, message);
+  }
+});
+
 (async () => {
   for (const run of deferred) {
     await run();

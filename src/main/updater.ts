@@ -2,6 +2,7 @@ import { app, autoUpdater as _electronAutoUpdater } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import type { UpdateStatus } from '../shared/types';
+import { isWorthRetrying, shouldOfferDownload } from './updatePolicy';
 
 /**
  * Keeping the app up to date from the GitHub releases feed.
@@ -37,6 +38,11 @@ export class Updater {
   private timer: NodeJS.Timeout | null = null;
   private started = false;
 
+  /** The version already written to the updater cache, once one has been. */
+  private downloadedVersion: string | undefined;
+  /** The download in progress, so a second request joins it rather than starting another. */
+  private inFlight: Promise<UpdateStatus> | null = null;
+
   constructor(private readonly events: UpdaterEvents) {}
 
   /** True when this platform can actually apply an update by itself. */
@@ -64,6 +70,18 @@ export class Updater {
     autoUpdater.on('checking-for-update', () => this.set({ state: 'checking' }));
 
     autoUpdater.on('update-available', (info) => {
+      /*
+       * A check finding the version that is already downloaded must not undo
+       * the download. This fires on every check, so without the guard a
+       * finished update was demoted from 'ready' back to 'available' a few
+       * seconds after each launch — the download button came back, and the
+       * whole installer was fetched again for a file already on disk.
+       */
+      if (!shouldOfferDownload(this.status.state, this.downloadedVersion, info.version)) {
+        log.info(`Update ${info.version} is already downloaded; leaving it ready to install.`);
+        return;
+      }
+
       this.set({
         state: 'available',
         availableVersion: info.version,
@@ -79,6 +97,7 @@ export class Updater {
     });
 
     autoUpdater.on('update-downloaded', (info) => {
+      this.downloadedVersion = info.version;
       this.set({ state: 'ready', availableVersion: info.version });
       log.info(`Update ${info.version} downloaded and ready`);
     });
@@ -132,6 +151,28 @@ export class Updater {
       return this.status;
     }
 
+    // Already on disk. Asking again should install what is there, not fetch it
+    // a second time.
+    if (this.status.state === 'ready' && this.downloadedVersion) {
+      log.info(`Update ${this.downloadedVersion} is already downloaded; not fetching it again.`);
+      return this.status;
+    }
+
+    // One at a time. Two presses of the button used to start two transfers of
+    // the same file, each reporting progress over the top of the other.
+    if (this.inFlight) {
+      return this.inFlight;
+    }
+
+    this.inFlight = this.runDownload();
+    try {
+      return await this.inFlight;
+    } finally {
+      this.inFlight = null;
+    }
+  }
+
+  private async runDownload(): Promise<UpdateStatus> {
     // An installer is ~85 MB, and on a congested network that is several
     // minutes with the connection open the whole time. A single reset partway
     // through used to end the attempt outright, leaving the user on the old
@@ -142,15 +183,39 @@ export class Updater {
     // resumes rather than starting over. Waiting a little longer between tries
     // gives a network that is briefly overloaded time to recover.
     let lastError = '';
+    let tried = 0;
 
     for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
+      tried = attempt;
       try {
-        this.set({ state: 'downloading', percent: 0, error: undefined });
+        // Only the first attempt starts the bar at nothing. A resumed transfer
+        // carries on from where it stopped, and zeroing it every time made a
+        // download that was making progress look like it kept starting over.
+        this.set(attempt === 1 ? { state: 'downloading', percent: 0, error: undefined } : { state: 'downloading', error: undefined });
         await autoUpdater.downloadUpdate();
         return this.status;
       } catch (error) {
         lastError = (error as Error).message;
+
+        /*
+         * The file can be complete even when the call reports a failure — the
+         * 'update-downloaded' event has already fired by then. Retrying at that
+         * point fetches an installer that is sitting on disk, which is most of
+         * how one update came to be downloaded three and four times over.
+         */
+        if (this.downloadedVersion) {
+          log.info(`Download reported "${lastError}" after ${this.downloadedVersion} had already been written; it is ready.`);
+          this.set({ state: 'ready', availableVersion: this.downloadedVersion, error: undefined });
+          return this.status;
+        }
+
         log.warn(`Update download attempt ${attempt} of ${DOWNLOAD_ATTEMPTS} failed: ${lastError}`);
+
+        // A checksum that does not match will not match on the fourth go.
+        if (!isWorthRetrying(lastError)) {
+          log.warn('That failure will not come out differently; not retrying.');
+          break;
+        }
 
         if (attempt < DOWNLOAD_ATTEMPTS) {
           this.set({ state: 'retrying', attempt, error: lastError });
@@ -159,7 +224,12 @@ export class Updater {
       }
     }
 
-    this.set({ state: 'error', error: `${lastError} (after ${DOWNLOAD_ATTEMPTS} attempts)` });
+    // The count is what was actually tried, not the ceiling — a failure that
+    // stopped after one go should not claim to have been attempted four times.
+    this.set({
+      state: 'error',
+      error: tried > 1 ? `${lastError} (after ${tried} attempts)` : lastError
+    });
     return this.status;
   }
 
