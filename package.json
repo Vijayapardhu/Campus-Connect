@@ -56,20 +56,18 @@
     "electron-store": "^8.2.0",
     "electron-updater": "^6.8.9",
     "qrcode": "^1.5.4",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "selfsigned": "^5.5.0",
-    "uuid": "^11.1.0"
+    "selfsigned": "^5.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.21",
     "@types/qrcode": "^1.5.5",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@types/uuid": "^10.0.0",
     "concurrently": "^9.1.2",
     "electron": "^35.2.1",
     "electron-builder": "^25.1.8",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
     "wait-on": "^8.0.3"
@@ -83,16 +81,20 @@
       "dist/main/**/*",
       "dist/renderer/**/*",
       "dist/shared/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/**/*.{map,ts,mts,cts}",
+      "!node_modules/@jitsi/robotjs/src/**"
     ],
     "directories": {
       "buildResources": "build",
       "output": "release"
     },
     "npmRebuild": false,
+    "compression": "maximum",
     "asarUnpack": [
       "**/*.node"
     ],
+    "afterPack": "scripts/prune-payload.js",
     "win": {
       "target": "nsis",
       "icon": "build/icon.ico",
