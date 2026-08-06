@@ -34,6 +34,16 @@ import {
 } from './clipboardStore';
 import { getSystemDeviceName } from './systemInfo';
 import { KeyVault } from './keyVault';
+import {
+  createIdentity,
+  digestOf,
+  sign as signPayload,
+  verify as verifySignature,
+  withinSkew,
+  type DeviceIdentity,
+  type Signable
+} from './deviceIdentity';
+import { DeviceRegistry, type DeviceKeyRecord } from './deviceRegistry';
 import { RoomManager } from './roomManager';
 import { HistoryManager } from './historyManager';
 import { CallManager } from './callManager';
@@ -124,6 +134,10 @@ type AppStore = {
   roomKeys: Record<string, string>;
   /** Base64 of the room keys, encrypted by the OS credential store. */
   roomKeyVault?: string;
+  /** This device's Ed25519 keypair, in the same encrypted store. */
+  identityVault?: string;
+  /** Which public key belongs to which device id. Public data, not secret. */
+  deviceKeys: Record<string, DeviceKeyRecord>;
   clipboardHistory: ClipboardHistoryEntry[];
   chatHistory: ChatMessage[];
   blocked: BlockedDevice[];
@@ -297,6 +311,7 @@ const store = new Store<AppStore>({
     settings: DEFAULT_SETTINGS,
     rooms: [],
     roomKeys: {},
+    deviceKeys: {},
     clipboardHistory: [],
     chatHistory: [],
     blocked: [],
@@ -409,6 +424,70 @@ const keyVault = new KeyVault(
   },
   (message) => log.warn(`[keys] ${message}`)
 );
+
+/*
+ * This device's signing keypair, in the same OS-encrypted store as the room
+ * keys. Generated once, on the first launch that needs it.
+ *
+ * If the vault cannot be read — a different OS account, a reset keyring — a
+ * fresh identity is generated rather than the app refusing to start. The
+ * consequence is that other devices see a known id arriving with a new key
+ * and refuse it until the room is joined again, which is the correct
+ * outcome: from the outside, an unreadable vault and a stolen id look the
+ * same, and only rejoining proves the difference.
+ */
+const identityVault = new KeyVault(
+  {
+    readVault: () => read('identityVault'),
+    writeVault: (blob) => write('identityVault', blob),
+    readLegacy: () => ({}),
+    clearLegacy: () => {}
+  },
+  {
+    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (plaintext) => safeStorage.encryptString(plaintext),
+    decrypt: (payload) => safeStorage.decryptString(payload)
+  },
+  (message) => log.warn(`[identity] ${message}`)
+);
+
+const identity: DeviceIdentity = (() => {
+  const stored = identityVault.read();
+  const fresh = createIdentity();
+
+  /*
+   * The signing pair is kept if it exists, because it *is* this device's
+   * identity — other devices have it bound in their rosters, and replacing it
+   * would make every one of them refuse us until we rejoined. The agreement
+   * pair can be added to an identity that predates it without that cost:
+   * nothing has been wrapped to it yet.
+   */
+  const next: DeviceIdentity = {
+    publicKey: stored.publicKey || fresh.publicKey,
+    privateKey: stored.privateKey || fresh.privateKey,
+    boxPublicKey: stored.boxPublicKey || fresh.boxPublicKey,
+    boxPrivateKey: stored.boxPrivateKey || fresh.boxPrivateKey
+  };
+
+  const complete =
+    stored.publicKey && stored.privateKey && stored.boxPublicKey && stored.boxPrivateKey;
+
+  if (!complete) {
+    identityVault.write({ ...next });
+    log.info(
+      stored.publicKey
+        ? '[identity] Added an agreement key to this device.'
+        : '[identity] Generated a signing key for this device.'
+    );
+  }
+
+  return next;
+})();
+
+const deviceRegistry = new DeviceRegistry({
+  read: () => read('deviceKeys'),
+  write: (records) => write('deviceKeys', records)
+});
 
 const roomManager = new RoomManager({
   readRooms: () => read('rooms'),
@@ -797,10 +876,48 @@ function targetList(hosts: string[], broadcast: boolean): string[] {
  * Delivers a message, splitting it across datagrams when it will not fit in
  * one. Returns false only when the payload is past the transfer ceiling.
  */
+/**
+ * The fields a signature covers, lifted out of a message.
+ *
+ * Everything the receiver decides anything on: which handler runs, which
+ * room it applies to, who it is aimed at, when it was made, and a digest of
+ * the body so the payload cannot be swapped under a valid signature.
+ *
+ * `pubKey` and `sig` are excluded for the obvious reason, and the transport
+ * fields — host, port — are excluded because a relay may legitimately observe
+ * them differently from how the sender wrote them.
+ */
+function signableOf(message: WireMessage): Signable {
+  const { v, type, deviceId, timestamp, roomId, targetDeviceId, pubKey, sig, host, port, ...body } =
+    message;
+  void pubKey;
+  void sig;
+  void host;
+  void port;
+
+  return {
+    v,
+    type,
+    deviceId,
+    ts: timestamp,
+    roomId,
+    targetDeviceId,
+    digest: digestOf(body)
+  };
+}
+
 function deliver(message: WireMessage, targets: string[]): boolean {
   if (!udpSocket || targets.length === 0) {
     return false;
   }
+
+  /*
+   * Signed here rather than where the message was built, because this is the
+   * one place every outbound message passes through — including the chunks a
+   * large payload is split into, which are messages in their own right.
+   */
+  message.pubKey = identity.publicKey;
+  message.sig = signPayload(identity.privateKey, signableOf(message));
 
   const json = JSON.stringify(message);
   const bytes = Buffer.byteLength(json);
@@ -1474,7 +1591,12 @@ function handleRoomRequest(message: WireMessage, host: string) {
     return;
   }
 
-  const updated = roomManager.addPendingMember(room.roomId, message.deviceId, message.deviceName);
+  const updated = roomManager.addPendingMember(
+    room.roomId,
+    message.deviceId,
+    message.deviceName,
+    message.pubKey
+  );
   if (updated) {
     const request: JoinRequest = {
       roomId: room.roomId,
@@ -1563,6 +1685,12 @@ function handleRoomRoster(message: WireMessage) {
     }
     sendStatus(`You were removed from ${room.name}.`, 'warning');
   } else {
+    /*
+     * Learn the other members' keys from the owner, who bound them at
+     * approval. Without this a member would only ever know keys it happened
+     * to observe first, and two members could disagree about who a third is.
+     */
+    deviceRegistry.adopt(nextRoom.members);
     roomManager.saveRoom({ ...nextRoom, joinCode: nextRoom.joinCode ?? room.joinCode });
   }
 
@@ -1933,7 +2061,12 @@ function handleInviteAccept(message: WireMessage) {
     return;
   }
 
-  const updated = roomManager.addPendingMember(room.roomId, message.deviceId, message.deviceName);
+  const updated = roomManager.addPendingMember(
+    room.roomId,
+    message.deviceId,
+    message.deviceName,
+    message.pubKey
+  );
   if (updated) {
     emit('room:join-request', {
       roomId: room.roomId,
@@ -2791,10 +2924,61 @@ function receiveMessage(raw: string, host: string, viaTcp: boolean): void {
       return;
     }
 
+    if (!authenticate(message)) {
+      return;
+    }
+
     handleWireMessage(message, host);
   } catch {
     // Malformed input on a shared port is expected; ignore quietly.
   }
+}
+
+/**
+ * Whether this message really came from the device it names.
+ *
+ * Three questions, and all of them have to answer yes before anything
+ * downstream sees the message:
+ *
+ *   1. Is it signed, and does the signature verify against the key it
+ *      carries? That covers the contents — nothing in the signed set can be
+ *      altered in flight, including the digest of the body.
+ *   2. Is it recent? A signature is valid forever, so without a clock a
+ *      captured message could be replayed indefinitely.
+ *   3. Is that key the one we already associate with this device id? This is
+ *      the question that turns a signature into an identity. Step 1 alone
+ *      proves only that the sender holds the key they attached, which is no
+ *      obstacle at all to somebody who generated it a moment ago.
+ *
+ * A device id whose key has changed is refused rather than re-learned. It is
+ * either an impersonation or a genuine reinstall, and those are
+ * indistinguishable from here — the honest one recovers by rejoining the
+ * room, which is a deliberate act by somebody who knows the password.
+ */
+function authenticate(message: WireMessage): boolean {
+  if (!message.pubKey || !message.sig) {
+    log.warn(`[identity] Dropped an unsigned ${message.type} from ${message.deviceId}.`);
+    return false;
+  }
+
+  if (!verifySignature(message.pubKey, signableOf(message), message.sig)) {
+    log.warn(`[identity] Dropped a badly signed ${message.type} from ${message.deviceId}.`);
+    return false;
+  }
+
+  if (!withinSkew(message.timestamp)) {
+    log.warn(`[identity] Dropped a stale ${message.type} from ${message.deviceId}.`);
+    return false;
+  }
+
+  if (deviceRegistry.check(message.deviceId, message.pubKey) === 'mismatch') {
+    log.warn(
+      `[identity] ${message.deviceId} presented a different key than the one on file; dropped.`
+    );
+    return false;
+  }
+
+  return true;
 }
 
 function startTcpService() {
@@ -3987,6 +4171,20 @@ handle('room:approve-member', (_event, roomId: string, memberId: string): Action
   }
 
   const member = room.members.find((candidate) => candidate.deviceId === memberId);
+
+  /*
+   * Bind the key here, and only here.
+   *
+   * This is the moment the device has just proved it knows the room password
+   * — the strongest evidence about who it is that this protocol ever has.
+   * Everything the device sends afterwards is checked against the key
+   * recorded now, and the roster carries it to the other members so they
+   * agree with the owner rather than with whoever spoke first.
+   */
+  if (member?.publicKey) {
+    deviceRegistry.bind(memberId, member.publicKey);
+  }
+
   fanOut(buildAcceptMessage(room, memberId), memberHosts(roomId));
   broadcastRoster(room);
   sendStateToRenderer();

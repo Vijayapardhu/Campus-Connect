@@ -1,4 +1,11 @@
-export const PROTOCOL_VERSION = 6;
+/**
+ * 7 — every message is signed by the sending device.
+ *
+ * A break, deliberately. Version 6 has no signatures, so a v6 device cannot
+ * produce anything a v7 device will act on, and the mismatch is reported
+ * rather than silently half-working. Devices have to be updated together.
+ */
+export const PROTOCOL_VERSION = 7;
 
 export type RoomType = 'public' | 'private';
 export type MemberStatus = 'pending' | 'accepted';
@@ -10,6 +17,15 @@ export type RoomMember = {
   status: MemberStatus;
   role: MemberRole;
   joinedAt: number;
+  /**
+   * The device's public key, recorded by the owner when it approved the join
+   * — the one moment the device had already proved it knew the password.
+   *
+   * Optional because rosters written before this existed have none. A member
+   * without one is trusted on first use until its key is learned, which is
+   * the upgrade path rather than the intended state.
+   */
+  publicKey?: string;
 };
 
 /**
@@ -545,6 +561,22 @@ export type WireMessage = {
   port: number;
   host: string;
   timestamp: number;
+
+  /**
+   * The sender's Ed25519 public key, SPKI as base64.
+   *
+   * A device id is a value the sender chose, so on its own it proves nothing.
+   * This is what the receiver checks the signature against — and, because the
+   * pairing of id to key is remembered, what stops a second device claiming
+   * an id that is already spoken for.
+   */
+  pubKey?: string;
+  /**
+   * A signature over the message's identifying fields and a digest of its
+   * body. Everything the receiver will act on is covered; see `Signable` in
+   * main/deviceIdentity.ts for exactly what.
+   */
+  sig?: string;
 
   advert?: RoomAdvert;
   roomId?: string;

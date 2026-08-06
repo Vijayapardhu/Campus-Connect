@@ -207,7 +207,12 @@ export class RoomManager {
    * Records an incoming join request. Returns undefined when the device is
    * already a member, so the caller can skip re-notifying the owner.
    */
-  addPendingMember(roomId: string, deviceId: string, deviceName: string): RoomInfo | undefined {
+  addPendingMember(
+    roomId: string,
+    deviceId: string,
+    deviceName: string,
+    publicKey?: string
+  ): RoomInfo | undefined {
     const room = this.rooms.get(roomId);
     if (!room) {
       return undefined;
@@ -216,9 +221,16 @@ export class RoomManager {
     const existing = room.members.find((member) => member.deviceId === deviceId);
     if (existing) {
       existing.deviceName = deviceName;
+      /*
+       * The key is only recorded while a request is still pending. Letting a
+       * re-request rewrite an accepted member's key would hand anybody who
+       * learned the password a way to take over an existing membership,
+       * which is the whole thing the key is here to prevent.
+       */
       if (existing.status === 'accepted') {
         return undefined;
       }
+      existing.publicKey = publicKey;
       this.persist();
       return room;
     }
@@ -228,7 +240,8 @@ export class RoomManager {
       deviceName,
       status: 'pending',
       role: 'member',
-      joinedAt: Date.now()
+      joinedAt: Date.now(),
+      publicKey
     });
 
     this.persist();

@@ -1,6 +1,10 @@
 import {
   createCipheriv,
   createDecipheriv,
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  diffieHellman,
   randomBytes,
   scryptSync,
   timingSafeEqual
@@ -128,6 +132,88 @@ function proofPlaintext(roomId: string): string {
  */
 export function createProof(key: Buffer, roomId: string): Envelope {
   return seal(key, proofPlaintext(roomId));
+}
+
+/* --------------------------------------------------------- content keys -- */
+
+/**
+ * A room's content key: random, and not derived from anything.
+ *
+ * The password used to *be* the key, which made removing somebody a polite
+ * request — they still knew the password, so they still held the key. Content
+ * is encrypted under this instead, and the password's only job is to prove
+ * you may be let in. A key nobody can recompute is a key the owner can
+ * replace, and replacing it is what makes a removal mean something.
+ */
+export function generateContentKey(): Buffer {
+  return randomBytes(KEY_BYTES);
+}
+
+/**
+ * Wrap a key so that exactly one device can unwrap it.
+ *
+ * X25519 between the sender's private key and the recipient's public key
+ * gives a secret only those two can compute; that secret is hashed into an
+ * AES key and used to seal the content key. Anyone else on the network — and
+ * anyone who merely knows the room password — sees an envelope they have no
+ * way into.
+ *
+ * The shared secret is hashed rather than used directly because raw X25519
+ * output is not uniformly distributed, and AES expects a key that is. The
+ * room id goes into the hash as well, so the same pair of devices derive a
+ * different wrapping key per room and an envelope from one room is useless in
+ * another.
+ */
+export function wrapKeyFor(
+  contentKey: Buffer,
+  senderPrivateKey: string,
+  recipientPublicKey: string,
+  roomId: string
+): Envelope {
+  return seal(agreedKey(senderPrivateKey, recipientPublicKey, roomId), contentKey.toString('hex'));
+}
+
+/** Returns null when the envelope was not addressed to this device. */
+export function unwrapKeyFrom(
+  envelope: Envelope | undefined,
+  recipientPrivateKey: string,
+  senderPublicKey: string,
+  roomId: string
+): Buffer | null {
+  let hex: string | null;
+  try {
+    hex = open(agreedKey(recipientPrivateKey, senderPublicKey, roomId), envelope);
+  } catch {
+    return null;
+  }
+
+  if (!hex || !/^[0-9a-f]+$/i.test(hex)) {
+    return null;
+  }
+
+  const key = Buffer.from(hex, 'hex');
+  return key.length === KEY_BYTES ? key : null;
+}
+
+function agreedKey(privateKeyB64: string, publicKeyB64: string, roomId: string): Buffer {
+  const shared = diffieHellman({
+    privateKey: createPrivateKey({
+      key: Buffer.from(privateKeyB64, 'base64'),
+      format: 'der',
+      type: 'pkcs8'
+    }),
+    publicKey: createPublicKey({
+      key: Buffer.from(publicKeyB64, 'base64'),
+      format: 'der',
+      type: 'spki'
+    })
+  });
+
+  return createHash('sha256')
+    .update(shared)
+    .update('campus-connect:roomkey:', 'utf8')
+    .update(roomId, 'utf8')
+    .digest();
 }
 
 export function verifyProof(key: Buffer, roomId: string, proof: Envelope | undefined): boolean {

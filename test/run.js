@@ -3021,6 +3021,304 @@ test('the proof a leaving member sends verifies only for its own room', () => {
   assert.strictEqual(crypto.verifyProof(key, 'room-b', proof), false);
 });
 
+
+// -----------------------------------------------------------------------------
+
+const identity = require(path.join(ROOT, "deviceIdentity.js"));
+
+console.log("\n-- device identity --");
+
+/*
+ * A device id used to be a bare UUID that nothing checked, so every rule keyed
+ * on it was only as strong as the sender’s honesty. Each device now signs what
+ * it sends. These are the properties the rest of the protocol leans on.
+ */
+
+const alice = identity.createIdentity();
+const mallory = identity.createIdentity();
+
+function payload(over) {
+  return Object.assign({
+    v: 7,
+    type: "chat",
+    deviceId: "device-a",
+    ts: 1000,
+    roomId: "room-1",
+    digest: identity.digestOf({ text: "hello" })
+  }, over || {});
+}
+
+test("a signature verifies with the matching public key", () => {
+  const body = payload();
+  assert.strictEqual(identity.verify(alice.publicKey, body, identity.sign(alice.privateKey, body)), true);
+});
+
+test("another device cannot sign as this one", () => {
+  const body = payload();
+  assert.strictEqual(identity.verify(alice.publicKey, body, identity.sign(mallory.privateKey, body)), false);
+});
+
+test("changing any signed field invalidates the signature", () => {
+  const body = payload();
+  const sig = identity.sign(alice.privateKey, body);
+  for (const field of ["type", "deviceId", "roomId", "digest"]) {
+    const tampered = payload();
+    tampered[field] = "tampered";
+    assert.strictEqual(identity.verify(alice.publicKey, tampered, sig), false, field);
+  }
+  const moved = payload({ ts: 2000 });
+  assert.strictEqual(identity.verify(alice.publicKey, moved, sig), false, "ts");
+});
+
+test("swapping the body invalidates the signature", () => {
+  const body = payload();
+  const sig = identity.sign(alice.privateKey, body);
+  const swapped = payload({ digest: identity.digestOf({ text: "goodbye" }) });
+  assert.strictEqual(identity.verify(alice.publicKey, swapped, sig), false);
+});
+
+test("a message addressed to someone else cannot be re-aimed", () => {
+  const body = payload({ targetDeviceId: "device-b" });
+  const sig = identity.sign(alice.privateKey, body);
+  const reaimed = payload({ targetDeviceId: "device-c" });
+  assert.strictEqual(identity.verify(alice.publicKey, reaimed, sig), false);
+});
+
+test("garbage in place of a signature is refused, not thrown on", () => {
+  const body = payload();
+  for (const junk of ["", "not-base64!!", Buffer.from("short").toString("base64")]) {
+    assert.strictEqual(identity.verify(alice.publicKey, body, junk), false, junk);
+  }
+  assert.strictEqual(identity.verify("", body, identity.sign(alice.privateKey, body)), false);
+  assert.strictEqual(identity.verify("not-a-key", body, identity.sign(alice.privateKey, body)), false);
+});
+
+test("canonical form does not depend on key order", () => {
+  const one = identity.canonical({ b: 2, a: 1, c: { y: 2, x: 1 } });
+  const two = identity.canonical({ c: { x: 1, y: 2 }, a: 1, b: 2 });
+  assert.strictEqual(one, two);
+});
+
+test("an absent field and an undefined field sign identically", () => {
+  assert.strictEqual(
+    identity.canonical({ a: 1, roomId: undefined }),
+    identity.canonical({ a: 1 })
+  );
+});
+
+test("two devices never share an identity", () => {
+  assert.notStrictEqual(alice.publicKey, mallory.publicKey);
+  assert.notStrictEqual(identity.fingerprint(alice.publicKey), identity.fingerprint(mallory.publicKey));
+});
+
+test("a fingerprint is stable and readable", () => {
+  const first = identity.fingerprint(alice.publicKey);
+  assert.strictEqual(first, identity.fingerprint(alice.publicKey));
+  assert.match(first, /^[0-9A-F]{4}(-[0-9A-F]{4}){3}$/);
+});
+
+test("a message from too far out of step is refused", () => {
+  const now = 1_000_000;
+  assert.strictEqual(identity.withinSkew(now, now), true);
+  assert.strictEqual(identity.withinSkew(now - identity.CLOCK_SKEW_MS + 1, now), true);
+  assert.strictEqual(identity.withinSkew(now - identity.CLOCK_SKEW_MS - 1, now), false);
+  assert.strictEqual(identity.withinSkew(now + identity.CLOCK_SKEW_MS + 1, now), false);
+  assert.strictEqual(identity.withinSkew(NaN, now), false);
+});
+
+
+// -----------------------------------------------------------------------------
+
+const { DeviceRegistry } = require(path.join(ROOT, "deviceRegistry.js"));
+
+console.log("\n-- who is who --");
+
+/*
+ * A signature proves only that the sender holds the key they attached, which
+ * is no obstacle to anyone who generated one a moment ago. Remembering which
+ * key belongs to which device id is what turns that into an identity.
+ */
+
+function registry() {
+  let saved = {};
+  const reg = new DeviceRegistry({
+    read: () => saved,
+    write: (records) => { saved = records; }
+  });
+  reg.saved = () => saved;
+  return reg;
+}
+
+test("an unknown device is recorded on sight", () => {
+  const reg = registry();
+  assert.strictEqual(reg.check("laptop", "key-a"), "first-seen");
+  assert.strictEqual(reg.check("laptop", "key-a"), "known");
+});
+
+test("a device id cannot be claimed by a second key", () => {
+  const reg = registry();
+  reg.check("laptop", "key-a");
+  assert.strictEqual(reg.check("laptop", "key-b"), "mismatch");
+  assert.strictEqual(reg.get("laptop").publicKey, "key-a", "the original key is kept");
+});
+
+test("approval binds a key harder than merely seeing it", () => {
+  const reg = registry();
+  reg.check("laptop", "seen-first");
+  assert.strictEqual(reg.get("laptop").bound, false);
+
+  reg.bind("laptop", "bound-at-approval");
+  assert.strictEqual(reg.get("laptop").bound, true);
+  assert.strictEqual(reg.get("laptop").publicKey, "bound-at-approval");
+  assert.strictEqual(reg.check("laptop", "seen-first"), "mismatch", "the old key stops working");
+});
+
+test("a roster teaches keys for devices never seen", () => {
+  const reg = registry();
+  reg.adopt([{ deviceId: "phone", publicKey: "key-p" }]);
+  assert.strictEqual(reg.check("phone", "key-p"), "known");
+  assert.strictEqual(reg.get("phone").bound, true);
+});
+
+test("a roster cannot overwrite a key this device bound itself", () => {
+  const reg = registry();
+  reg.bind("laptop", "ours");
+  reg.adopt([{ deviceId: "laptop", publicKey: "theirs" }]);
+  assert.strictEqual(reg.get("laptop").publicKey, "ours");
+});
+
+test("a roster does overwrite a key that was only observed", () => {
+  const reg = registry();
+  reg.check("laptop", "observed");
+  reg.adopt([{ deviceId: "laptop", publicKey: "from-owner" }]);
+  assert.strictEqual(reg.get("laptop").publicKey, "from-owner");
+  assert.strictEqual(reg.get("laptop").bound, true);
+});
+
+test("roster entries with no key are skipped rather than clearing one", () => {
+  const reg = registry();
+  reg.bind("laptop", "ours");
+  reg.adopt([{ deviceId: "laptop" }, { deviceId: "", publicKey: "x" }]);
+  assert.strictEqual(reg.get("laptop").publicKey, "ours");
+});
+
+test("empty input is a mismatch, not a silent pass", () => {
+  const reg = registry();
+  assert.strictEqual(reg.check("", "key"), "mismatch");
+  assert.strictEqual(reg.check("laptop", ""), "mismatch");
+});
+
+test("what is learned survives a restart", () => {
+  let saved = {};
+  const storage = { read: () => saved, write: (r) => { saved = r; } };
+  new DeviceRegistry(storage).bind("laptop", "key-a");
+  assert.strictEqual(new DeviceRegistry(storage).check("laptop", "key-b"), "mismatch");
+  assert.strictEqual(new DeviceRegistry(storage).check("laptop", "key-a"), "known");
+});
+
+test("forgetting a device lets it be learned again", () => {
+  const reg = registry();
+  reg.bind("laptop", "key-a");
+  reg.forget("laptop");
+  assert.strictEqual(reg.check("laptop", "key-b"), "first-seen");
+});
+
+
+// -----------------------------------------------------------------------------
+
+console.log("\n-- handing a key to one device --");
+
+/*
+ * The password used to be the key, which made removing somebody a polite
+ * request: they still knew the password, so they still held the key. Content
+ * keys are random and wrapped to a particular device instead, so the owner can
+ * replace one without changing the password — and the device that was removed
+ * has no way to unwrap the replacement.
+ */
+
+const owner = identity.createIdentity();
+const joiner = identity.createIdentity();
+const removed = identity.createIdentity();
+
+test("a content key is 32 bytes and never the same twice", () => {
+  const a = crypto.generateContentKey();
+  const b = crypto.generateContentKey();
+  assert.strictEqual(a.length, 32);
+  assert.notStrictEqual(a.toString("hex"), b.toString("hex"));
+});
+
+test("a wrapped key opens for the device it was addressed to", () => {
+  const ck = crypto.generateContentKey();
+  const env = crypto.wrapKeyFor(ck, owner.boxPrivateKey, joiner.boxPublicKey, "room-1");
+  const out = crypto.unwrapKeyFrom(env, joiner.boxPrivateKey, owner.boxPublicKey, "room-1");
+  assert.strictEqual(out.toString("hex"), ck.toString("hex"));
+});
+
+test("and for nobody else, however well connected", () => {
+  const ck = crypto.generateContentKey();
+  const env = crypto.wrapKeyFor(ck, owner.boxPrivateKey, joiner.boxPublicKey, "room-1");
+  assert.strictEqual(
+    crypto.unwrapKeyFrom(env, removed.boxPrivateKey, owner.boxPublicKey, "room-1"),
+    null
+  );
+});
+
+test("an envelope from one room does not open in another", () => {
+  const ck = crypto.generateContentKey();
+  const env = crypto.wrapKeyFor(ck, owner.boxPrivateKey, joiner.boxPublicKey, "room-1");
+  assert.strictEqual(
+    crypto.unwrapKeyFrom(env, joiner.boxPrivateKey, owner.boxPublicKey, "room-2"),
+    null
+  );
+});
+
+test("knowing the room password does not open a wrapped key", () => {
+  const ck = crypto.generateContentKey();
+  const env = crypto.wrapKeyFor(ck, owner.boxPrivateKey, joiner.boxPublicKey, "room-1");
+  const fromPassword = crypto.deriveRoomKey("the-room-password", crypto.generateSalt());
+  assert.strictEqual(crypto.open(fromPassword, env), null);
+});
+
+test("a re-key leaves the removed device holding nothing useful", () => {
+  const first = crypto.generateContentKey();
+  const toRemoved = crypto.wrapKeyFor(first, owner.boxPrivateKey, removed.boxPublicKey, "room-1");
+  assert.ok(crypto.unwrapKeyFrom(toRemoved, removed.boxPrivateKey, owner.boxPublicKey, "room-1"));
+
+  // The owner removes them and re-wraps a fresh key for everyone who remains.
+  const second = crypto.generateContentKey();
+  const toJoiner = crypto.wrapKeyFor(second, owner.boxPrivateKey, joiner.boxPublicKey, "room-1");
+
+  assert.ok(crypto.unwrapKeyFrom(toJoiner, joiner.boxPrivateKey, owner.boxPublicKey, "room-1"));
+  assert.strictEqual(
+    crypto.unwrapKeyFrom(toJoiner, removed.boxPrivateKey, owner.boxPublicKey, "room-1"),
+    null,
+    "the removed device cannot read the new key"
+  );
+
+  const old = crypto.unwrapKeyFrom(toRemoved, removed.boxPrivateKey, owner.boxPublicKey, "room-1");
+  assert.notStrictEqual(old.toString("hex"), second.toString("hex"), "and its old one is stale");
+});
+
+test("a tampered wrapper is refused rather than half-decoded", () => {
+  const ck = crypto.generateContentKey();
+  const env = crypto.wrapKeyFor(ck, owner.boxPrivateKey, joiner.boxPublicKey, "room-1");
+  const bent = Object.assign({}, env, { tag: Buffer.alloc(16, 1).toString("hex") });
+  assert.strictEqual(
+    crypto.unwrapKeyFrom(bent, joiner.boxPrivateKey, owner.boxPublicKey, "room-1"),
+    null
+  );
+});
+
+test("nonsense in place of an envelope or a key returns null", () => {
+  assert.strictEqual(
+    crypto.unwrapKeyFrom(undefined, joiner.boxPrivateKey, owner.boxPublicKey, "room-1"),
+    null
+  );
+  const ck = crypto.generateContentKey();
+  const env = crypto.wrapKeyFor(ck, owner.boxPrivateKey, joiner.boxPublicKey, "room-1");
+  assert.strictEqual(crypto.unwrapKeyFrom(env, "not-a-key", owner.boxPublicKey, "room-1"), null);
+});
+
 (async () => {
   for (const run of deferred) {
     await run();
