@@ -1196,17 +1196,23 @@ function PhoneSection({
   const phone = state.phone;
   const [qr, setQr] = React.useState<string | null>(null);
 
+  // Pinned to a ref: onQr arrives as a fresh closure every render, and asking
+  // for the code depends only on the address it encodes. Depending on the
+  // function itself would re-render a new QR image on every state tick.
+  const qrRef = React.useRef(onQr);
+  qrRef.current = onQr;
+
   React.useEffect(() => {
     if (!phone.active) {
       setQr(null);
       return;
     }
     let cancelled = false;
-    onQr().then((image) => !cancelled && setQr(image));
+    qrRef.current().then((image) => !cancelled && setQr(image));
     return () => {
       cancelled = true;
     };
-  }, [phone.active, phone.url, onQr]);
+  }, [phone.active, phone.url]);
 
   return (
     <section className="settings__section">

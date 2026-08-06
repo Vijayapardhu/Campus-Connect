@@ -834,13 +834,20 @@ export function ChatPanel({
   const typingSince = React.useRef(0);
   const typingStop = React.useRef<number | undefined>(undefined);
 
+  // Pinned to a ref because the caller passes a fresh closure every render:
+  // depending on it would make stopTyping a new function each time, and the
+  // effect below would then fire its cleanup — retracting "typing…" from
+  // everyone else — while the message was still being written.
+  const typingRef = React.useRef(onTyping);
+  typingRef.current = onTyping;
+
   const stopTyping = React.useCallback(() => {
     window.clearTimeout(typingStop.current);
     if (typingSince.current > 0) {
       typingSince.current = 0;
-      onTyping(false);
+      typingRef.current(false);
     }
-  }, [onTyping]);
+  }, []);
 
   // Leaving the room, or closing the window, should not leave everyone else
   // believing this device is still mid-sentence.
@@ -857,7 +864,7 @@ export function ChatPanel({
     const now = Date.now();
     if (now - typingSince.current > TYPING_PING_MS) {
       typingSince.current = now;
-      onTyping(true);
+      typingRef.current(true);
     }
 
     window.clearTimeout(typingStop.current);

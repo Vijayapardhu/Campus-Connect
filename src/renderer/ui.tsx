@@ -205,27 +205,38 @@ export function Modal({
   footer?: React.ReactNode;
 }) {
   const surfaceRef = React.useRef<HTMLDivElement>(null);
+  // Callers write onClose as a fresh arrow function every render, so depending
+  // on it directly would re-run the effects below every time anything on the
+  // page underneath changed. Pinning it to a ref keeps them mount-only.
+  const closeRef = React.useRef(onClose);
+  closeRef.current = onClose;
 
   React.useEffect(() => {
-    // Escape closes, and focus moves into the dialog so keyboard users are not
-    // left behind on the page underneath.
+    // Escape closes.
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
-        onClose();
+        closeRef.current();
       }
     }
 
     document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, []);
 
-    // Prefer the first field; fall back to a button for dialogs with no input.
+  React.useEffect(() => {
+    /*
+     * Focus moves into the dialog on open so keyboard users are not left behind
+     * on the page underneath. Strictly on open: repeating it would drag the
+     * caret out of whatever field is being filled in and back to the first one,
+     * mid-word, every time a peer or a clipboard update re-rendered the app.
+     */
     const surface = surfaceRef.current;
+    // Prefer the first field; fall back to a button for dialogs with no input.
     const target =
       surface?.querySelector<HTMLElement>('.modal__body input, .modal__body select') ??
       surface?.querySelector<HTMLElement>('.modal__footer button');
     target?.focus();
-
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
