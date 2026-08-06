@@ -1,19 +1,19 @@
 {
   "_comment": "Written by scripts/sync-site-version.js during a release. Edit the script, not this file — a hand-edited value here is overwritten by the next publish.",
-  "tag": "v0.5.0",
-  "version": "0.5.0",
+  "tag": "v0.6.0",
+  "version": "0.6.0",
   "downloadBase": "https://github.com/Vijayapardhu/Clipboard/releases/download",
   "assets": {
     "win": {
-      "file": "CampusConnect-0.5.0-win-x64.exe",
+      "file": "CampusConnect-0.6.0-win-x64.exe",
       "size": "84 MB"
     },
     "mac": {
-      "file": "CampusConnect-0.5.0-mac-universal.dmg",
+      "file": "CampusConnect-0.6.0-mac-universal.dmg",
       "size": "188 MB"
     },
     "linux": {
-      "file": "CampusConnect-0.5.0-linux-x86_64.AppImage",
+      "file": "CampusConnect-0.6.0-linux-x86_64.AppImage",
       "size": "111 MB"
     }
   }
