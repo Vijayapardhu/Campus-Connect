@@ -2,6 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Strips a directly-opened /index.html back to /terms/ — see site/index.html for why. -->
+<script>
+  if (location.pathname.endsWith('/index.html')) {
+    history.replaceState(null, '', location.pathname.slice(0, -10) + location.search + location.hash);
+  }
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Terms and Conditions &mdash; Campus Connect</title>
 <meta name="description" content="Campus Connect is MIT-licensed software you run yourself, provided as is, with no service behind it.">

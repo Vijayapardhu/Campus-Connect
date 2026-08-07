@@ -2,6 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!--
+  GitHub Pages serves this file for both "/" and "/index.html" — it doesn't
+  redirect the second to the first. Left alone, typing or linking the
+  explicit filename would show .html in the bar even though every other
+  path on the site is extensionless. This swaps it out with no navigation
+  and no flash, before the browser has painted anything.
+-->
+<script>
+  if (location.pathname.endsWith('/index.html')) {
+    history.replaceState(null, '', location.pathname.slice(0, -10) + location.search + location.hash);
+  }
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Campus Connect — the campus network, finally useful</title>
 <meta name="description" content="Share your clipboard, send files, chat, call and take over a screen between the machines on your campus WiFi. No account, no server, nothing leaving the network. Free and open source.">

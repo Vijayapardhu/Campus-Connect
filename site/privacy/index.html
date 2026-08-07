@@ -2,6 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Strips a directly-opened /index.html back to /privacy/ — see site/index.html for why. -->
+<script>
+  if (location.pathname.endsWith('/index.html')) {
+    history.replaceState(null, '', location.pathname.slice(0, -10) + location.search + location.hash);
+  }
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Privacy Policy &mdash; Campus Connect</title>
 <meta name="description" content="Campus Connect collects nothing, sends nothing, and has no servers. This policy names the one place anything leaves your machine.">

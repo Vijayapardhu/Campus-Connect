@@ -2,6 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Strips a directly-opened /index.html back to /build/ — see site/index.html for why. -->
+<script>
+  if (location.pathname.endsWith('/index.html')) {
+    history.replaceState(null, '', location.pathname.slice(0, -10) + location.search + location.hash);
+  }
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>How it is built — Campus Connect</title>
 <meta name="description" content="Every module in Campus Connect, what it does, what it is built on and why — with the 43 commits, 19 releases and the things that broke on the way.">
