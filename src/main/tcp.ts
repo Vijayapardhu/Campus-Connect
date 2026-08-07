@@ -68,6 +68,14 @@ export class TcpTransport {
    * same link coming back — so each address is only ever announced once.
    */
   private announced = new Set<string>();
+  /**
+   * Hosts explicitly told to stay disconnected — a blocked device, chiefly.
+   * `dial()` retries an address on its own once a connection has ever
+   * existed, with no reference to whether `connect()`'s usual checks would
+   * still allow it; without this a socket destroyed here would simply be
+   * redialled moments later by that retry loop.
+   */
+  private forgotten = new Set<string>();
   private stopped = false;
 
   constructor(private readonly options: TcpTransportOptions) {}
@@ -104,10 +112,21 @@ export class TcpTransport {
 
   /** Opens a connection to a peer, or leaves the existing one alone. */
   connect(host: string): void {
-    if (this.stopped || this.connections.has(host) || !this.isDialable(host)) {
+    if (this.stopped || this.connections.has(host) || this.forgotten.has(host) || !this.isDialable(host)) {
       return;
     }
     this.dial(host, RECONNECT_DELAY_MS);
+  }
+
+  /** Closes any live connection to this host and stops it being redialled. */
+  forget(host: string): void {
+    this.forgotten.add(host);
+    this.connections.get(host)?.socket.destroy();
+  }
+
+  /** Reverses `forget` — the host may be connected to again. */
+  allow(host: string): void {
+    this.forgotten.delete(host);
   }
 
   /**
@@ -169,8 +188,11 @@ export class TcpTransport {
   private dial(host: string, delay: number): void {
     // A retry can fall due after the peer has connected to us in the meantime,
     // or after the transport has been shut down entirely. Neither is a reason
-    // to throw away a working connection and start again.
-    if (this.stopped || this.isConnected(host)) {
+    // to throw away a working connection and start again. Nor is a host that
+    // has been explicitly told to stay disconnected — this runs on a timer
+    // set well before `forget` could have been called, so it has to check
+    // again now rather than trust whatever was true when it was scheduled.
+    if (this.stopped || this.isConnected(host) || this.forgotten.has(host)) {
       return;
     }
 

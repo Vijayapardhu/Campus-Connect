@@ -47,6 +47,8 @@ export type QuickPasteOptions = {
 export class QuickPaste {
   private window: BrowserWindow | null = null;
   private registered = '';
+  /** The queued keystroke from `pasteAndHide`, cancelled if the overlay reopens first. */
+  private pasteTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly options: QuickPasteOptions) {}
 
@@ -160,6 +162,19 @@ export class QuickPaste {
   }
 
   show(): void {
+    /*
+     * Reopening cancels a paste keystroke still queued from a moment ago.
+     * `pasteAndHide` hides immediately but waits `FOCUS_RETURN_MS` before
+     * actually pressing paste, so the hotkey fired twice in quick succession
+     * — a double-tap — would otherwise reopen this overlay just in time for
+     * that stale keystroke to land in its own search box instead of wherever
+     * it was originally meant for.
+     */
+    if (this.pasteTimer) {
+      clearTimeout(this.pasteTimer);
+      this.pasteTimer = null;
+    }
+
     const window = this.ensureWindow();
 
     /*
@@ -226,7 +241,11 @@ export class QuickPaste {
       return;
     }
 
-    setTimeout(() => {
+    if (this.pasteTimer) {
+      clearTimeout(this.pasteTimer);
+    }
+    this.pasteTimer = setTimeout(() => {
+      this.pasteTimer = null;
       try {
         paste();
       } catch (error) {

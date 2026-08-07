@@ -12,7 +12,6 @@ import {
   nativeImage,
   nativeTheme,
   safeStorage,
-  screen,
   shell
 } from 'electron';
 import log from 'electron-log';
@@ -49,11 +48,14 @@ import { HistoryManager } from './historyManager';
 import { CallManager } from './callManager';
 import { SnippetManager } from './snippetManager';
 import { QuickPaste } from './quickPaste';
+import { currentWindowState, IS_MAC, SessionWindow } from './sessionWindow';
+import { HostIndicator } from './hostIndicator';
 import { PhoneServer, PHONE_PORT, type PhoneTls } from './phoneServer';
 import { clearPhoneCertificate, ensurePhoneCertificate } from './phoneCert';
 import type { PhonePairing } from './phoneSession';
 import { RemoteSessionManager } from './remoteSession';
 import { FileShareManager } from './fileShare';
+import { DirectMessageManager } from './directMessage';
 import { createDisplayInjector, getPasteAction, getRemoteCapabilities } from './remoteInput';
 import { parseRemoteInput, type Injector } from './remoteControl';
 import { migrateUserData } from './migrate';
@@ -91,6 +93,7 @@ import {
   type CallMode,
   type CallRinging,
   type CallSignal,
+  type CallWindowIntent,
   type ChatMessage,
   type ChatReplyTo,
   type ClipboardHistoryEntry,
@@ -111,6 +114,9 @@ import {
   type RoomUpdate,
   type StorageStats,
   type DeepLink,
+  type DirectMessage,
+  type DirectMessageSignal,
+  type DmThreadSummary,
   type UpdateStatus,
   type WindowState,
   type WireMessage
@@ -140,6 +146,8 @@ type AppStore = {
   deviceKeys: Record<string, DeviceKeyRecord>;
   clipboardHistory: ClipboardHistoryEntry[];
   chatHistory: ChatMessage[];
+  /** Direct 1:1 messages, device-to-device — not part of any room's history. */
+  directMessages: DirectMessage[];
   blocked: BlockedDevice[];
   snippets: Snippet[];
   phonePairings: PhonePairing[];
@@ -276,7 +284,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   startCallsMuted: false,
   quickPasteShortcut: 'Control+Shift+V',
   quickPasteAutoPaste: true,
-  phoneSecure: true,
   hasOnboarded: false,
   launchAtLogin: false,
   launchMinimized: true,
@@ -314,6 +321,7 @@ const store = new Store<AppStore>({
     deviceKeys: {},
     clipboardHistory: [],
     chatHistory: [],
+    directMessages: [],
     blocked: [],
     snippets: [],
     phonePairings: []
@@ -570,7 +578,38 @@ const fileShares = new FileShareManager({
   }
 });
 
+/**
+ * Direct 1:1 messages. Same reach as file sharing — device-to-device, no room
+ * required — and the same wire mechanics, minus the request/accept step: a
+ * message has nothing to consent to before it arrives, the same as room chat.
+ */
+const directMessages = new DirectMessageManager({
+  read: () => read('directMessages'),
+  write: (messages) => write('directMessages', messages)
+});
+
+function sendDirectMessage(peerId: string, signal: DirectMessageSignal): boolean {
+  const host = getPeerHost(peerId);
+  if (!host) {
+    return false;
+  }
+  const message = baseMessage('direct-message');
+  // Addressed like any other targeted signal, so a stale `peers` entry —
+  // the address DHCP has since handed to a different device — cannot
+  // deliver this to whoever now answers at that host instead of the one
+  // asked for.
+  message.targetDeviceId = peerId;
+  message.directMessage = signal;
+  return sendUdpMessage(message, host);
+}
+
 let mainWindow: BrowserWindow | null = null;
+/**
+ * Every window that should hear about `emit()` — the main window, plus a call
+ * or remote-session window for as long as one exists. A hardcoded `mainWindow`
+ * here is what kept a second window from ever learning a call had started.
+ */
+const interestedWindows = new Set<BrowserWindow>();
 let udpSocket: dgram.Socket | null = null;
 let announceTimer: NodeJS.Timeout | null = null;
 let clipboardPollTimer: NodeJS.Timeout | null = null;
@@ -591,6 +630,14 @@ const diagnostics = {
   tcpFramesReceived: 0
 };
 let quickPaste: QuickPaste | null = null;
+/** The call window — created the first time a call starts or rings, reused after. */
+let callWindow: SessionWindow | null = null;
+/** The controller's window onto a remote session — the host stays in the main window. */
+let remoteWindow: SessionWindow | null = null;
+/** The floating "being controlled" reminder, shown for the duration of a hosted session. */
+let hostIndicator: HostIndicator | null = null;
+/** What the call window should do the moment it has finished loading. */
+let pendingCallIntent: CallWindowIntent | null = null;
 let tray: Tray | null = null;
 let lastLocalClipboardHash = '';
 let lastRemoteClipboardHash = '';
@@ -662,11 +709,16 @@ function getAppState(): AppState {
     invites: listReceivedInvites(),
     invitedDeviceIds: pendingInviteIds(),
     activeCalls: callManager.list(),
+    // The oldest unanswered ring, if any — see `CallWindowIntent`'s comment for
+    // why the call window needs to be able to read this rather than only wait
+    // for the event.
+    incomingCall: [...ringing.values()].sort((a, b) => a.at - b.at)[0],
     blocked: [...read('blocked')].sort((a, b) => b.blockedAt - a.blockedAt),
     snippets: snippetManager.list(),
     phone: phoneAccessState(),
     remote: remoteSessions.current ?? undefined,
     fileShare: fileShares.state,
+    dmThreads: directMessages.listThreads(),
     remoteCapabilities: getRemoteCapabilities(),
     storage: historyManager.stats(),
     update: updater?.getStatus() ?? { state: 'idle', currentVersion: app.getVersion() },
@@ -701,8 +753,18 @@ function sendStateToRenderer() {
  * expires on its own — a ring, a transfer request, a join asking to be let in.
  */
 function emit(channel: string, payload?: unknown): void {
-  mainWindow?.webContents.send(channel, payload);
+  for (const window of interestedWindows) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(channel, payload);
+    }
+  }
   phoneServer?.broadcast(channel, payload);
+}
+
+/** Joins the broadcast list, until the window closes on its own. */
+function registerWindowForEvents(window: BrowserWindow): void {
+  interestedWindows.add(window);
+  window.on('closed', () => interestedWindows.delete(window));
 }
 
 function notifyHistoryChanged(roomId: string) {
@@ -2076,6 +2138,10 @@ function handleInviteAccept(message: WireMessage) {
       requestedAt: Date.now()
     } satisfies JoinRequest);
     sendStatus(`${message.deviceName} accepted your invitation to ${room.name}`, 'warning');
+    // The same significance as somebody requesting to join outright — it is
+    // still waiting on your approval, and that's easy to miss if the window
+    // isn't the thing on screen right now.
+    notify('Someone wants to join', `${message.deviceName} accepted your invitation to ${room.name}`);
   }
 
   sendStateToRenderer();
@@ -2167,6 +2233,55 @@ let localCall: { callId: string; roomId: string; mode: CallMode } | null = null;
 /** Whether anyone else has ever been in it, which is what "nobody answered" means. */
 let localCallHadCompany = false;
 
+function ensureCallWindow(): SessionWindow {
+  if (!callWindow) {
+    callWindow = new SessionWindow(
+      {
+        kind: 'call',
+        title: 'Call — Campus Connect',
+        width: 960,
+        height: 640,
+        minWidth: 480,
+        minHeight: 360,
+        preloadPath: path.join(__dirname, 'preload.js'),
+        devServerUrl: rendererDevServerUrl(),
+        onClosedByUser: handleCallWindowClosedByUser
+      },
+      registerWindowForEvents
+    );
+  }
+  return callWindow;
+}
+
+/**
+ * Opens the call window, creating it on first use. `intent` is left for the
+ * window to pull for itself once it has loaded — pushing it now would race a
+ * window that has not finished its first paint yet and simply lose the
+ * message, the same problem `pendingDeepLink` exists to avoid.
+ */
+function openCallWindow(intent: CallWindowIntent | null): void {
+  if (intent) {
+    pendingCallIntent = intent;
+  }
+  ensureCallWindow().open();
+}
+
+/**
+ * Closing the call window is how a call ends here, the same as the hang-up
+ * button in TeamViewer or AnyDesk's own call window. A ring nobody answered
+ * yet counts as a decline, so the caller is not left listening to nothing.
+ */
+function handleCallWindowClosedByUser(): void {
+  if (localCall) {
+    endLocalCall(true);
+  }
+
+  for (const [callId, ring] of Array.from(ringing)) {
+    sendCallSignal(ring.roomId, { kind: 'decline', callId });
+    clearRing(callId);
+  }
+}
+
 function callSignalTarget(signal: CallSignal): string | undefined {
   return 'to' in signal ? signal.to : undefined;
 }
@@ -2220,6 +2335,10 @@ function clearRing(callId: string): void {
   if (ringing.delete(callId)) {
     emit('call:ring-cancelled', callId);
   }
+  // Nothing left for a window that opened only to show this ring.
+  if (!localCall && ringing.size === 0) {
+    callWindow?.closeIfOpen();
+  }
 }
 
 /** Ends this device's participation, locally and to everyone else. */
@@ -2237,6 +2356,10 @@ function endLocalCall(announce: boolean): void {
   callManager.leave(call.callId, deviceId());
   emit('call:ended', call.callId);
   sendStateToRenderer();
+  // Whatever the window was open to show, it is over.
+  if (ringing.size === 0) {
+    callWindow?.closeIfOpen();
+  }
 }
 
 /**
@@ -2296,11 +2419,20 @@ function handleCallRing(message: WireMessage, room: RoomInfo, signal: CallSignal
     mode: signal.mode,
     fromDeviceId: message.deviceId,
     fromDeviceName: message.deviceName,
-    at: Date.now()
+    at: Date.now(),
+    // `to` only ever survives on the wire as far as this device — the generic
+    // addressing filter in `handleCall` already dropped it for anyone else it
+    // was not meant for, so its mere presence here means "just you."
+    direct: Boolean(signal.to)
   };
 
   const wasRinging = ringing.has(signal.callId);
   ringing.set(signal.callId, ring);
+  // Opened before the state broadcast below, the same way TeamViewer or
+  // AnyDesk raise a window for an incoming call — not left for the person to
+  // go find a tab for. Ringing without answering closes it again; see
+  // `clearRing`.
+  openCallWindow(null);
   sendStateToRenderer();
 
   if (wasRinging) {
@@ -2312,7 +2444,10 @@ function handleCallRing(message: WireMessage, room: RoomInfo, signal: CallSignal
   sendStatus(`${message.deviceName} is calling ${room.name}`, 'warning');
   // A call is the shortest-lived thing this app raises: unanswered, it is gone
   // in seconds. It interrupts even when the window has focus.
-  notify(`Incoming ${kind}`, `${message.deviceName} is calling ${room.name}`, { urgent: true });
+  notify(`Incoming ${kind}`, `${message.deviceName} is calling ${room.name}`, {
+    urgent: true,
+    onClick: () => callWindow?.open()
+  });
 }
 
 function handleCall(message: WireMessage): void {
@@ -2430,6 +2565,51 @@ let remoteDisplayId = '';
 const REMOTE_PANIC_SHORTCUT = 'Control+Alt+Shift+X';
 
 /**
+ * The controller's own window onto somebody else's screen. Never used by the
+ * host side of a session — that stays in the main window, since there is
+ * nothing to view locally beyond the status bar it already shows.
+ */
+function ensureRemoteWindow(): SessionWindow {
+  if (!remoteWindow) {
+    remoteWindow = new SessionWindow(
+      {
+        kind: 'remote',
+        title: 'Remote desktop — Campus Connect',
+        width: 1280,
+        height: 800,
+        minWidth: 480,
+        minHeight: 360,
+        preloadPath: path.join(__dirname, 'preload.js'),
+        devServerUrl: rendererDevServerUrl(),
+        // Disconnecting is ending the session, the same as closing the window
+        // in TeamViewer or AnyDesk.
+        onClosedByUser: () => endRemoteSession('You disconnected.', true)
+      },
+      registerWindowForEvents
+    );
+  }
+  return remoteWindow;
+}
+
+/**
+ * The floating reminder that this machine is being driven — see
+ * `hostIndicator.ts`. Built lazily, the same as the call and remote windows,
+ * since most sessions never happen.
+ */
+function ensureHostIndicator(): HostIndicator {
+  if (!hostIndicator) {
+    hostIndicator = new HostIndicator(
+      {
+        preloadPath: path.join(__dirname, 'preload.js'),
+        devServerUrl: rendererDevServerUrl()
+      },
+      registerWindowForEvents
+    );
+  }
+  return hostIndicator;
+}
+
+/**
  * The display behind a `desktopCapturer` source id — a fallback only.
  *
  * The id looks like `screen:0:0`, whose middle field is often, but not always,
@@ -2506,6 +2686,13 @@ function endRemoteSession(reason: string, announce: boolean): void {
 
   if (reason) {
     sendStatus(reason, 'warning');
+  }
+
+  // The host stays in the main window and never opened this one.
+  if (session.role === 'controller') {
+    remoteWindow?.closeIfOpen();
+  } else {
+    hostIndicator?.hide();
   }
 }
 
@@ -2634,6 +2821,10 @@ function handleRemote(message: WireMessage): void {
         return;
       }
 
+      // Opened the same way the call window is: before the broadcast, so the
+      // window exists to register for it, but not depended on to receive it —
+      // the window reads `state.remote` for itself once it has loaded.
+      ensureRemoteWindow().open();
       emit('remote:started', remoteSessions.current);
       sendStateToRenderer();
       sendStatus(
@@ -2735,6 +2926,35 @@ function handleFileXfer(message: WireMessage): void {
     sendStatus(`${message.deviceName} wants to send you files`, 'warning');
     notify('Incoming files', `${message.deviceName} wants to send you files.`, { urgent: true });
   }
+}
+
+/**
+ * A direct 1:1 message arriving off the wire. Same trust bar as file sharing:
+ * no room in common required, only the universal `isBlocked()` gate already
+ * applied to every inbound message before this is ever reached.
+ */
+function handleDirectMessage(message: WireMessage): void {
+  // Addressed, like any other targeted signal — a message meant for a
+  // different device that happens to now answer at the sender's stale
+  // record of this one's address is not ours to read.
+  if (message.targetDeviceId !== deviceId()) {
+    return;
+  }
+
+  const signal = message.directMessage;
+  if (!signal || signal.kind !== 'message' || typeof signal.id !== 'string') {
+    return;
+  }
+
+  const stored = directMessages.receive(message.deviceId, message.deviceName, signal);
+  if (!stored) {
+    return; // Already have it — a retransmit, not a new message.
+  }
+
+  emit('dm:message', stored);
+  sendStateToRenderer();
+  sendStatus(`${message.deviceName} sent you a message`, 'info');
+  notify(message.deviceName, stored.content);
 }
 
 /**
@@ -2854,6 +3074,8 @@ function handleWireMessage(message: WireMessage, host: string) {
       return handleRemote(message);
     case 'file-xfer':
       return handleFileXfer(message);
+    case 'direct-message':
+      return handleDirectMessage(message);
     default:
       return;
   }
@@ -3388,46 +3610,6 @@ function deliverDeepLink(link: DeepLink | null): void {
   pendingDeepLink = link;
 }
 
-/**
- * Whether this platform keeps its own window controls.
- *
- * Only macOS does. Windows and Linux hand the whole frame over, which is what
- * lets the application own its top edge rather than sitting under a strip of
- * system chrome in the wrong colour.
- */
-const IS_MAC = process.platform === 'darwin';
-
-function currentWindowState(window: BrowserWindow): WindowState {
-  return {
-    maximized: window.isMaximized(),
-    fullScreen: window.isFullScreen(),
-    // The renderer decides whether to draw controls at all from this, so it is
-    // reported rather than guessed at from a user-agent string.
-    platform: IS_MAC ? 'darwin' : process.platform === 'win32' ? 'win32' : 'linux',
-    topInset: maximizedTopInset(window)
-  };
-}
-
-/**
- * How far a maximised window reaches above the usable screen.
- *
- * Windows grows a maximised window by the width of its invisible resize border
- * on every side. With a frame that is unnoticeable; without one it quietly
- * clips the top of the application — including part of the window controls.
- *
- * Measured against the display's work area rather than assumed to be 8px,
- * because it scales with DPI and differs per monitor.
- */
-function maximizedTopInset(window: BrowserWindow): number {
-  if (!window.isMaximized() || window.isFullScreen()) {
-    return 0;
-  }
-
-  const bounds = window.getBounds();
-  const { workArea } = screen.getDisplayMatching(bounds);
-  return Math.max(0, Math.min(16, workArea.y - bounds.y));
-}
-
 function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   const window = new BrowserWindow({
     show,
@@ -3514,6 +3696,8 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
       mainWindow = null;
     }
   });
+
+  registerWindowForEvents(window);
 
   return window;
 }
@@ -3714,10 +3898,17 @@ app.on('before-quit', () => {
   endRemoteSession('', true);
   endLocalCall(true);
   historyManager.flush();
+  directMessages.flush();
   persist('peers');
   stopUdpService();
   quickPaste?.destroy();
   quickPaste = null;
+  callWindow?.destroy();
+  callWindow = null;
+  remoteWindow?.destroy();
+  remoteWindow = null;
+  hostIndicator?.destroy();
+  hostIndicator = null;
   tray?.destroy();
   tray = null;
   log.info('Shutting down Campus Connect');
@@ -3745,23 +3936,6 @@ function updateSettings(patch: Partial<AppSettings>): AppState {
   }
   if (patch.launchAtLogin !== undefined || patch.launchMinimized !== undefined) {
     applyLaunchSettings();
-  }
-  if (patch.phoneSecure !== undefined && phoneServer?.running) {
-    /*
-     * The transport is decided when the server starts, so changing it while one
-     * is running did nothing at all until somebody stopped and started it by
-     * hand. Restarting here is also what makes the change honest: every phone
-     * has to pair again, because the origin it trusted no longer exists.
-     */
-    phoneServer.stop();
-    void startPhoneAccess().then((result) => {
-      sendStatus(
-        result.ok
-          ? `Phone access restarted ${next.phoneSecure ? 'encrypted' : 'unencrypted'}. Your phones need to scan the code again.`
-          : result.message,
-        result.ok ? 'warning' : 'error'
-      );
-    });
   }
   if (patch.quickPasteShortcut !== undefined) {
     const problem = quickPaste?.setShortcut(next.quickPasteShortcut) ?? '';
@@ -4781,14 +4955,14 @@ function phoneAccessState(): PhoneAccess {
 
   return {
     active,
-    url: active ? `http://${getLocalIpAddress()}:${PHONE_PORT}` : '',
+    url: active ? `https://${getLocalIpAddress()}:${PHONE_PORT}` : '',
     /*
      * The pairing key is deliberately not exposed as text anywhere. It only ever
      * leaves this process inside the QR image below, which is what makes
      * "scanning is the only way in" true rather than merely encouraged.
      */
     pairUrl: active
-      ? `${phoneServer?.isSecure ? 'https' : 'http'}://${getLocalIpAddress()}:${PHONE_PORT}/?k=${sessions?.currentKey ?? ''}`
+      ? `https://${getLocalIpAddress()}:${PHONE_PORT}/?k=${sessions?.currentKey ?? ''}`
       : '',
     clients: sessions?.list() ?? [],
     lockedUntil: sessions?.lockedOutUntil ?? 0
@@ -4849,40 +5023,35 @@ async function startPhoneAccess(): Promise<ActionResult> {
    * browser will hand it a microphone — and it stops the phone's token and every
    * message it reads crossing the WiFi in clear text. Issued for the addresses
    * this machine actually answers on, since a browser checks those and rejects
-   * anything else outright.
+   * anything else outright. Always done now — there is no plain-HTTP path left
+   * to fall back to.
    */
-  let tls: PhoneTls | undefined;
-  if (getSettings().phoneSecure) {
-    try {
-      /*
-       * Every address this machine answers on, not just the preferred one.
-       * A laptop on WiFi and Ethernet at once has two, and a phone that
-       * reaches it by the other gets a certificate that does not name the
-       * address it dialled — which browsers reject outright.
-       */
-      const addresses = currentInterfaces()
-        .map((entry) => entry.address)
-        .filter((address) => address && !address.includes(':'));
-      const certificate = await ensurePhoneCertificate(app.getPath('userData'), [
-        getLocalIpAddress(),
-        ...addresses
-      ]);
-      tls = { key: certificate.key, cert: certificate.cert };
-    } catch (error) {
-      log.warn(`Could not prepare the phone certificate: ${(error as Error).message}`);
-      return fail('A certificate for phone access could not be created, so it was not started.');
-    }
+  let tls: PhoneTls;
+  try {
+    /*
+     * Every address this machine answers on, not just the preferred one.
+     * A laptop on WiFi and Ethernet at once has two, and a phone that
+     * reaches it by the other gets a certificate that does not name the
+     * address it dialled — which browsers reject outright.
+     */
+    const addresses = currentInterfaces()
+      .map((entry) => entry.address)
+      .filter((address) => address && !address.includes(':'));
+    const certificate = await ensurePhoneCertificate(app.getPath('userData'), [
+      getLocalIpAddress(),
+      ...addresses
+    ]);
+    tls = { key: certificate.key, cert: certificate.cert };
+  } catch (error) {
+    log.warn(`Could not prepare the phone certificate: ${(error as Error).message}`);
+    return fail('A certificate for phone access could not be created, so it was not started.');
   }
 
   phoneServer.start(tls);
   phoneServer.sessions.open();
   sendStateToRenderer();
 
-  return ok(
-    tls
-      ? 'Phone access is on. Scan the code, then accept the certificate warning once.'
-      : 'Phone access is on. Scan the code with your phone.'
-  );
+  return ok('Phone access is on. Scan the code, then accept the certificate warning once.');
 }
 
 handle('phone:start', (): Promise<ActionResult> => startPhoneAccess());
@@ -5218,6 +5387,7 @@ handle(
 
     emit('remote:started', remoteSessions.current);
     sendStateToRenderer();
+    ensureHostIndicator().show();
 
     return ok(
       `${request.fromDeviceName} can now ${effectiveGrant === 'control' ? 'see and control' : 'see'} ${screenLabel || 'your screen'}.${note}`
@@ -5472,6 +5642,60 @@ handle('files:open-folder', (): void => {
   });
 });
 
+// --- direct message IPC -------------------------------------------------------
+
+/**
+ * Sends a direct message. Same reach as file sharing: any device currently
+ * visible on the network, no room in common required — the trust bar is the
+ * one every inbound message already crosses (not blocked, signature verifies).
+ */
+handle('dm:send', (_event, peerId: string, peerName: string, content: string): ActionResult => {
+  const offline = requireOnline();
+  if (offline) {
+    return offline;
+  }
+  if (peerId === deviceId()) {
+    return fail('That is this device.');
+  }
+  /*
+   * An explicit gate here, not just the inbound one every received message
+   * already crosses. Today a blocked device is also purged from `peers`, so
+   * `getPeerHost` below would fail this on its own — but that is a side
+   * effect of `privacy:block`'s cleanup, not a guard this handler owns, and
+   * nothing should have to remember that connection exists to stay safe.
+   */
+  if (isBlocked(peerId)) {
+    return fail(`${peerName} is blocked.`);
+  }
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return fail('There is nothing to send.');
+  }
+  // Checked before storing, not after — a message nothing could be reached to
+  // deliver should not sit in the thread looking sent.
+  if (!getPeerHost(peerId)) {
+    return fail(`${peerName} is not currently visible on the network.`);
+  }
+
+  const stored = directMessages.send(peerId, peerName, trimmed);
+  sendDirectMessage(peerId, { kind: 'message', id: stored.id, content: trimmed, sentAt: stored.sentAt });
+  // Pushed back to this device's own window the same way a received message
+  // is — the open thread, if this is the peer it belongs to, updates itself
+  // rather than the renderer needing a separate local-echo path.
+  emit('dm:message', stored);
+  sendStateToRenderer();
+  return { ok: true, message: 'Sent.' };
+});
+
+handle('dm:get-thread', (_event, peerId: string): DirectMessage[] => {
+  return directMessages.getThread(peerId);
+});
+
+handle('dm:mark-read', (_event, peerId: string): void => {
+  directMessages.markRead(peerId);
+  sendStateToRenderer();
+});
+
 // --- blocking IPC ------------------------------------------------------------
 
 /**
@@ -5501,7 +5725,7 @@ handle('privacy:block', (_event, targetDeviceId: string, name: string): ActionRe
   const deviceName = (name || known?.name || 'Unknown device').trim();
 
   write('blocked', [
-    { deviceId: targetDeviceId, deviceName, blockedAt: Date.now() },
+    { deviceId: targetDeviceId, deviceName, blockedAt: Date.now(), lastHost: known?.host },
     ...read('blocked').filter((entry) => entry.deviceId !== targetDeviceId)
   ]);
   loadBlocked();
@@ -5542,6 +5766,11 @@ handle('privacy:block', (_event, targetDeviceId: string, name: string): ActionRe
     read('peers').filter((peer) => peer.id !== targetDeviceId)
   );
   roomManager.clearAdverts();
+  // A block that left an existing direct link open would still be leaking
+  // keepalive traffic to a device this is meant to stop dealing with entirely.
+  if (known?.host) {
+    tcp?.forget(known.host);
+  }
 
   sendStateToRenderer();
   return ok(
@@ -5562,6 +5791,13 @@ handle('privacy:unblock', (_event, targetDeviceId: string): ActionResult => {
     read('blocked').filter((candidate) => candidate.deviceId !== targetDeviceId)
   );
   loadBlocked();
+  // Read from the blocked entry, not `peers` — blocking already removed it
+  // from there. The address may be stale by now (DHCP), but a device at a
+  // genuinely new one was never forgotten in the first place; this only
+  // undoes the forget that was actually done.
+  if (entry.lastHost) {
+    tcp?.allow(entry.lastHost);
+  }
   sendStateToRenderer();
 
   return ok(
@@ -5578,35 +5814,65 @@ handle('privacy:unblock', (_event, targetDeviceId: string): ActionResult => {
  * an approved member of.
  */
 
-handle('call:start', (_event, roomId: string, mode: CallMode): CallStartResult => {
-  const room = requireWritableRoom(roomId);
-  if (isActionResult(room)) {
-    return room;
+handle(
+  'call:start',
+  (_event, roomId: string, mode: CallMode, targetDeviceId?: string): CallStartResult => {
+    const room = requireWritableRoom(roomId);
+    if (isActionResult(room)) {
+      return room;
+    }
+
+    if (localCall) {
+      return fail('You are already on a call. Leave it before starting another.');
+    }
+
+    /*
+     * A call already live in this room is joined, not duplicated — otherwise
+     * the room ends up split across two independent calls, each unaware the
+     * other exists. The command palette already steers around this in the
+     * renderer; this is the same rule enforced at the one place a call can
+     * actually be minted, so nothing upstream of it has to get it right too.
+     * Applies just the same to a direct call — once placed it is an ordinary
+     * room call, so it is bound by the same one-call-per-room rule.
+     */
+    const roomCall = callManager.getRoomCall(roomId);
+    if (roomCall) {
+      return fail(`${room.name} already has a call going — join it instead of starting another.`);
+    }
+
+    if (targetDeviceId) {
+      if (targetDeviceId === deviceId()) {
+        return fail('That is this device.');
+      }
+      if (!roomManager.isAcceptedMember(roomId, targetDeviceId)) {
+        return fail('That device is not a member of this room.');
+      }
+    } else {
+      const others = roomManager.getMembers(roomId, 'accepted').filter((m) => m.deviceId !== deviceId());
+      if (others.length === 0) {
+        return fail(`Nobody else is in ${room.name} yet, so there is no one to call.`);
+      }
+    }
+
+    const callId = randomUUID();
+    localCall = { callId, roomId, mode };
+    localCallHadCompany = false;
+    callManager.join(callId, roomId, mode, deviceId(), deviceName());
+
+    const ringSignal: CallSignal = targetDeviceId
+      ? { kind: 'ring', callId, mode, to: targetDeviceId }
+      : { kind: 'ring', callId, mode };
+
+    if (!sendCallSignal(roomId, ringSignal)) {
+      localCall = null;
+      callManager.leave(callId, deviceId());
+      return fail('The call could not be placed — nothing on this network could be reached.');
+    }
+
+    sendStateToRenderer();
+    return { ok: true, message: `Calling ${room.name}…`, callId, roomId, mode };
   }
-
-  if (localCall) {
-    return fail('You are already on a call. Leave it before starting another.');
-  }
-
-  const others = roomManager.getMembers(roomId, 'accepted').filter((m) => m.deviceId !== deviceId());
-  if (others.length === 0) {
-    return fail(`Nobody else is in ${room.name} yet, so there is no one to call.`);
-  }
-
-  const callId = randomUUID();
-  localCall = { callId, roomId, mode };
-  localCallHadCompany = false;
-  callManager.join(callId, roomId, mode, deviceId(), deviceName());
-
-  if (!sendCallSignal(roomId, { kind: 'ring', callId, mode })) {
-    localCall = null;
-    callManager.leave(callId, deviceId());
-    return fail('The call could not be placed — nothing on this network could be reached.');
-  }
-
-  sendStateToRenderer();
-  return { ok: true, message: `Calling ${room.name}…`, callId, roomId, mode };
-});
+);
 
 /** Answers a ring, or joins a call already under way in a room. */
 handle('call:join', (_event, callId: string): CallStartResult => {
@@ -5703,6 +5969,21 @@ handle('call:screen-sources', async (): Promise<ScreenSource[]> => {
       thumbnail: source.thumbnail.toDataURL(),
       displayId: source.id.startsWith('screen:') ? source.display_id : ''
     }));
+});
+
+/**
+ * Opens the call window for a call this device is placing or joining by hand
+ * — ringing already opens it on its own, in `handleCallRing`.
+ */
+handle('call-window:open', (_event, intent: CallWindowIntent): void => {
+  openCallWindow(intent);
+});
+
+/** The call window's one-time pull of what it was opened to do. */
+handle('call-window:take-intent', (): CallWindowIntent | null => {
+  const intent = pendingCallIntent;
+  pendingCallIntent = null;
+  return intent;
 });
 
 /**
@@ -5826,6 +6107,7 @@ handle('update:install', (): ActionResult => {
    */
   isQuiting = true;
   historyManager.flush();
+  directMessages.flush();
   persist('peers');
 
   if (!updater?.installNow()) {

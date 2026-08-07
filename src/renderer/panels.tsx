@@ -29,6 +29,7 @@ import {
   MonitorIcon,
   PaperclipIcon,
   PencilIcon,
+  PhoneIcon,
   PinIcon,
   QrIcon,
   ReplyIcon,
@@ -1126,6 +1127,9 @@ export function MembersPanel({
   onReject,
   onRemove,
   onBlock,
+  onCallRequest,
+  canCall,
+  onMessageRequest,
   onRemoteRequest,
   canRemote,
   onEdit,
@@ -1147,6 +1151,12 @@ export function MembersPanel({
   onRemove: (memberId: string) => void;
   /** Refuses this device everywhere, not just in this room. */
   onBlock: (memberId: string, memberName: string) => void;
+  /** Rings that one member directly instead of the whole room. */
+  onCallRequest: (memberId: string) => void;
+  /** True wherever a call can actually be placed — a phone included. */
+  canCall: boolean;
+  /** Opens a private thread with that one member — no room involved. */
+  onMessageRequest: (memberId: string, memberName: string) => void;
   /** Asks that device for its screen. They still have to allow it. */
   onRemoteRequest: (memberId: string, memberName: string) => void;
   /** False on a phone: there is no way to display somebody's desktop here. */
@@ -1296,21 +1306,51 @@ export function MembersPanel({
               </div>
               <div className="member__meta">Joined {relativeTime(member.joinedAt)}</div>
             </div>
-            {member.deviceId !== deviceId && canRemote && (
+            {member.deviceId !== deviceId && (canCall || canRemote) && (
               <div className="member__actions">
+                {/* Rings this one member directly rather than the whole room —
+                    otherwise identical to a room call once it is answered.
+                    Gated on media access alone, not `canRemote` — a phone can
+                    place this the same way it can a room call. */}
+                {canCall && (
+                  <Button
+                    size="sm"
+                    onClick={() => onCallRequest(member.deviceId)}
+                    title={`Call ${member.deviceName} directly`}
+                  >
+                    <PhoneIcon size={14} />
+                    Call
+                  </Button>
+                )}
+                {/* A private thread with this one member — no room involved.
+                    Native only, the same as `dmSend` itself. */}
+                {canRemote && (
+                  <Button
+                    size="sm"
+                    onClick={() => onMessageRequest(member.deviceId, member.deviceName)}
+                    title={`Message ${member.deviceName} directly`}
+                  >
+                    <ChatIcon size={14} />
+                    Message
+                  </Button>
+                )}
                 {/* Asking is always allowed; it is answering that is guarded,
                     and that happens on the other machine. */}
-                <Button
-                  size="sm"
-                  onClick={() => onRemoteRequest(member.deviceId, member.deviceName)}
-                  title={`Ask ${member.deviceName} to share their screen`}
-                >
-                  <MonitorIcon size={14} />
-                  Screen
-                </Button>
+                {canRemote && (
+                  <Button
+                    size="sm"
+                    onClick={() => onRemoteRequest(member.deviceId, member.deviceName)}
+                    title={`Ask ${member.deviceName} to share their screen`}
+                  >
+                    <MonitorIcon size={14} />
+                    Screen
+                  </Button>
+                )}
                 {/* Blocking is a decision about a device, not about this room,
                     so anyone can make it about anyone — unlike removal, which
-                    is the owner's to do. */}
+                    is the owner's to do. Neither depends on a native feature,
+                    so neither should have been hidden by the same gate that
+                    hides screen-sharing. */}
                 <Button
                   size="sm"
                   onClick={() => onBlock(member.deviceId, member.deviceName)}

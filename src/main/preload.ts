@@ -49,12 +49,15 @@ const api: CampusConnectApi = {
   chatSaveFile: (messageId) => ipcRenderer.invoke('chat:save-file', messageId),
   chatMarkSeen: (roomId) => ipcRenderer.invoke('chat:mark-seen', roomId),
 
-  callStart: (roomId, mode) => ipcRenderer.invoke('call:start', roomId, mode),
+  callStart: (roomId, mode, targetDeviceId) =>
+    ipcRenderer.invoke('call:start', roomId, mode, targetDeviceId),
   callJoin: (callId) => ipcRenderer.invoke('call:join', callId),
   callLeave: () => ipcRenderer.invoke('call:leave'),
   callDecline: (callId) => ipcRenderer.invoke('call:decline', callId),
   callSignal: (signal) => ipcRenderer.invoke('call:signal', signal),
   callScreenSources: () => ipcRenderer.invoke('call:screen-sources'),
+  callWindowOpen: (intent) => ipcRenderer.invoke('call-window:open', intent),
+  callWindowTakeIntent: () => ipcRenderer.invoke('call-window:take-intent'),
 
   remoteRequest: (roomId, targetDeviceId) => ipcRenderer.invoke('remote:request', roomId, targetDeviceId),
   remoteRespond: (sessionId, allow, grant, screenId, screenLabel, displayId) =>
@@ -80,6 +83,10 @@ const api: CampusConnectApi = {
   fileShareCancel: (transferId) => ipcRenderer.invoke('files:cancel', transferId),
   fileShareDismiss: (transferId) => ipcRenderer.invoke('files:dismiss', transferId),
   fileShareOpenFolder: () => ipcRenderer.invoke('files:open-folder'),
+
+  dmSend: (peerId, peerName, content) => ipcRenderer.invoke('dm:send', peerId, peerName, content),
+  dmGetThread: (peerId) => ipcRenderer.invoke('dm:get-thread', peerId),
+  dmMarkRead: (peerId) => ipcRenderer.invoke('dm:mark-read', peerId),
 
   blockDevice: (deviceId, deviceName) => ipcRenderer.invoke('privacy:block', deviceId, deviceName),
   unblockDevice: (deviceId) => ipcRenderer.invoke('privacy:unblock', deviceId),
@@ -122,6 +129,7 @@ const api: CampusConnectApi = {
   onCallRingCancelled: (handler) => subscribe('call:ring-cancelled', handler),
   onCallSignal: (handler) => subscribe('call:signal', handler),
   onCallEnded: (handler) => subscribe('call:ended', handler),
+  onDmMessage: (handler) => subscribe('dm:message', handler),
   onQuickPasteOpened: (handler) => subscribe('quick-paste:opened', handler),
 
   onDeepLink: (handler) => subscribe('app:deep-link', handler),

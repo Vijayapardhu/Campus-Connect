@@ -387,25 +387,21 @@ export function SettingsPage({
 
             <SwitchRow
               title="Notification sound"
-              description="Play the system sound with each popup. Off means notifications still appear, but arrive quietly."
-              checked={settings.notificationSound && settings.notifications}
+              description={
+                settings.notifications
+                  ? 'Play the system sound with each popup. Off means notifications still appear, but arrive quietly.'
+                  : 'Play the system sound with each popup. Has nothing to play while popups themselves are off.'
+              }
+              checked={settings.notificationSound}
+              disabled={!settings.notifications}
               onChange={(next) => onUpdateSettings({ notificationSound: next })}
-            />
-
-            <h3 className="settings__subtitle">Phone security</h3>
-
-            <SwitchRow
-              title="Encrypt phone access"
-              description="Serves your phone over HTTPS with a certificate this computer issues. Your phone shows a security warning the first time, which you accept once. Without it, everything your phone reads — and its access token — crosses the WiFi readable by anyone on it, and calls cannot work at all. Changing this makes every phone scan the code again."
-              checked={settings.phoneSecure}
-              onChange={(next) => onUpdateSettings({ phoneSecure: next })}
             />
 
             <h3 className="settings__subtitle">Starting with this computer</h3>
 
             <SwitchRow
               title="Show the welcome tour again"
-              description="Replays the short introduction next time this window opens. Useful when handing this machine to somebody who has not seen it before."
+              description="Replays the short introduction right over whatever is on screen now. Useful when handing this machine to somebody who has not seen it before."
               checked={!settings.hasOnboarded}
               onChange={(next) => onUpdateSettings({ hasOnboarded: !next })}
             />
@@ -419,8 +415,13 @@ export function SettingsPage({
 
             <SwitchRow
               title="Start in the tray"
-              description="Start without opening the window. Everything runs as normal in the background — click the tray icon whenever you want to see it."
-              checked={settings.launchMinimized && settings.launchAtLogin}
+              description={
+                settings.launchAtLogin
+                  ? 'Start without opening the window. Everything runs as normal in the background — click the tray icon whenever you want to see it.'
+                  : 'Start without opening the window. Only matters once "Open Campus Connect at login" is on — there is nothing to start hidden otherwise.'
+              }
+              checked={settings.launchMinimized}
+              disabled={!settings.launchAtLogin}
               onChange={(next) => onUpdateSettings({ launchMinimized: next })}
             />
 

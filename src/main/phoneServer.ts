@@ -76,34 +76,40 @@ export type PhoneServerHooks = {
  *
  * Everything else — every room, chat, members, blocking, settings, snippets,
  * search — is reachable.
+ *
+ * `files:` and `dm:` belong here too, and for both of the reasons above at
+ * once. `httpApi.ts` already refuses them client-side — that refusal is
+ * cosmetic on its own, since a request straight to `/api/rpc` never runs that
+ * code at all. This is the actual gate.
+ *  - Files: a phone browser page has no native file picker and no direct TCP
+ *    socket to stream slices over — it genuinely cannot work.
+ *  - Direct messages: technically could — it is the same transport room chat
+ *    already uses from a phone — but a phone has no place of its own to keep
+ *    a thread outside a room's chat, so it stays out until it does.
  */
 export const PHONE_DENIED = [
   'remote:',
   'quick-paste:',
-  'update:install'
+  'update:install',
+  'files:',
+  'dm:'
 ];
 
 /**
  * Calls, which are only refused when they could not possibly work.
  *
- * A browser will not give a page a microphone unless it arrived over a secure
- * origin, so over plain HTTP every one of these would end in a permission
- * failure the person could do nothing about. Served with a certificate, the
- * phone is a WebRTC peer like any other and there is nothing left to refuse.
- *
- * Sharing a screen stays out either way: a phone has no screen to offer.
+ * Calls used to be refused over plain HTTP — a browser will not give a page a
+ * microphone unless it arrived over a secure origin, so every one of them
+ * would have ended in a permission failure the person could do nothing
+ * about. The phone bridge is HTTPS now, always, so there is nothing left to
+ * refuse on that account.
  */
-const PHONE_DENIED_INSECURE = ['call:'];
 
 /** Never available, whatever the transport — a phone has no desktop to capture. */
 const PHONE_DENIED_ALWAYS = ['call:screen-sources'];
 
-export function isPhoneMethodAllowed(method: string, secure = false): boolean {
-  const denied = [
-    ...PHONE_DENIED,
-    ...PHONE_DENIED_ALWAYS,
-    ...(secure ? [] : PHONE_DENIED_INSECURE)
-  ];
+export function isPhoneMethodAllowed(method: string): boolean {
+  const denied = [...PHONE_DENIED, ...PHONE_DENIED_ALWAYS];
   return !denied.some((prefix) => method === prefix || method.startsWith(prefix));
 }
 
@@ -124,8 +130,7 @@ const CONTENT_TYPES: Record<string, string> = {
 const HEARTBEAT_MS = 20000;
 
 export class PhoneServer {
-  private server: http.Server | https.Server | null = null;
-  private secure = false;
+  private server: https.Server | null = null;
   /**
    * Streams currently open to paired phones.
    *
@@ -147,17 +152,17 @@ export class PhoneServer {
     return this.server !== null;
   }
 
-  /** Starts listening. Returns an error message, or an empty string. */
   /**
-   * Brings the server up, over TLS when a certificate is supplied.
+   * Brings the server up over TLS, always.
    *
-   * Plain HTTP still works and is still offered, because it is what every
-   * already-paired phone expects — but it cannot carry a call. A browser will
-   * not hand out a microphone to a page it did not receive over a secure
-   * origin, and everything it does carry, including the phone's own token,
-   * crosses the WiFi in the clear.
+   * Plain HTTP used to be offered too, behind a setting most people never
+   * had a reason to turn off — everything a phone reads, including its own
+   * access token, crossed the WiFi in the clear whenever it was, and a
+   * browser will not hand out a microphone to a page it did not receive over
+   * a secure origin either way. There is no longer a plaintext path to
+   * accidentally leave open.
    */
-  start(tls?: PhoneTls): void {
+  start(tls: PhoneTls): void {
     if (this.server) {
       return;
     }
@@ -173,23 +178,22 @@ export class PhoneServer {
       });
     };
 
-    this.secure = Boolean(tls);
-    const server = tls ? https.createServer({ key: tls.key, cert: tls.cert }, handler) : http.createServer(handler);
+    const server = https.createServer({ key: tls.key, cert: tls.cert }, handler);
 
     server.on('error', (error) => {
       log.warn(`Phone server error: ${error.message}`);
     });
 
     server.listen(PHONE_PORT, () => {
-      log.info(`Phone access listening on ${this.secure ? 'https' : 'http'}://0.0.0.0:${PHONE_PORT}`);
+      log.info(`Phone access listening on https://0.0.0.0:${PHONE_PORT}`);
     });
 
     this.server = server;
   }
 
-  /** Whether the running server is one a browser will grant a camera to. */
+  /** Always true now — kept so callers that ask don't need to change. */
   get isSecure(): boolean {
-    return this.secure;
+    return true;
   }
 
   stop(): void {
@@ -377,7 +381,7 @@ export class PhoneServer {
     const method = String(body?.method ?? '');
     const args = Array.isArray(body?.args) ? (body.args as unknown[]) : [];
 
-    if (!isPhoneMethodAllowed(method, this.secure)) {
+    if (!isPhoneMethodAllowed(method)) {
       log.warn(`Phone asked for a method it cannot have: ${method}`);
       json(response, 403, { ok: false, message: 'That one only works on the computer.' });
       return;

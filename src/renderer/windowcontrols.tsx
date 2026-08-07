@@ -86,7 +86,18 @@ export function useWindowState(): WindowState | null {
   return state;
 }
 
-export function WindowControls({ state }: { state: WindowState | null }) {
+export function WindowControls({
+  state,
+  closeLabel = 'Close to the tray'
+}: {
+  state: WindowState | null;
+  /**
+   * What the close button says it does. Right for the main window, where
+   * close means hide to the tray — wrong for the call and remote windows,
+   * where the same button hangs up or disconnects, so those pass their own.
+   */
+  closeLabel?: string;
+}) {
   // Nothing to draw when the system is still drawing it, or in a browser tab.
   if (!hasWindowControls(state)) {
     return null;
@@ -116,7 +127,7 @@ export function WindowControls({ state }: { state: WindowState | null }) {
         className="wincontrols__btn wincontrols__btn--close"
         onClick={() => void api.windowClose()}
         aria-label="Close"
-        title="Close to the tray"
+        title={closeLabel}
       >
         <CloseGlyph />
       </button>

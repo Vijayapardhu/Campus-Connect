@@ -4,6 +4,7 @@ import { Button } from './ui';
 import { initials } from './format';
 import {
   AlertIcon,
+  ChatIcon,
   ClipboardIcon,
   GlobeIcon,
   KeyIcon,
@@ -36,6 +37,10 @@ export function Sidebar({
   filesOpen,
   showFiles,
   runningTransfers,
+  onOpenMessages,
+  messagesOpen,
+  showMessages,
+  unreadMessages,
   onOpenSettings,
   settingsOpen
 }: {
@@ -54,6 +59,11 @@ export function Sidebar({
   showFiles: boolean;
   /** Transfers under way right now, in either direction. */
   runningTransfers: number;
+  onOpenMessages: () => void;
+  messagesOpen: boolean;
+  /** False on a phone: direct messages are between two computers, like files. */
+  showMessages: boolean;
+  unreadMessages: number;
   onOpenSettings: () => void;
   settingsOpen: boolean;
 }) {
@@ -226,6 +236,32 @@ export function Sidebar({
             </span>
           </span>
           {runningTransfers > 0 ? <span className="room-item__badge">{runningTransfers}</span> : null}
+        </button>
+        ) : null}
+
+        {/* Same reasoning as Files: a direct message belongs to no room
+            either, so it sits beside it rather than inside one. */}
+        {showMessages ? (
+        <button
+          className={messagesOpen ? 'room-item is-active' : 'room-item'}
+          onClick={onOpenMessages}
+          title="Message a nearby device directly"
+          aria-current={messagesOpen}
+        >
+          <span className="room-item__icon">
+            <ChatIcon size={13} />
+          </span>
+          <span className="room-item__body">
+            <span className="room-item__name">Messages</span>
+            <span className="room-item__meta">
+              {unreadMessages > 0
+                ? `${unreadMessages} unread`
+                : online
+                  ? 'Message a nearby device'
+                  : 'Switched off'}
+            </span>
+          </span>
+          {unreadMessages > 0 ? <span className="room-item__badge">{unreadMessages}</span> : null}
         </button>
         ) : null}
 

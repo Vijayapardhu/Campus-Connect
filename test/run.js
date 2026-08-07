@@ -2096,57 +2096,47 @@ console.log('\n-- what a paired phone may ask for --');
 const { isPhoneMethodAllowed } = require(path.join(ROOT, 'phoneServer.js'));
 
 /*
- * This is a trust boundary, and it now has two shapes: what a phone may do over
- * plain HTTP, and what it may additionally do once the connection is one a
- * browser will grant a microphone to. Widening it by accident is how a pocket
- * ends up able to drive somebody's desktop.
+ * This is a trust boundary. The phone bridge is HTTPS only now — there is no
+ * second, more permissive mode to fall into — so the only question left is
+ * which methods a paired phone may ever reach, full stop. Widening it by
+ * accident is how a pocket ends up able to drive somebody's desktop.
  */
 
 test('a phone can always reach the everyday surface', () => {
   for (const method of ['room:create', 'chat:send', 'clipboard:apply', 'search:all', 'app:get-state']) {
-    assert.strictEqual(isPhoneMethodAllowed(method, false), true, method);
-    assert.strictEqual(isPhoneMethodAllowed(method, true), true, method);
+    assert.strictEqual(isPhoneMethodAllowed(method), true, method);
   }
 });
 
-test('remote desktop is refused however the phone connected', () => {
-  for (const secure of [false, true]) {
-    assert.strictEqual(isPhoneMethodAllowed('remote:request', secure), false);
-    assert.strictEqual(isPhoneMethodAllowed('remote:input', secure), false);
-    assert.strictEqual(isPhoneMethodAllowed('remote:respond', secure), false);
-  }
+test('remote desktop is refused', () => {
+  assert.strictEqual(isPhoneMethodAllowed('remote:request'), false);
+  assert.strictEqual(isPhoneMethodAllowed('remote:input'), false);
+  assert.strictEqual(isPhoneMethodAllowed('remote:respond'), false);
+});
+
+test('files and direct messages stay desktop-only', () => {
+  // Neither has a phone-side implementation — a raw request straight to the
+  // bridge, bypassing the client's own refusal, has to land here just the same.
+  assert.strictEqual(isPhoneMethodAllowed('files:request'), false);
+  assert.strictEqual(isPhoneMethodAllowed('dm:send'), false);
 });
 
 test('the quick-paste overlay and self-install stay desktop-only', () => {
-  for (const secure of [false, true]) {
-    assert.strictEqual(isPhoneMethodAllowed('quick-paste:pick', secure), false);
-    assert.strictEqual(isPhoneMethodAllowed('update:install', secure), false);
-  }
+  assert.strictEqual(isPhoneMethodAllowed('quick-paste:pick'), false);
+  assert.strictEqual(isPhoneMethodAllowed('update:install'), false);
   // Checking for one is still fine; it is installing that is not.
-  assert.strictEqual(isPhoneMethodAllowed('update:check', true), true);
+  assert.strictEqual(isPhoneMethodAllowed('update:check'), true);
 });
 
-test('calls open up only once the connection can carry a microphone', () => {
-  // Over plain HTTP the browser refuses getUserMedia, so every one of these
-  // would end in a permission failure nobody could act on.
-  assert.strictEqual(isPhoneMethodAllowed('call:start', false), false);
-  assert.strictEqual(isPhoneMethodAllowed('call:join', false), false);
-  assert.strictEqual(isPhoneMethodAllowed('call:signal', false), false);
-
-  assert.strictEqual(isPhoneMethodAllowed('call:start', true), true);
-  assert.strictEqual(isPhoneMethodAllowed('call:join', true), true);
-  assert.strictEqual(isPhoneMethodAllowed('call:signal', true), true);
+test('calls are allowed — the bridge is always a secure origin', () => {
+  assert.strictEqual(isPhoneMethodAllowed('call:start'), true);
+  assert.strictEqual(isPhoneMethodAllowed('call:join'), true);
+  assert.strictEqual(isPhoneMethodAllowed('call:signal'), true);
 });
 
-test('a phone never captures a screen, on any transport', () => {
+test('a phone never captures a screen', () => {
   // It has no desktop to offer, so this is not a security limit but an honest one.
-  assert.strictEqual(isPhoneMethodAllowed('call:screen-sources', false), false);
-  assert.strictEqual(isPhoneMethodAllowed('call:screen-sources', true), false);
-});
-
-test('the default is the closed one', () => {
-  // Called without the flag — as anything added later might be — calls stay shut.
-  assert.strictEqual(isPhoneMethodAllowed('call:start'), false);
+  assert.strictEqual(isPhoneMethodAllowed('call:screen-sources'), false);
 });
 
 console.log('\n-- phone event stream --');

@@ -43,7 +43,8 @@ export type CallSession = {
 export type CallController = {
   session: CallSession | null;
   ringing: CallRinging | null;
-  start: (roomId: string, mode: CallMode) => Promise<void>;
+  /** With `targetDeviceId`, rings that one member directly instead of the whole room. */
+  start: (roomId: string, mode: CallMode, targetDeviceId?: string) => Promise<void>;
   join: (callId: string) => Promise<void>;
   answer: (ring: CallRinging) => Promise<void>;
   decline: (callId: string) => Promise<void>;
@@ -65,11 +66,20 @@ export type CallController = {
 export function useCall({
   deviceId,
   startCallsMuted,
-  push
+  push,
+  active = true
 }: {
   deviceId: string;
   startCallsMuted: boolean;
   push: (message: string, tone?: StatusTone) => void;
+  /**
+   * Whether this window is the one that owns the call — hears about rings,
+   * negotiates, holds the microphone. Desktop's main window is not: the call
+   * window is, and both hearing the same `call:ring` would mean two engines
+   * reaching for the same camera. A phone has no second window to hand this
+   * to, so it stays the default.
+   */
+  active?: boolean;
 }): CallController {
   const [session, setSession] = React.useState<CallSession | null>(null);
   const [ringing, setRinging] = React.useState<CallRinging | null>(null);
@@ -165,7 +175,25 @@ export function useCall({
     [deviceId, teardown]
   );
 
+  // A ring that started before this window had finished loading — the call
+  // window is opened the moment one arrives, so its own `onCallRing`
+  // subscription below can easily lose the race with the event that caused it
+  // to exist in the first place. Read once, rather than trusted to arrive.
   React.useEffect(() => {
+    if (!active) {
+      return;
+    }
+    void api.getState().then((current) => {
+      if (current.incomingCall) {
+        setRinging((existing) => existing ?? current.incomingCall ?? null);
+      }
+    });
+  }, [active]);
+
+  React.useEffect(() => {
+    if (!active) {
+      return;
+    }
     const unsubscribers = [
       api.onCallRing((ring) => setRinging((current) => current ?? ring)),
       api.onCallRingCancelled((callId) => {
@@ -194,7 +222,7 @@ export function useCall({
     ];
 
     return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
-  }, [teardown]);
+  }, [active, teardown]);
 
   // A call must not outlive the window. Without this the camera light stays on.
   React.useEffect(() => {
@@ -206,8 +234,8 @@ export function useCall({
   }, []);
 
   const start = React.useCallback(
-    async (roomId: string, mode: CallMode) => {
-      const result = await api.callStart(roomId, mode);
+    async (roomId: string, mode: CallMode, targetDeviceId?: string) => {
+      const result = await api.callStart(roomId, mode, targetDeviceId);
       if (!result.ok || !result.callId) {
         pushRef.current(result.message, 'error');
         return;
@@ -688,7 +716,11 @@ export function IncomingCallModal({
   return (
     <Modal
       title={ring.mode === 'video' ? 'Incoming video call' : 'Incoming voice call'}
-      description={`${ring.fromDeviceName} is calling ${ring.roomName}.`}
+      description={
+        ring.direct
+          ? `${ring.fromDeviceName} is calling you directly.`
+          : `${ring.fromDeviceName} is calling ${ring.roomName}.`
+      }
       onClose={onDecline}
       footer={
         <>

@@ -5,10 +5,12 @@ import type {
   CallMode,
   CallRinging,
   CallSignal,
+  CallWindowIntent,
   ChatMessage,
   ClipboardHistoryEntry,
   ConnectivityResult,
   DeepLink,
+  DirectMessage,
   JoinRequest,
   RemoteCapabilities,
   RemoteGrant,
@@ -177,7 +179,8 @@ export type CampusConnectApi = {
    * Calls. The main process only ever relays setup and tracks who is in what;
    * the microphone, the camera and the peer connections all live in the renderer.
    */
-  callStart: (roomId: string, mode: CallMode) => Promise<CallStartResult>;
+  /** Rings the whole room, or — with `targetDeviceId` — just that one member directly. */
+  callStart: (roomId: string, mode: CallMode, targetDeviceId?: string) => Promise<CallStartResult>;
   /** Answers a ring, or joins a call already under way in a room. */
   callJoin: (callId: string) => Promise<CallStartResult>;
   callLeave: () => Promise<ActionResult>;
@@ -186,6 +189,14 @@ export type CampusConnectApi = {
   callSignal: (signal: CallSignal) => Promise<boolean>;
   /** The screens and windows on offer. Listing them captures nothing. */
   callScreenSources: () => Promise<ScreenSource[]>;
+  /**
+   * Opens the call window — creating it if this is the first call — and tells
+   * it what to do once it is ready. Ringing opens the window on its own; this
+   * is for the button that places or joins one from the main window.
+   */
+  callWindowOpen: (intent: CallWindowIntent) => Promise<void>;
+  /** The call window's one-time pull of what it was opened to do. */
+  callWindowTakeIntent: () => Promise<CallWindowIntent | null>;
 
   /**
    * Remote desktop. The screen travels over WebRTC and input over its data
@@ -252,6 +263,16 @@ export type CampusConnectApi = {
   /** Drops a finished transfer from the list. Saved files are untouched. */
   fileShareDismiss: (transferId: string) => Promise<void>;
   fileShareOpenFolder: () => Promise<void>;
+
+  /**
+   * Direct 1:1 messages. Same reach as file sharing — any device currently
+   * visible on the network, no room in common required.
+   */
+  dmSend: (peerId: string, peerName: string, content: string) => Promise<ActionResult>;
+  dmGetThread: (peerId: string) => Promise<DirectMessage[]>;
+  dmMarkRead: (peerId: string) => Promise<void>;
+  /** A message arrived, either direction — the renderer already knows which. */
+  onDmMessage: (handler: (message: DirectMessage) => void) => () => void;
 
   /**
    * Blocking. Total and local: nothing from a blocked device is read, stored,

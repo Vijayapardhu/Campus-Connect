@@ -1,5 +1,6 @@
 import React from 'react';
-import { XIcon } from './icons';
+import type { StatusTone } from '../shared/bridge';
+import { AlertIcon, CheckCircleIcon, InfoIcon, XCircleIcon, XIcon } from './icons';
 
 // ---------------------------------------------------------------- primitives
 
@@ -66,17 +67,21 @@ export function Badge({
 export function Switch({
   checked,
   onChange,
-  label
+  label,
+  disabled
 }: {
   checked: boolean;
   onChange: (next: boolean) => void;
   label: string;
+  /** Greyed out and inert — for a setting that only matters under some other condition. */
+  disabled?: boolean;
 }) {
   return (
     <button
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      disabled={disabled}
       className={checked ? 'switch is-on' : 'switch'}
       onClick={() => onChange(!checked)}
     />
@@ -87,20 +92,22 @@ export function SwitchRow({
   title,
   description,
   checked,
-  onChange
+  onChange,
+  disabled
 }: {
   title: string;
   description: string;
   checked: boolean;
   onChange: (next: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
-    <div className="switch-row">
+    <div className={disabled ? 'switch-row is-disabled' : 'switch-row'}>
       <div className="switch-row__body">
         <div className="switch-row__title">{title}</div>
         <div className="switch-row__desc">{description}</div>
       </div>
-      <Switch checked={checked} onChange={onChange} label={title} />
+      <Switch checked={checked} onChange={onChange} label={title} disabled={disabled} />
     </div>
   );
 }
@@ -212,15 +219,20 @@ export function Modal({
   closeRef.current = onClose;
 
   React.useEffect(() => {
-    // Escape closes.
+    // Escape closes — and claims the key first, in the capture phase, so
+    // nothing else listening on `document` (the welcome tour's own Escape
+    // handler, chiefly) also reacts to the same press. Without this, opening
+    // a dialog while the tour happens to still be up meant one Escape both
+    // closed the dialog *and* silently finished the tour.
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
+        event.stopPropagation();
         closeRef.current();
       }
     }
 
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
   }, []);
 
   React.useEffect(() => {
@@ -253,6 +265,70 @@ export function Modal({
         <div className="modal__body">{children}</div>
         {footer ? <div className="modal__footer">{footer}</div> : null}
       </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------- toasts
+
+type Toast = { id: number; message: string; tone: StatusTone };
+
+const TOAST_MS = 4200;
+
+/**
+ * A small stack of self-dismissing status messages. Shared by every window
+ * that shows toasts — the main window, and now the call and remote windows —
+ * so each does not carry its own copy of the same timer bookkeeping.
+ */
+export function useToasts() {
+  const [toasts, setToasts] = React.useState<Toast[]>([]);
+  const nextId = React.useRef(0);
+
+  const push = React.useCallback((message: string, tone: StatusTone = 'info') => {
+    const id = nextId.current++;
+
+    setToasts((current) => {
+      // The same message twice over is one event as far as anyone reading it
+      // is concerned. It moves back to the bottom and its timer restarts
+      // rather than filling the corner with copies of itself.
+      const withoutDuplicate = current.filter((toast) => toast.message !== message);
+      return [...withoutDuplicate, { id, message, tone }].slice(-4);
+    });
+
+    setTimeout(() => setToasts((current) => current.filter((toast) => toast.id !== id)), TOAST_MS);
+  }, []);
+
+  const dismiss = React.useCallback((id: number) => {
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
+
+  return { toasts, push, dismiss };
+}
+
+function ToastIcon({ tone }: { tone: StatusTone }) {
+  if (tone === 'success') return <CheckCircleIcon size={16} />;
+  if (tone === 'warning') return <AlertIcon size={16} />;
+  if (tone === 'error') return <XCircleIcon size={16} />;
+  return <InfoIcon size={16} />;
+}
+
+export function Toasts({
+  toasts,
+  onDismiss
+}: {
+  toasts: Toast[];
+  onDismiss: (id: number) => void;
+}) {
+  return (
+    <div className="toasts" role="status" aria-live="polite">
+      {toasts.map((toast) => (
+        <div key={toast.id} className={`toast toast--${toast.tone}`} onClick={() => onDismiss(toast.id)}>
+          <span className="toast__icon">
+            <ToastIcon tone={toast.tone} />
+          </span>
+          <span className="toast__message">{toast.message}</span>
+        </div>
+      ))}
     </div>
   );
 }

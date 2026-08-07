@@ -507,6 +507,10 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
       canUseMedia() ? rpc('call:signal', signal) : Promise.resolve(false),
     // A phone has no desktop to capture, on any transport.
     callScreenSources: () => Promise.resolve([]),
+    // A phone has no second window to open one in — it never calls these;
+    // present only to satisfy the shared type.
+    callWindowOpen: () => Promise.resolve(),
+    callWindowTakeIntent: () => Promise.resolve(null),
 
     remoteRequest: () => refuse(),
     remoteRespond: () => refuse(),
@@ -534,6 +538,12 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
     fileShareCancel: () => refuse(),
     fileShareDismiss: () => Promise.resolve(),
     fileShareOpenFolder: () => Promise.resolve(),
+
+    // Native-only, the same as file sharing and remote desktop — a phone has
+    // no place of its own to keep a message thread outside of a room's chat.
+    dmSend: () => refuse(),
+    dmGetThread: () => Promise.resolve([]),
+    dmMarkRead: () => Promise.resolve(),
 
     quickPasteItems: () => Promise.resolve({ clips: [], snippets: [], roomNames: {} }),
     quickPastePick: () => refuse(),
@@ -600,6 +610,7 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
     onRemoteSignal: none(),
     onRemoteGrantChanged: none(),
     onRemoteEnded: none(),
+    onDmMessage: none(),
     onQuickPasteOpened: none(),
     onUpdateStatus: (handler) => subscribe('update:status', handler),
     onJoinRequest: (handler) => subscribe('room:join-request', handler),

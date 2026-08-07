@@ -246,9 +246,20 @@ export type CallDeviceState = {
  * so none of this can be sent on someone else's behalf.
  */
 export type CallSignal =
-  /** Ringing the room. Nobody is in the call yet — this only makes it ring. */
-  | { kind: 'ring'; callId: string; mode: CallMode }
-  /** I am in. Everyone already in answers with `here` so we learn the roster. */
+  /**
+   * Ringing the room, or — with `to` set — ringing one specific member of it
+   * directly. Nobody is in the call yet — this only makes it ring. A direct
+   * ring still carries `callId`/`roomId` for the same reason every other call
+   * does: authorization and cleanup stay room-scoped even when only one
+   * other member ever hears about it.
+   */
+  | { kind: 'ring'; callId: string; mode: CallMode; to?: string }
+  /**
+   * I am in. Broadcast room-wide, not `to`-addressed even for a direct call —
+   * that's what keeps every member's `ActiveCall`/`CallInProgressBanner`
+   * accurate; a direct call is visible and joinable the same as any other
+   * once it exists. Only *ringing* is ever narrowed, not participation.
+   */
   | { kind: 'join'; callId: string; mode: CallMode }
   | { kind: 'here'; callId: string; mode: CallMode; to: string }
   | { kind: 'leave'; callId: string }
@@ -404,7 +415,18 @@ export type CallRinging = {
   fromDeviceId: string;
   fromDeviceName: string;
   at: number;
+  /** Rung directly rather than as part of a room-wide ring — changes only the wording shown. */
+  direct?: boolean;
 };
+
+/**
+ * Tells the call window what to do the moment it opens: place a fresh call, or
+ * join one already under way. Pulled once by the window itself rather than
+ * pushed, so it is never missed by a window still finishing its first load.
+ */
+export type CallWindowIntent =
+  | { kind: 'start'; roomId: string; mode: CallMode; targetDeviceId?: string }
+  | { kind: 'join'; callId: string };
 
 /**
  * A call known to be live in a room. Tracked so a room can show that a call is
@@ -467,6 +489,8 @@ export type BlockedDevice = {
   deviceId: string;
   deviceName: string;
   blockedAt: number;
+  /** The address it was last seen at, so unblocking can undo the TCP-level forget by the same key. */
+  lastHost?: string;
 };
 
 /**
@@ -546,7 +570,13 @@ export type WireMessageType =
    * from one to the other over whatever transport is available — a direct TCP
    * link when one exists, UDP chunks otherwise.
    */
-  | 'file-xfer';
+  | 'file-xfer'
+  /**
+   * A single direct 1:1 message. Device-to-device like `file-xfer`, and for
+   * the same reason: reachable by anyone currently visible on the network,
+   * not gated on sharing a room.
+   */
+  | 'direct-message';
 
 /**
  * Every datagram on the wire. Bodies that belong to an encrypted room travel in
@@ -626,6 +656,8 @@ export type WireMessage = {
   remote?: RemoteSignal;
   /** On `file-xfer`: one step of a peer-to-peer file transfer. */
   fileXfer?: FileXferSignal;
+  /** On `direct-message`: one 1:1 message, device-to-device, no room involved. */
+  directMessage?: DirectMessageSignal;
 };
 
 export type AppSettings = {
@@ -676,19 +708,6 @@ export type AppSettings = {
    * happens to be going on around it.
    */
   startCallsMuted: boolean;
-
-  /**
-   * Serve phone access over TLS with a self-signed certificate.
-   *
-   * On by default, and the reasoning is not really about calls. Without it the
-   * phone's own access token, every message it reads and everything it pastes
-   * cross the WiFi in clear text — on a campus network, to anyone who cares to
-   * look. The cost is a certificate warning the first time a phone pairs.
-   *
-   * It happens to also be what lets a phone join a call at all: browsers will
-   * not give a page a microphone unless it arrived over a secure origin.
-   */
-  phoneSecure: boolean;
 
   /**
    * Whether this device has been shown the tour.
@@ -893,6 +912,12 @@ export type AppState = {
   invitedDeviceIds: Record<string, string[]>;
   /** Calls believed to be live right now, in any room this device is in. */
   activeCalls: ActiveCall[];
+  /**
+   * A ring this device has not yet answered, if any. Read once by the call
+   * window on mount, so it learns about a ring that started before the window
+   * had finished loading — a push event alone would arrive too early to hear.
+   */
+  incomingCall?: CallRinging;
   /** Devices this one refuses to hear from, newest first. */
   blocked: BlockedDevice[];
   /** Saved text, ranked by what you actually reach for. */
@@ -903,6 +928,8 @@ export type AppState = {
   remote?: RemoteSessionState;
   /** Peer-to-peer file transfers, either role, if any. */
   fileShare?: FileShareState;
+  /** Direct 1:1 message threads — summaries only; a thread's messages are fetched on demand. */
+  dmThreads: DmThreadSummary[];
   /** Whether this machine can accept being driven, and why not if it cannot. */
   remoteCapabilities: RemoteCapabilities;
   storage: StorageStats;
@@ -990,6 +1017,38 @@ export type FileShareState = {
   transfers: FileShareTransfer[];
   /** Where received files land. Kept so the UI can offer to open it. */
   downloadFolder: string;
+};
+
+/**
+ * Direct 1:1 messages. Device-to-device, the same as file sharing — reachable
+ * by anyone currently visible on the network, with no room in common
+ * required. Unlike a file transfer there is nothing to consent to before a
+ * message arrives, so there is only the one signal kind.
+ */
+export type DirectMessageSignal = { kind: 'message'; id: string; content: string; sentAt: number };
+
+/**
+ * One message in a direct thread. `peerId`/`peerName` always name "the other
+ * device," whichever way the message went — simpler for the renderer than
+ * tracking from/to separately for a conversation that only ever has two
+ * sides.
+ */
+export type DirectMessage = {
+  id: string;
+  peerId: string;
+  peerName: string;
+  fromSelf: boolean;
+  content: string;
+  sentAt: number;
+};
+
+/** One thread's summary, for the list of who you have messaged. */
+export type DmThreadSummary = {
+  peerId: string;
+  peerName: string;
+  lastMessage: string;
+  lastAt: number;
+  unread: number;
 };
 
 /** Shown in Settings → About. Single source of truth for credit and links. */

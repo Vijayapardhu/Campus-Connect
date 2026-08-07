@@ -1072,6 +1072,17 @@ select {
   border-top: 1px solid var(--border);
 }
 
+/* A setting that only takes effect under some other condition — shown at its
+   real stored value rather than hidden behind that condition, but not
+   something there is any point clicking right now. */
+.switch-row.is-disabled {
+  opacity: 0.5;
+}
+
+.switch:disabled {
+  cursor: not-allowed;
+}
+
 .switch-row__body {
   flex: 1;
   min-width: 0;
@@ -2536,6 +2547,21 @@ kbd {
   border-top: 1px solid var(--border);
 }
 
+/* A `.member` row that is also a button — the recent-threads list, where the
+   whole row opens the conversation rather than one action button inside it. */
+.dm-thread {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+}
+
+.dm-thread:hover {
+  background: var(--bg-hover);
+}
+
 .member__avatar {
   display: grid;
   place-items: center;
@@ -2822,6 +2848,37 @@ kbd {
   border: 0;
 }
 
+/* ------------------------------------------------- call & remote windows -- */
+
+/*
+ * The shell for the call window and the remote-controller window — both real,
+ * resizable, minimisable windows of their own now, not a tab inside the main
+ * one. `.splash__bar` is reused as-is for the draggable strip the window
+ * controls sit in; everything below it is whichever of `CallStage` or
+ * `RemoteViewer` actually has something to show yet.
+ */
+.session-window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.session-window__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.session-window__waiting {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: var(--space-4);
+  color: var(--text-secondary);
+}
+
 /* --------------------------------------------------- quick-paste overlay -- */
 
 /*
@@ -2832,6 +2889,65 @@ kbd {
 body.is-overlay {
   background: transparent;
   overflow: hidden;
+}
+
+/* ------------------------------------------------------ host indicator -- */
+
+/*
+ * Small enough to sit in a corner without covering anything, and — since it
+ * has no frame of its own — draggable everywhere except the button, the same
+ * split the topbar uses to stay movable without swallowing clicks.
+ */
+/*
+ * Warning while watched, danger while driven — the same two colours
+ * `RemoteHostBar` uses for the same distinction, so the two surfaces never
+ * disagree about how alarmed a given session is worth being.
+ */
+.host-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 100vh;
+  padding: 0 var(--space-3);
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--warning-soft);
+  color: var(--text-primary);
+  box-shadow: 0 12px 32px rgba(9, 9, 11, 0.35);
+  -webkit-app-region: drag;
+}
+
+.host-indicator.is-control {
+  background: var(--danger-soft);
+}
+
+.host-indicator__dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.25);
+}
+
+.host-indicator.is-control .host-indicator__dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px rgba(251, 113, 133, 0.25);
+}
+
+.host-indicator__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+
+.host-indicator button {
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
 }
 
 .qp {
@@ -3414,14 +3530,24 @@ body.is-overlay {
   font-size: var(--text-xs);
 }
 
+/*
+ * A floating pill rather than a full-width bar with a border — the shape
+ * AnyDesk and Zoom both settled on for the same reason: the controls read as
+ * an overlay sitting on top of the call, not a fourth strip of chrome
+ * competing with the header and the grid for the frame.
+ */
 .call-controls {
   display: flex;
   justify-content: center;
   flex-wrap: wrap;
   gap: var(--space-2);
   flex-shrink: 0;
-  padding: var(--space-4) var(--space-5);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 0 auto var(--space-5);
+  padding: var(--space-2);
+  border-radius: var(--radius-full);
+  background: rgba(20, 21, 26, 0.72);
+  backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-lg);
 }
 
 .call-btn {

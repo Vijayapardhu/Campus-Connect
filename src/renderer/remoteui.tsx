@@ -47,9 +47,19 @@ export type RemoteController = {
  * host's offer never arrives before there is anything to receive it.
  */
 export function useRemote({
-  push
+  push,
+  allow = 'all'
 }: {
   push: (message: string, tone?: StatusTone) => void;
+  /**
+   * Which side of a session this window cares about. The host bar and the
+   * controller's viewer now live in separate windows — each running its own
+   * `RemoteEngine` — so without this both would react to the same
+   * `remote:started` event and build a second, unwanted engine for whichever
+   * role is not theirs to own. `'all'` is the single-window behaviour this
+   * used to have unconditionally.
+   */
+  allow?: 'host' | 'controller' | 'all';
 }): RemoteController {
   const [session, setSession] = React.useState<RemoteSessionState | null>(null);
   const [request, setRequest] = React.useState<RemoteRequest | null>(null);
@@ -111,26 +121,59 @@ export function useRemote({
     []
   );
 
+  /**
+   * Builds the controller's engine, unless one already exists for this
+   * session. The push event and the mount-time state fetch below can both
+   * decide to do this for the same session — the guard is what keeps that
+   * from building two engines and two microphones' worth of nothing, since a
+   * remote session is video and input only, but two peer connections all the
+   * same.
+   */
+  const startControllerSession = React.useCallback(
+    (started: RemoteSessionState) => {
+      if (sessionIdRef.current === started.sessionId && engineRef.current) {
+        return;
+      }
+      sessionIdRef.current = started.sessionId;
+      peerIdRef.current = started.peerId;
+      setSession(started);
+      setConnection('connecting');
+      const engine = buildEngine(started);
+      engineRef.current = engine;
+      engine.startAsController(started.sessionId);
+    },
+    [buildEngine]
+  );
+
   React.useEffect(() => {
     const unsubscribers = [
-      api.onRemoteRequest((incoming) => setRequest((current) => current ?? incoming)),
-      api.onRemoteRequestExpired((sessionId) => {
-        setRequest((current) => (current?.sessionId === sessionId ? null : current));
-      }),
+      ...(allow !== 'controller'
+        ? [
+            api.onRemoteRequest((incoming) => setRequest((current) => current ?? incoming)),
+            api.onRemoteRequestExpired((sessionId) => {
+              setRequest((current) => (current?.sessionId === sessionId ? null : current));
+            })
+          ]
+        : []),
 
       api.onRemoteStarted((started) => {
+        // Not this window's role to carry — the paired window (host bar or
+        // viewer) owns it instead.
+        if (allow !== 'all' && started.role !== allow) {
+          return;
+        }
+
+        if (started.role === 'controller') {
+          startControllerSession(started);
+          return;
+        }
+
+        // The host's own engine is started by the request dialog, because it
+        // needs the screen the user picked there — this only tracks state.
         sessionIdRef.current = started.sessionId;
         peerIdRef.current = started.peerId;
         setSession(started);
         setConnection('connecting');
-
-        // Only the controller sets up here. The host's engine is started by the
-        // dialog, because it needs the screen the user picked.
-        if (started.role === 'controller') {
-          const engine = buildEngine(started);
-          engineRef.current = engine;
-          engine.startAsController(started.sessionId);
-        }
       }),
 
       api.onRemoteSignal((event) => {
@@ -144,8 +187,8 @@ export function useRemote({
       }),
 
       api.onRemoteEnded(({ sessionId, reason }) => {
-        if (sessionIdRef.current && sessionIdRef.current !== sessionId) {
-          return;
+        if (sessionIdRef.current !== sessionId) {
+          return; // Not a session this window was ever tracking.
         }
         teardown();
         if (reason) {
@@ -155,7 +198,7 @@ export function useRemote({
     ];
 
     return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
-  }, [buildEngine, teardown]);
+  }, [allow, buildEngine, teardown, startControllerSession]);
 
   // A session must not outlive the window; the screen capture would keep running.
   React.useEffect(() => {
@@ -165,24 +208,37 @@ export function useRemote({
   }, []);
 
   /*
-   * A session the main process still holds but this window knows nothing about.
+   * What the main process already knows, read once at mount rather than
+   * watched through state — watching would race a session this window is
+   * itself in the middle of setting up.
    *
-   * Only possible when the window was reloaded or replaced mid-session, and it
-   * cannot be resumed — the peer connection and the captured stream went with
-   * the old window. Leaving it would be the one failure the host bar exists to
-   * prevent: a screen still shared, with nothing on screen saying so.
-   *
-   * Asked of the main process once, at mount, rather than watched through
-   * state — watching would race a session this window is itself setting up.
+   * Two things can be true here. A controller session that started before
+   * this window had finished loading is the normal case now that the window
+   * opens on demand rather than always being present — `startControllerSession`
+   * is idempotent, so if the push event also arrives, only the first of the
+   * two actually does anything. A *host* session with nothing engineering it
+   * is the original, narrower case this effect was written for: only possible
+   * when the main window was reloaded mid-session, and it cannot be resumed —
+   * the peer connection and the captured stream went with the old window.
    */
   React.useEffect(() => {
     void api.getState().then((current) => {
-      if (current.remote && !engineRef.current) {
+      const remote = current.remote;
+      if (!remote || (allow !== 'all' && remote.role !== allow)) {
+        return;
+      }
+
+      if (remote.role === 'controller') {
+        startControllerSession(remote);
+        return;
+      }
+
+      if (!engineRef.current) {
         pushRef.current('A remote session was left running and has been ended.', 'warning');
         void api.remoteEnd();
       }
     });
-  }, []);
+  }, [allow, startControllerSession]);
 
   // The data channel opens shortly after the connection does, and only then can
   // anything actually be typed.

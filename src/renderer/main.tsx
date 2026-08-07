@@ -3,6 +3,9 @@ import ReactDOM from 'react-dom/client';
 import './styles.css';
 import App from './App';
 import { QuickPasteOverlay } from './quickpaste';
+import { CallWindowRoot } from './callWindowRoot';
+import { RemoteWindowRoot } from './remoteWindowRoot';
+import { HostIndicatorWindow } from './hostIndicatorWindow';
 import { PairGate, PairPending } from './pairgate';
 import { checkPairing, createHttpApi, isPhoneClient, pairWithKey, scannedKey } from './httpApi';
 
@@ -27,6 +30,34 @@ async function start() {
     root.render(
       <React.StrictMode>
         <QuickPasteOverlay />
+      </React.StrictMode>
+    );
+    return;
+  }
+
+  if (window.location.hash === '#call') {
+    root.render(
+      <React.StrictMode>
+        <CallWindowRoot />
+      </React.StrictMode>
+    );
+    return;
+  }
+
+  if (window.location.hash === '#remote') {
+    root.render(
+      <React.StrictMode>
+        <RemoteWindowRoot />
+      </React.StrictMode>
+    );
+    return;
+  }
+
+  if (window.location.hash === '#host-indicator') {
+    document.body.classList.add('is-overlay');
+    root.render(
+      <React.StrictMode>
+        <HostIndicatorWindow />
       </React.StrictMode>
     );
     return;

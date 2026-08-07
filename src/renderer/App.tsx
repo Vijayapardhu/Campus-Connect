@@ -12,12 +12,11 @@ import type {
   RoomType,
   SearchHit
 } from '../shared/types';
-import type { StatusTone } from '../shared/bridge';
 import { Sidebar } from './sidebar';
 import { ChatPanel, ClipboardPanel, MembersPanel } from './panels';
 import { CreateRoomModal, EditRoomModal, InviteModal, JoinRoomModal, UnlockRoomModal } from './modals';
 import { SettingsPage } from './settings';
-import { Badge, Button, ConfirmModal, EmptyState } from './ui';
+import { Badge, Button, ConfirmModal, EmptyState, Toasts, useToasts } from './ui';
 import {
   CallInProgressBanner,
   CallStage,
@@ -25,8 +24,9 @@ import {
   ScreenPickerModal,
   useCall
 } from './callui';
-import { RemoteHostBar, RemoteRequestModal, RemoteViewer, useRemote } from './remoteui';
+import { RemoteHostBar, RemoteRequestModal, useRemote } from './remoteui';
 import { FileRequestModal, FilesPanel, useFileShare } from './filesharing';
+import { DmPanel, useDirectMessage } from './directMessages';
 import { WindowControls, hasWindowControls, useWindowState } from './windowcontrols';
 import { Onboarding } from './onboarding';
 import { CommandPalette, type Command, type PaletteMode } from './palette';
@@ -34,11 +34,9 @@ import { toFontStack } from './fonts';
 import {
   AlertIcon,
   ChatIcon,
-  CheckCircleIcon,
   ChevronLeftIcon,
   ClipboardIcon,
   GlobeIcon,
-  InfoIcon,
   KeyIcon,
   LockIcon,
   MoonIcon,
@@ -53,21 +51,25 @@ import {
   SunIcon,
   UsersIcon,
   VideoIcon,
-  XCircleIcon,
   XIcon
 } from './icons';
 
 import { api } from './api';
 import { PhoneHome } from './phonehome';
 import { canUseMedia, hasNativeFeatures, isPhoneClient } from './httpApi';
-type Tab = 'clipboard' | 'chat' | 'members' | 'call' | 'remote';
+/**
+ * The call itself lives inline only on the phone client, which has no second
+ * window to hand it to — the desktop app opens a dedicated call window
+ * instead (see `callWindowRoot.tsx`) and never puts anything in this tab.
+ */
+type Tab = 'clipboard' | 'chat' | 'members' | 'call';
 /**
  * Files is a peer of Room and Settings rather than a tab inside a room: it is
  * device-to-device, keeps no history and belongs to no room, so gating it
  * behind picking and unlocking one made it unreachable exactly when it was
- * wanted.
+ * wanted. Messages is the same shape, for the same reason.
  */
-type View = 'room' | 'files' | 'settings';
+type View = 'room' | 'files' | 'messages' | 'settings';
 
 /**
  * Where the two-column layout stops fitting.
@@ -79,8 +81,6 @@ type View = 'room' | 'files' | 'settings';
  */
 const NARROW_QUERY = '(max-width: 900px)';
 
-type Toast = { id: number; message: string; tone: StatusTone };
-
 type ModalState =
   | { kind: 'create' }
   | { kind: 'join'; target: DiscoveredRoom | null; code?: string; roomName?: string }
@@ -90,41 +90,8 @@ type ModalState =
   | { kind: 'confirm'; title: string; description: string; confirmLabel: string; action: () => void }
   | null;
 
-const TOAST_MS = 4200;
 /** A typing indicator with no follow-up is dropped after this. */
 const TYPING_EXPIRY_MS = 6000;
-
-function useToasts() {
-  const [toasts, setToasts] = React.useState<Toast[]>([]);
-  const nextId = React.useRef(0);
-
-  const push = React.useCallback((message: string, tone: StatusTone = 'info') => {
-    const id = nextId.current++;
-
-    setToasts((current) => {
-      // The same message twice over is one event as far as anyone reading it is
-      // concerned. It moves back to the bottom and its timer restarts rather
-      // than filling the corner with copies of itself.
-      const withoutDuplicate = current.filter((toast) => toast.message !== message);
-      return [...withoutDuplicate, { id, message, tone }].slice(-4);
-    });
-
-    setTimeout(() => setToasts((current) => current.filter((toast) => toast.id !== id)), TOAST_MS);
-  }, []);
-
-  const dismiss = React.useCallback((id: number) => {
-    setToasts((current) => current.filter((toast) => toast.id !== id));
-  }, []);
-
-  return { toasts, push, dismiss };
-}
-
-function ToastIcon({ tone }: { tone: StatusTone }) {
-  if (tone === 'success') return <CheckCircleIcon size={16} />;
-  if (tone === 'warning') return <AlertIcon size={16} />;
-  if (tone === 'error') return <XCircleIcon size={16} />;
-  return <InfoIcon size={16} />;
-}
 
 export default function App() {
   const [state, setState] = React.useState<AppState | null>(null);
@@ -154,16 +121,25 @@ export default function App() {
   }, []);
   const { toasts, push, dismiss } = useToasts();
 
+  /*
+   * The call itself lives in a window of its own on the desktop (see
+   * `callWindowRoot.tsx`) — this instance stays inert there (`active: false`)
+   * so it never runs a second engine fighting the same microphone, and only
+   * does anything on the phone client, which has no second window to hand it
+   * to.
+   */
   const call = useCall({
     deviceId: state?.deviceId ?? '',
     startCallsMuted: state?.settings.startCallsMuted ?? false,
-    push
+    push,
+    active: isPhoneClient()
   });
 
-  const remote = useRemote({ push });
+  const remote = useRemote({ push, allow: 'host' });
 
   const fileShare = state?.fileShare;
   const files = useFileShare({ fileShare, push });
+  const dm = useDirectMessage({ dmThreads: state?.dmThreads ?? [], push });
 
   const windowState = useWindowState();
 
@@ -208,7 +184,14 @@ export default function App() {
       }),
       api.onHistoryChanged((roomId) => {
         if (roomId === currentRoomIdRef.current) {
-          api.historyGetClipboard(roomId).then(setClips);
+          // Checked again on arrival, not just before asking — the room on
+          // screen can change while this was in flight, and a slow fetch for
+          // the room just left has no business overwriting the one now shown.
+          api.historyGetClipboard(roomId).then((entries) => {
+            if (roomId === currentRoomIdRef.current) {
+              setClips(entries);
+            }
+          });
         }
       }),
       api.onUpdateStatus((status) => {
@@ -218,14 +201,22 @@ export default function App() {
       }),
       api.onReceipts((roomId) => {
         if (roomId === currentRoomIdRef.current) {
-          api.historyGetChat(roomId).then(setMessages);
+          api.historyGetChat(roomId).then((history) => {
+            if (roomId === currentRoomIdRef.current) {
+              setMessages(history);
+            }
+          });
         }
       }),
       // An edit, a withdrawal or a reaction rewrites a message in place, so the
       // room's messages are refetched rather than patched here.
       api.onChatChanged((roomId) => {
         if (roomId === currentRoomIdRef.current) {
-          api.historyGetChat(roomId).then(setMessages);
+          api.historyGetChat(roomId).then((history) => {
+            if (roomId === currentRoomIdRef.current) {
+              setMessages(history);
+            }
+          });
         }
       }),
       api.onTyping(({ roomId, deviceId, deviceName, typing }) => {
@@ -270,9 +261,26 @@ export default function App() {
     const open = (link: DeepLink) => {
       setView('room');
       setShowRooms(false);
-      setModal({ kind: 'join', target: null, code: link.code, roomName: link.roomName });
-      if (link.roomName) {
+
+      // Only interrupt if nothing else is open — the same rule `onInvite`
+      // follows below, and for the same reason: a link arriving mid-form
+      // (typing a new room's password, mid re-key, anything) should not
+      // silently throw that input away. The link itself has nowhere to wait,
+      // so it is dropped rather than queued; the toast only fires when it
+      // actually got to open something.
+      let opened = false;
+      setModal((current) => {
+        if (current) {
+          return current;
+        }
+        opened = true;
+        return { kind: 'join', target: null, code: link.code, roomName: link.roomName };
+      });
+
+      if (opened && link.roomName) {
         push(`Opening an invitation to ${link.roomName}.`, 'info');
+      } else if (!opened) {
+        push('A room invitation arrived — finish what you have open, then use the link again.', 'info');
       }
     };
 
@@ -280,7 +288,14 @@ export default function App() {
     return api.onDeepLink(open);
   }, [push]);
 
-  // Load the selected room's history whenever the selection changes.
+  /*
+   * Load the selected room's history whenever the selection changes.
+   *
+   * Switching rooms twice in quick succession fires two fetches with no
+   * ordering guarantee on which finishes first — without this guard, room
+   * A's slower fetch could resolve after room B's and leave room B's screen
+   * showing room A's messages.
+   */
   const roomId = state?.currentRoomId;
   React.useEffect(() => {
     if (!roomId) {
@@ -289,9 +304,22 @@ export default function App() {
       return;
     }
 
-    api.historyGetClipboard(roomId).then(setClips);
-    api.historyGetChat(roomId).then(setMessages);
+    let cancelled = false;
+    api.historyGetClipboard(roomId).then((entries) => {
+      if (!cancelled) {
+        setClips(entries);
+      }
+    });
+    api.historyGetChat(roomId).then((history) => {
+      if (!cancelled) {
+        setMessages(history);
+      }
+    });
     setTyping({});
+
+    return () => {
+      cancelled = true;
+    };
   }, [roomId]);
 
   // "Stopped typing" travels over the same lossy network as everything else, so
@@ -314,9 +342,10 @@ export default function App() {
   }, [typing]);
 
   /*
-   * A call takes the screen when it starts and gives it back when it ends. It is
-   * the one thing in the app that is time-critical: leaving it in a tab the user
-   * has to go and find is how a call gets missed after it was answered.
+   * A call takes the screen when it starts and gives it back when it ends —
+   * on the phone, the only place `call.session` is ever anything but null,
+   * since the desktop's own instance stays inert and the call window is where
+   * this actually matters there instead.
    */
   const callId = call.session?.callId;
   React.useEffect(() => {
@@ -327,22 +356,6 @@ export default function App() {
       setTab((current) => (current === 'call' ? 'chat' : current));
     }
   }, [callId]);
-
-  /*
-   * The controller's end of a remote session takes the screen the same way, and
-   * for the same reason. The host's end deliberately does not: its window is not
-   * the point, and taking it over would be one more thing in the way of someone
-   * trying to stop the session.
-   */
-  const remoteSessionId = remote.session?.role === 'controller' ? remote.session.sessionId : '';
-  React.useEffect(() => {
-    if (remoteSessionId) {
-      setView('room');
-      setTab('remote');
-    } else {
-      setTab((current) => (current === 'remote' ? 'members' : current));
-    }
-  }, [remoteSessionId]);
 
   // Acknowledge a room's messages while its chat is actually on screen.
   const chatVisible = view === 'room' && tab === 'chat' && Boolean(roomId);
@@ -393,18 +406,12 @@ export default function App() {
   // never fire mid-password.
   const roomIds = state?.rooms.map((candidate) => candidate.roomId).join(',') ?? '';
   const modalOpen = modal !== null || palette !== null;
-  const controllingRemote = remote.session?.role === 'controller' && remote.session.grant === 'control';
   React.useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (!event.ctrlKey && !event.metaKey) {
         return;
       }
       if (modalOpen) {
-        return;
-      }
-      // While driving another machine every keystroke belongs to it, including
-      // the ones this app would otherwise claim.
-      if (controllingRemote) {
         return;
       }
 
@@ -469,7 +476,7 @@ export default function App() {
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [roomIds, modalOpen, controllingRemote]);
+  }, [roomIds, modalOpen]);
 
   async function run(action: Promise<ActionResult>): Promise<boolean> {
     const result = await action;
@@ -506,6 +513,28 @@ export default function App() {
     fileShare?.transfers.filter(
       (transfer) => transfer.status === 'requested' || transfer.status === 'active'
     ).length ?? 0;
+  const unreadMessages = state.dmThreads.reduce((total, thread) => total + thread.unread, 0);
+
+  /**
+   * Places or joins a call. On the phone client, which has no second window,
+   * straight through this window's own `call` controller — everywhere else,
+   * a request to the main process to open the dedicated call window instead.
+   */
+  function startCall(roomId: string, mode: 'audio' | 'video', targetDeviceId?: string) {
+    if (isPhoneClient()) {
+      void call.start(roomId, mode, targetDeviceId);
+    } else {
+      void api.callWindowOpen({ kind: 'start', roomId, mode, targetDeviceId });
+    }
+  }
+
+  function joinCall(callId: string) {
+    if (isPhoneClient()) {
+      void call.join(callId);
+    } else {
+      void api.callWindowOpen({ kind: 'join', callId });
+    }
+  }
 
   /**
    * Everything the palette can do.
@@ -581,29 +610,47 @@ export default function App() {
           : [])
       );
 
-      if (memberCount > 1 && !call.session && canUseMedia()) {
-        list.push(
-          {
-            id: 'call:audio',
-            label: 'Start a voice call',
+      if (memberCount > 1 && !ownCall && canUseMedia()) {
+        if (roomCall) {
+          // Somebody else already started one — offering to "start" a second
+          // would mint an independent call rather than join theirs, splitting
+          // the room across two calls nobody meant to have.
+          list.push({
+            id: 'call:join-room',
+            label: 'Join the call in progress',
             hint: room.name,
-            keywords: 'ring phone audio talk',
-            icon: <PhoneIcon size={14} />,
+            keywords: 'answer ring phone video talk',
+            icon: roomCall.mode === 'video' ? <VideoIcon size={14} /> : <PhoneIcon size={14} />,
             group: 'Calls',
-            run: () => call.start(room.roomId, 'audio')
-          },
-          {
-            id: 'call:video',
-            label: 'Start a video call',
-            hint: room.name,
-            keywords: 'ring camera face',
-            icon: <VideoIcon size={14} />,
-            group: 'Calls',
-            run: () => call.start(room.roomId, 'video')
-          }
-        );
+            run: () => joinCall(roomCall.callId)
+          });
+        } else {
+          list.push(
+            {
+              id: 'call:audio',
+              label: 'Start a voice call',
+              hint: room.name,
+              keywords: 'ring phone audio talk',
+              icon: <PhoneIcon size={14} />,
+              group: 'Calls',
+              run: () => startCall(room.roomId, 'audio')
+            },
+            {
+              id: 'call:video',
+              label: 'Start a video call',
+              hint: room.name,
+              keywords: 'ring camera face',
+              icon: <VideoIcon size={14} />,
+              group: 'Calls',
+              run: () => startCall(room.roomId, 'video')
+            }
+          );
+        }
       }
 
+      // Sharing and leaving stay in the palette only where they mean
+      // something: the phone, whose call is this window's own `call.session`
+      // rather than a separate window's.
       if (call.session) {
         list.push(
           {
@@ -711,11 +758,16 @@ export default function App() {
     api.roomSwitch(hit.roomId).then(() => setTab(hit.kind === 'chat' ? 'chat' : 'clipboard'));
   }
 
+  /** Phone only — the desktop's own instance of `useCall` stays inert. */
   const session = call.session;
   const callRoom = session ? state.rooms.find((r) => r.roomId === session.roomId) : undefined;
+  /** The call this device is already in, if any. */
+  const ownCall = state.activeCalls.find((active) =>
+    active.participants.some((participant) => participant.deviceId === state.deviceId)
+  );
   /** A call under way in the room on screen that this device has not joined. */
   const roomCall = room
-    ? state.activeCalls.find((active) => active.roomId === room.roomId && active.callId !== session?.callId)
+    ? state.activeCalls.find((active) => active.roomId === room.roomId && active.callId !== ownCall?.callId)
     : undefined;
   /*
    * Everything a phone cannot do is decided in one place. The HTTP bridge
@@ -764,6 +816,13 @@ export default function App() {
         }}
         filesOpen={view === 'files'}
         runningTransfers={runningTransfers}
+        showMessages={native}
+        onOpenMessages={() => {
+          setShowRooms(false);
+          setView((current) => (current === 'messages' ? 'room' : 'messages'));
+        }}
+        messagesOpen={view === 'messages'}
+        unreadMessages={unreadMessages}
         onOpenSettings={() => {
           setShowRooms(false);
           setView((current) => (current === 'settings' ? 'room' : 'settings'));
@@ -773,14 +832,21 @@ export default function App() {
 
       <main className="main">
         <header className="topbar">
-          {view === 'settings' || view === 'files' ? (
+          {view === 'settings' || view === 'files' || view === 'messages' ? (
             <>
               <div className="topbar__title">
-                <span className="topbar__name">{view === 'files' ? 'Files' : 'Settings'}</span>
+                <span className="topbar__name">
+                  {view === 'files' ? 'Files' : view === 'messages' ? 'Messages' : 'Settings'}
+                </span>
               </div>
               {view === 'files' && runningTransfers > 0 ? (
                 <Badge tone="accent">
                   {runningTransfers} {runningTransfers === 1 ? 'transfer' : 'transfers'}
+                </Badge>
+              ) : null}
+              {view === 'messages' && unreadMessages > 0 ? (
+                <Badge tone="accent">
+                  {unreadMessages} unread
                 </Badge>
               ) : null}
               <Button
@@ -788,6 +854,7 @@ export default function App() {
                 variant="ghost"
                 onClick={() => {
                   setView('room');
+                  dm.closeThread();
                   if (narrow && !room) {
                     setShowRooms(true);
                   }
@@ -852,12 +919,12 @@ export default function App() {
                 name rather than in a menu. It is hidden rather than disabled
                 when there is nobody to call — a button that never works is
                 worse than one that is not there. */}
-            {view === 'room' && canCall && !session ? (
+            {view === 'room' && canCall && !ownCall ? (
               <>
                 <Button
                   variant="ghost"
                   icon
-                  onClick={() => call.start(room!.roomId, 'audio')}
+                  onClick={() => startCall(room!.roomId, 'audio')}
                   aria-label={`Start a voice call in ${room!.name}`}
                   title="Start a voice call"
                 >
@@ -866,7 +933,7 @@ export default function App() {
                 <Button
                   variant="ghost"
                   icon
-                  onClick={() => call.start(room!.roomId, 'video')}
+                  onClick={() => startCall(room!.roomId, 'video')}
                   aria-label={`Start a video call in ${room!.name}`}
                   title="Start a video call"
                 >
@@ -955,16 +1022,6 @@ export default function App() {
                 <span className="tabbar__live" aria-label="on a call" />
               </button>
             ) : null}
-            {remote.session?.role === 'controller' ? (
-              <button
-                className={tab === 'remote' ? 'tabbar__tab is-active' : 'tabbar__tab'}
-                onClick={() => setTab('remote')}
-              >
-                <MonitorIcon size={14} />
-                {remote.session.peerName}
-                <span className="tabbar__live" aria-label="remote session running" />
-              </button>
-            ) : null}
           </nav>
         )}
 
@@ -979,8 +1036,8 @@ export default function App() {
           />
         ) : null}
 
-        {view === 'room' && online && room && !isLocked && roomCall && !session ? (
-          <CallInProgressBanner call={roomCall} onJoin={() => call.join(roomCall.callId)} />
+        {view === 'room' && online && room && !isLocked && roomCall && !ownCall ? (
+          <CallInProgressBanner call={roomCall} onJoin={() => joinCall(roomCall.callId)} />
         ) : null}
 
         {view === 'settings' ? (
@@ -1059,6 +1116,18 @@ export default function App() {
               onOpenFolder={files.openFolder}
             />
           </div>
+        ) : view === 'messages' ? (
+          // Same reasoning as Files: needs the network, deliberately not a room.
+          // Flush only once a thread is open — the chat layout fills the panel
+          // edge to edge, but the peer list wants the ordinary card padding.
+          <div className={dm.activePeerId ? 'panel panel--flush' : 'panel'}>
+            <DmPanel
+              controller={dm}
+              peers={state.peers}
+              deviceId={state.deviceId}
+              blockedIds={new Set(state.blocked.map((device) => device.deviceId))}
+            />
+          </div>
         ) : !room ? (
           <div className="panel">
             <EmptyState
@@ -1113,17 +1182,6 @@ export default function App() {
                   </Button>
                 </>
               }
-            />
-          </div>
-        ) : tab === 'remote' && remote.session?.role === 'controller' ? (
-          <div className="panel panel--flush">
-            <RemoteViewer
-              session={remote.session}
-              stream={remote.stream}
-              connection={remote.connection}
-              inputReady={remote.inputReady}
-              capture={remote.capture}
-              onEnd={() => remote.end()}
             />
           </div>
         ) : tab === 'call' && session ? (
@@ -1221,6 +1279,12 @@ export default function App() {
                 onApprove={(memberId) => run(api.roomApproveMember(room.roomId, memberId))}
                 onReject={(memberId) => run(api.roomRejectMember(room.roomId, memberId))}
                 canRemote={native}
+                onCallRequest={(memberId) => startCall(room.roomId, 'audio', memberId)}
+                canCall={canUseMedia()}
+                onMessageRequest={(memberId, memberName) => {
+                  dm.openThread(memberId, memberName);
+                  setView('messages');
+                }}
                 onRemoteRequest={(memberId) => remote.ask(room.roomId, memberId)}
                 onEdit={() => setModal({ kind: 'edit', room })}
                 onBlock={(memberId, memberName) =>
@@ -1277,7 +1341,25 @@ export default function App() {
 
       {modal?.kind === 'join' && (
         <JoinRoomModal
-          target={modal.target}
+          // Forces a remount, not just a prop update, whenever a *different*
+          // ask arrives while the dialog is already open (a second deep link,
+          // a second discovered-room click) — otherwise the form's own state
+          // (the code/password already typed) survives from the first ask
+          // while the title above it updates to the second, an out-of-sync
+          // dialog no amount of prop-passing fixes on its own.
+          key={modal.target?.roomId ?? modal.code ?? 'code'}
+          // Re-resolved against live discovery on every render, not just the
+          // snapshot taken when the dialog was opened — an owner can change a
+          // room's type or password while this is still on screen, and the
+          // dialog should join what it currently says rather than what it
+          // said a moment ago. Falls back to the snapshot if the room has
+          // since dropped out of range entirely.
+          target={
+            modal.target
+              ? (state.discovered.find((candidate) => candidate.roomId === modal.target!.roomId) ??
+                modal.target)
+              : null
+          }
           initialCode={modal.code}
           onClose={() => setModal(null)}
           onJoinDiscovered={(id, password, code) => run(api.roomRequestJoin(id, password, code))}
@@ -1287,6 +1369,7 @@ export default function App() {
 
       {modal?.kind === 'edit' && (
         <EditRoomModal
+          key={modal.room.roomId}
           room={modal.room}
           onClose={() => setModal(null)}
           onSave={(patch) => run(api.roomUpdate(modal.room.roomId, patch))}
@@ -1357,7 +1440,8 @@ export default function App() {
       )}
 
       {/* A ring interrupts whatever else is open. Unlike an invitation it is
-          over in seconds, so it cannot wait its turn behind a dialog. */}
+          over in seconds, so it cannot wait its turn behind a dialog. Phone
+          only — the desktop's own ring is the call window's to show. */}
       {call.ringing && (
         <IncomingCallModal
           ring={call.ringing}
@@ -1387,16 +1471,7 @@ export default function App() {
         />
       )}
 
-      <div className="toasts" role="status" aria-live="polite">
-        {toasts.map((toast) => (
-          <div key={toast.id} className={`toast toast--${toast.tone}`} onClick={() => dismiss(toast.id)}>
-            <span className="toast__icon">
-              <ToastIcon tone={toast.tone} />
-            </span>
-            <span className="toast__message">{toast.message}</span>
-          </div>
-        ))}
-      </div>
+      <Toasts toasts={toasts} onDismiss={dismiss} />
     </div>
   );
 }
