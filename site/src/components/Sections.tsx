@@ -11,7 +11,8 @@ import {
   TransferIcon,
   RoomIcon,
   CallIcon,
-  PhoneIcon
+  PhoneIcon,
+  MessageIcon
 } from './icons';
 
 /* ---------------------------------------------------------------- campus -- */
@@ -123,20 +124,26 @@ const FEATURES: Feature[] = [
     body: 'A room is a shared space with a password only its members know. Messages, replies, reactions and read receipts, encrypted with it.'
   },
   {
+    icon: <MessageIcon />,
+    title: 'Direct messages',
+    tag: 'New',
+    body: "Message one device straight, no room required. Anyone visible on the network can reach anyone else — its own thread, its own unread badge."
+  },
+  {
     icon: <CallIcon />,
     title: 'Voice and video',
     tag: 'From a phone',
-    body: 'Call everyone in the room, peer to peer over WebRTC, with no signalling server anywhere. Share a screen while you talk.'
+    body: 'Call the whole room, or ring one person directly — each in its own window, so closing it hangs up and minimising never does. Peer to peer over WebRTC, no signalling server anywhere.'
   },
   {
     icon: <ScreenIcon />,
     title: 'Remote desktop',
-    body: "See another machine's screen and take its mouse and keyboard — after its owner says yes, and only for as long as they allow."
+    body: "See another machine's screen and take its mouse and keyboard — after its owner says yes, and only for as long as they allow. Its own window too, with a floating indicator on the host's side."
   },
   {
     icon: <PhoneIcon />,
     title: 'Your phone, paired once',
-    body: 'Scan a code and your phone has the whole app in its browser. Nothing to install, and the connection is encrypted.'
+    body: 'Scan a code and your phone has the whole app in its browser, over a connection your computer encrypts end to end. Nothing to install, no plaintext option to get wrong.'
   }
 ];
 
@@ -182,7 +189,7 @@ export function Features() {
       <div className="wrap">
         <motion.p className="eyebrow" {...reveal()}>What it does</motion.p>
         <h2 className="statement">
-          <Words inView>Six things.</Words>{' '}
+          <Words inView>Seven things.</Words>{' '}
           <em><Words inView delay={0.16}>None of them touch the internet.</Words></em>
         </h2>
 

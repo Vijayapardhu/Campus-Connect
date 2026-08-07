@@ -4,8 +4,8 @@ import { useSmoothScroll } from '../lib/useSmoothScroll';
 import { CountUp, ScrollProgress, Words } from '../lib/effects';
 import { useReducedMotion } from 'motion/react';
 import { Magnetic } from '../lib/Magnetic';
-import { ICON } from '../lib/assets';
 import { Footer } from './Footer';
+import { SubpageHeader } from './Header';
 import { ArrowIcon } from './icons';
 import { STATS, TIMELINE, MODULES, AREAS, MISSTEPS } from '../data/build';
 import {
@@ -25,27 +25,6 @@ import {
  * directory up. The same goes for the footer, which takes a prefix.
  */
 const ROOT = '../';
-
-function Header() {
-  return (
-    <header className="is-stuck">
-      <div className="wrap bar">
-        <a className="brand" href={`${ROOT}index.html`}>
-          <img src={ICON} alt="" width={27} height={27} />
-          <span>Campus Connect</span>
-        </a>
-        <nav>
-          <a className="hide-sm" href={`${ROOT}index.html#what`}>What it does</a>
-          <a className="hide-sm" href={`${ROOT}index.html#private`}>Privacy</a>
-          <a className="hide-sm" href={`${ROOT}changelog.html`}>Changelog</a>
-          <Magnetic strength={7}>
-            <a className="btn btn--go btn--sm" href={`${ROOT}index.html#get`}>Download</a>
-          </Magnetic>
-        </nav>
-      </div>
-    </header>
-  );
-}
 
 /* ------------------------------------------------------------------ page -- */
 
@@ -70,7 +49,7 @@ export default function BuildLog() {
   return (
     <>
       <ScrollProgress />
-      <Header />
+      <SubpageHeader root={ROOT} />
 
       <main>
         {/* ------------------------------------------------------- opening -- */}

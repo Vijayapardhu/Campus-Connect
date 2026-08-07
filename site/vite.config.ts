@@ -40,7 +40,7 @@ export default defineConfig({
     assetsDir: 'assets',
 
     /*
-     * Four pages, not one.
+     * Five pages, not one.
      *
      * The legal and changelog pages are prose. Routing to them client-side
      * would mean shipping a router, and on static hosting a deep link to one
@@ -49,22 +49,24 @@ export default defineConfig({
      */
     rollupOptions: {
       /*
-       * `build/index.html` rather than `build.html`.
+       * `build/index.html` rather than `build.html` — and the same for
+       * `changelog/`, `privacy/` and `terms/`.
        *
        * Static hosting has no rewrite rules, so /build would simply 404
        * against a file called build.html. A directory with an index in it is
        * how you get an extensionless URL out of GitHub Pages — it serves
        * /build/ and redirects /build to it.
        *
-       * The cost is that page sits one level down, so anything it links to
-       * at the site root needs `../`. See the `prefix` prop on Footer.
+       * The cost is that every one of these pages sits one level down, so
+       * anything it links to at the site root needs `../`. See the `prefix`
+       * prop on Footer and the `root` prop on SubpageHeader.
        */
       input: {
         main: here('index.html'),
         build: here('build/index.html'),
-        changelog: here('changelog.html'),
-        privacy: here('privacy.html'),
-        terms: here('terms.html')
+        changelog: here('changelog/index.html'),
+        privacy: here('privacy/index.html'),
+        terms: here('terms/index.html')
       }
     },
 

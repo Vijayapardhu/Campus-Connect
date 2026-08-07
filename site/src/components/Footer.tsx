@@ -13,11 +13,14 @@ const MARK = 'Campus Connect';
  *   hash — a section of the landing page. On the landing page itself it stays
  *          a bare `#what`, so Lenis intercepts it and scrolls; anywhere else
  *          it has to become a real navigation to index.html.
- *   page — a file at the site root, prefixed to get back there.
+ *   page — a directory one level down (`changelog/`, `privacy/`, ...),
+ *          prefixed to get back to it. Every page but the landing one lives
+ *          in its own folder with an index.html inside, so its URL is that
+ *          folder's name with no extension in it anywhere.
  *   to   — absolute, used as written.
  *
- * The build log lives one directory down so its URL can drop the extension,
- * which is what makes all of this necessary.
+ * The footer itself is rendered at two depths — root and one down — which is
+ * why every relative link goes through `prefix` rather than being hardcoded.
  */
 interface Column {
   heading: string;
@@ -41,14 +44,14 @@ const COLUMNS: Column[] = [
       { label: 'Source', to: 'https://github.com/Vijayapardhu/Clipboard' },
       { label: 'Issues', to: 'https://github.com/Vijayapardhu/Clipboard/issues' },
       { label: 'Releases', to: 'https://github.com/Vijayapardhu/Clipboard/releases' },
-      { label: 'Changelog', page: 'changelog.html' }
+      { label: 'Changelog', page: 'changelog/' }
     ]
   },
   {
     heading: 'Legal',
     links: [
-      { label: 'Privacy policy', page: 'privacy.html' },
-      { label: 'Terms', page: 'terms.html' },
+      { label: 'Privacy policy', page: 'privacy/' },
+      { label: 'Terms', page: 'terms/' },
       { label: 'MIT licence', to: 'https://github.com/Vijayapardhu/Clipboard/blob/main/LICENSE' }
     ]
   }

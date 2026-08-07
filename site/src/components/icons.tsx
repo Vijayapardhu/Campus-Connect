@@ -14,6 +14,7 @@ import {
   Search,
   ScreenShare,
   ArrowRight,
+  MessageCircle,
   type LucideProps
 } from 'lucide-react';
 
@@ -48,6 +49,7 @@ export const PhoneIcon = tuned(Smartphone);
 export const LockIcon = tuned(KeyRound);
 export const SearchIcon = tuned(Search);
 export const ShareIcon = tuned(ScreenShare);
+export const MessageIcon = tuned(MessageCircle);
 
 export const ArrowIcon = () => (
   <ArrowRight size={14} strokeWidth={2.2} absoluteStrokeWidth aria-hidden="true" />
