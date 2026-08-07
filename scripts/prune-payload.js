@@ -113,13 +113,28 @@ function localePacks(context) {
  * Prebuild directories are named `<platform>-<arch>`, and one can cover several
  * architectures (`darwin-x64+arm64`). This mirrors how node-gyp-build itself
  * picks one, so we only delete directories it would have skipped anyway.
+ *
+ * That is true for *loading* one at runtime — node-gyp-build filters the
+ * listing by name and never opens the rest, exactly as intended. It is not
+ * true for *building* a macOS universal binary. That packs x64 and arm64
+ * separately into temp directories first, then merges them, and the merge
+ * step reads the x64 build's original asar header — written before this hook
+ * ever runs — to find every `asarUnpack`'ed file worth reconciling between
+ * the two halves. Prune the temp builds ahead of that merge and it goes
+ * looking for a prebuild this hook already deleted, which fails the whole
+ * build rather than harmlessly skipping it. So on darwin this only runs on
+ * the final, already-merged `universal` pass; the two temp builds that feed
+ * it are left alone, since nothing they carry reaches the installer directly.
  */
 function robotjsPrebuilds(context) {
   const { appOutDir, electronPlatformName, arch, packager } = context;
+  const wanted = ARCH_NAMES[arch];
 
-  // The .node files are asarUnpack'ed, so the real bytes live out here. The
-  // asar header still lists the directories we delete, which is harmless:
-  // node-gyp-build filters that listing by name and never opens the rest.
+  if (electronPlatformName === 'darwin' && wanted !== 'universal') {
+    return [];
+  }
+
+  // The .node files are asarUnpack'ed, so the real bytes live out here.
   const resources =
     electronPlatformName === 'darwin'
       ? path.join(appOutDir, `${packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
@@ -133,8 +148,6 @@ function robotjsPrebuilds(context) {
     'prebuilds',
   );
   if (!fs.existsSync(dir)) return [];
-
-  const wanted = ARCH_NAMES[arch];
 
   return fs.readdirSync(dir).map((name) => {
     const [platform, architectures] = name.split('-');
