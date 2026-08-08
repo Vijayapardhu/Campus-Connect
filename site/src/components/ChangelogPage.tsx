@@ -32,8 +32,64 @@ export default function ChangelogPage() {
 
           <div className="release">
             <div className="release__head">
-              <h2>0.7.0</h2>
+              <h2>0.8.0</h2>
               <span className="release__now">Latest</span>
+              <span className="release__date">8 August 2026</span>
+            </div>
+
+            <h3>New</h3>
+            <ul>
+              <li><strong>Direct messages are end-to-end encrypted.</strong> Each pair of devices
+              derives its own key by X25519 agreement — the same way a room hands a fresh key to one
+              member, reused here with no password to share and no exchange step either side has to
+              do by hand.</li>
+              <li><strong>Direct messages now have delivered/seen receipts and a typing
+              indicator</strong> — the same tracking room chat already had, reaching a 1:1 thread for
+              the first time.</li>
+              <li><strong>Search reaches direct messages.</strong> <code>Ctrl+Shift+F</code> used to
+              search clipboard history and room chat only; it now finds anything sent or received
+              directly too.</li>
+              <li><strong>Devices added by IP are remembered</strong> and reconnected to automatically
+              on every future launch, instead of the address being asked for again each session.</li>
+              <li><strong>A fourth room restriction: remote desktop.</strong> An owner could already
+              stop a member sending messages, files, or starting calls in one room without a full
+              block — screen sharing joins that same list.</li>
+              <li><strong><code>@mentions</code> in room chat</strong>, with an autocomplete as you
+              type and a stronger notification for whoever is named.</li>
+              <li><strong>Forward any message</strong> — room chat or direct — to another room or
+              thread without retyping it.</li>
+              <li><strong>Pin a chat message</strong>, the same as a clipboard entry already could
+              be.</li>
+              <li><strong>Paste an image straight into the composer.</strong> Attaching a file no
+              longer always means the native picker.</li>
+              <li><strong>Export a conversation</strong> to a plain-text file, from either a room or a
+              direct thread.</li>
+            </ul>
+
+            <h3>Fixed</h3>
+            <ul>
+              <li>A wrong room password used to be accepted unconditionally and cached, leaving the
+              room looking unlocked while nothing in it could actually decrypt. It is now verified
+              before anything is cached — a wrong password keeps the dialog open instead.</li>
+              <li>An incoming call's ring could close itself before there had been a chance to answer
+              it. A shorter, unrelated liveness check was tearing it down on ordinary heartbeat
+              jitter, well before the real, deliberate 45-second timeout — it now relies on that
+              timeout alone.</li>
+              <li>Remote desktop's pointer was off on any display not at 100% Windows scaling (or a
+              Retina Mac) — coordinates were computed from logical pixels; the native cursor APIs
+              expect physical ones.</li>
+              <li>Remote-desktop streaming now caps its bitrate and hints the encoder for screen
+              content, so a burst of on-screen motion no longer pushes it into a lag spike the link
+              has no headroom for.</li>
+              <li>The master on/off switch was labelled &ldquo;Shared clipboard&rdquo; everywhere it
+              appears, which read as clipboard-only even though it already stopped everything &mdash;
+              chat, rooms, calls, all of it. Relabelled throughout.</li>
+            </ul>
+          </div>
+
+          <div className="release">
+            <div className="release__head">
+              <h2>0.7.0</h2>
               <span className="release__date">7 August 2026</span>
             </div>
 
