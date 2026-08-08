@@ -135,11 +135,42 @@ export function isModifier(robotKey: string): boolean {
 }
 
 /**
+ * Converts a display's bounds from logical (DIP) pixels to physical pixels.
+ *
+ * Electron's `screen` module always reports `display.bounds` in DIP — e.g. a
+ * 3840×2160 monitor at 150% Windows scaling reports a width of 2560. Robotjs
+ * moves the OS cursor in physical pixels (`SetCursorPos` on Windows,
+ * `CGWarpMouseCursorPosition` on macOS), so feeding it DIP bounds directly
+ * makes every injected point drift from where the controller is actually
+ * pointing, growing with distance from the display's origin — the "pointer
+ * offset" bug. Multiplying by `scaleFactor` before mapping fixes the common
+ * case of a single display at a uniform, non-100% scale.
+ *
+ * What this does not solve: a virtual desktop spanning displays at *different*
+ * scale factors, where Windows' own origin math for the secondary display is
+ * not simply "its bounds times its own scale factor." That is a genuinely
+ * harder problem; this at least gets the overwhelmingly common single-scale
+ * case — including the primary display in a mixed setup — exactly right,
+ * rather than leaving every setup wrong the way it is today.
+ */
+export function scaleBounds(bounds: ScreenBounds, scaleFactor: number): ScreenBounds {
+  const factor = Number.isFinite(scaleFactor) && scaleFactor > 0 ? scaleFactor : 1;
+  return {
+    x: Math.round(bounds.x * factor),
+    y: Math.round(bounds.y * factor),
+    width: Math.round(bounds.width * factor),
+    height: Math.round(bounds.height * factor)
+  };
+}
+
+/**
  * Maps a fraction of the shared screen onto a desktop coordinate.
  *
  * Clamped rather than trusted: a hostile or simply buggy controller sending
  * 12.5 must not be able to fling the pointer onto another monitor, and on a
  * multi-monitor machine the shared screen is only part of the desktop.
+ *
+ * `bounds` is expected to already be in physical pixels — see `scaleBounds`.
  */
 export function toScreenPoint(x: number, y: number, bounds: ScreenBounds): { x: number; y: number } {
   const clamp = (value: number) => (Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0);

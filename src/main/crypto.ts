@@ -195,8 +195,8 @@ export function unwrapKeyFrom(
   return key.length === KEY_BYTES ? key : null;
 }
 
-function agreedKey(privateKeyB64: string, publicKeyB64: string, roomId: string): Buffer {
-  const shared = diffieHellman({
+function sharedSecret(privateKeyB64: string, publicKeyB64: string): Buffer {
+  return diffieHellman({
     privateKey: createPrivateKey({
       key: Buffer.from(privateKeyB64, 'base64'),
       format: 'der',
@@ -208,11 +208,39 @@ function agreedKey(privateKeyB64: string, publicKeyB64: string, roomId: string):
       type: 'spki'
     })
   });
+}
 
+function agreedKey(privateKeyB64: string, publicKeyB64: string, roomId: string): Buffer {
   return createHash('sha256')
-    .update(shared)
+    .update(sharedSecret(privateKeyB64, publicKeyB64))
     .update('campus-connect:roomkey:', 'utf8')
     .update(roomId, 'utf8')
+    .digest();
+}
+
+/**
+ * The per-pair AES key two devices use to seal a direct message end to end.
+ *
+ * The same X25519 agreement `agreedKey` already does to wrap a room's content
+ * key to one device — generalized here: domain-separated by the sorted pair
+ * of device ids instead of a room id, so it needs no exchange round trip.
+ * Each side already has its own box private key and, from the sender's box
+ * public key riding on every message on the wire (`WireMessage.boxPubKey`),
+ * the other's box public key — that alone is enough for both to independently
+ * compute the identical key. Sorting the pair before hashing is what makes it
+ * identical regardless of which side is "self" and which is "peer".
+ */
+export function dmAgreedKey(
+  selfPrivateKey: string,
+  peerPublicKey: string,
+  selfDeviceId: string,
+  peerDeviceId: string
+): Buffer {
+  const pair = [selfDeviceId, peerDeviceId].sort().join(':');
+  return createHash('sha256')
+    .update(sharedSecret(selfPrivateKey, peerPublicKey))
+    .update('campus-connect:dmkey:', 'utf8')
+    .update(pair, 'utf8')
     .digest();
 }
 

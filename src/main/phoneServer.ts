@@ -63,8 +63,8 @@ export type PhoneServerHooks = {
  *
  * A deny list rather than an allow list, because a paired phone is the same
  * person holding the same laptop and the useful default is that everything
- * works. What is left out is left out for one of two reasons, and neither is
- * "we did not get round to it":
+ * works. What is left out is left out for one of three reasons, and none of
+ * them is "we did not get round to it":
  *
  *  - **It cannot work.** Remote desktop injects input using screen coordinates
  *    and a native module; calls need the phone to be its own WebRTC peer, which
@@ -73,26 +73,43 @@ export type PhoneServerHooks = {
  *  - **It would be a surprise.** Granting somebody control of the laptop, or
  *    restarting it into an update, are not things to be able to do by accident
  *    from a pocket.
+ *  - **It opens a native dialog on the laptop.** This is the one that is easy
+ *    to reintroduce, so it is worth stating as a rule rather than a list: a
+ *    request from a phone must never make a file picker or a save dialog appear
+ *    on the desktop. The phone is often in another room, and a modal nobody is
+ *    standing in front of blocks the window it is attached to until somebody
+ *    walks over and dismisses it. Every `dialog.show*` call in `main.ts` is
+ *    therefore behind an entry here — `files:pick`, `dm:send-file`,
+ *    `dm:save-file` and both exports by prefix, `chat:send-file` and
+ *    `chat:save-file` by name, since `chat:` as a whole must stay reachable.
  *
  * Everything else — every room, chat, members, blocking, settings, snippets,
  * search — is reachable.
  *
- * `files:` and `dm:` belong here too, and for both of the reasons above at
- * once. `httpApi.ts` already refuses them client-side — that refusal is
- * cosmetic on its own, since a request straight to `/api/rpc` never runs that
- * code at all. This is the actual gate.
+ * `httpApi.ts` refuses most of these client-side too, but **that refusal is
+ * cosmetic**: a request straight to `/api/rpc` never runs the phone's own
+ * client code. This list is the actual gate, and the tests in `test/run.js`
+ * under "what a paired phone may ask for" are what keep the two in step.
  *  - Files: a phone browser page has no native file picker and no direct TCP
  *    socket to stream slices over — it genuinely cannot work.
  *  - Direct messages: technically could — it is the same transport room chat
  *    already uses from a phone — but a phone has no place of its own to keep
  *    a thread outside a room's chat, so it stays out until it does.
+ *  - Sending and saving a chat file: the room's chat is otherwise fully
+ *    reachable, but these two are the picker and the save dialog, so they are
+ *    named individually. A phone can still *read* a file somebody sent — it is
+ *    in the message like any other content — it simply cannot drive the
+ *    laptop's file dialogs to add one or write one out.
  */
 export const PHONE_DENIED = [
   'remote:',
   'quick-paste:',
   'update:install',
   'files:',
-  'dm:'
+  'dm:',
+  'history:export',
+  'chat:send-file',
+  'chat:save-file'
 ];
 
 /**

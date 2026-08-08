@@ -5,11 +5,21 @@ import type {
   RoomAdvert,
   RoomInfo,
   RoomMember,
+  RoomRestrictions,
   RoomType
 } from '../shared/types';
 
 /** A room advert is forgotten once its owner stops announcing. */
 const ADVERT_TTL_MS = 20000;
+
+/**
+ * The room id a direct 1:1 call between two devices always lands on.
+ * Deterministic and order-independent so both sides compute the same id
+ * without a network round trip — see `RoomManager.ensureDirectRoom`.
+ */
+export function directRoomId(deviceIdA: string, deviceIdB: string): string {
+  return `dm:${[deviceIdA, deviceIdB].sort().join(':')}`;
+}
 
 /**
  * Where rooms and their derived keys are kept between runs. Implemented in
@@ -292,6 +302,102 @@ export class RoomManager {
     }
 
     room.members = room.members.filter((member) => member.deviceId !== deviceId);
+    this.persist();
+    return room;
+  }
+
+  /**
+   * A lesser tier than a full block — the owner narrows what one member may
+   * do in this one room, rather than severing the device network-wide. Lives
+   * on the roster, so it reaches every device the ordinary `room-roster`
+   * broadcast already does, and is dropped the same way any other roster
+   * fact is when the member leaves or is removed. The owner can never be
+   * restricted in their own room — there is nobody else to enforce it.
+   */
+  setMemberRestrictions(
+    roomId: string,
+    deviceId: string,
+    restrictions: RoomRestrictions
+  ): RoomInfo | undefined {
+    const room = this.rooms.get(roomId);
+    const member = room?.members.find((candidate) => candidate.deviceId === deviceId);
+    if (!room || !member || member.role === 'owner') {
+      return undefined;
+    }
+
+    const next: RoomRestrictions = {
+      chat: Boolean(restrictions.chat),
+      files: Boolean(restrictions.files),
+      calls: Boolean(restrictions.calls),
+      remote: Boolean(restrictions.remote)
+    };
+    // Cleared back to `undefined` when nothing is restricted, so an
+    // all-false object never reads as "restricted" anywhere downstream.
+    member.restricted = next.chat || next.files || next.calls || next.remote ? next : undefined;
+
+    this.persist();
+    return room;
+  }
+
+  /** What this device is restricted from doing in a room, per its own roster copy. */
+  getRestrictions(roomId: string, deviceId: string): RoomRestrictions | undefined {
+    const room = this.rooms.get(roomId);
+    return room?.members.find((member) => member.deviceId === deviceId)?.restricted;
+  }
+
+  /**
+   * A hidden, symmetric 1:1 room that exists only to give a direct call
+   * between two DM peers something to be gated by — every call in this app
+   * is gated by room membership, and this reuses that machinery rather than
+   * inventing a parallel signaling path.
+   *
+   * Deterministic and computed independently on each device: given the same
+   * two device ids, both sides land on the same roomId and the same
+   * two-member roster without any wire message ever syncing it, which is
+   * what makes it safe to skip the usual "roster is owner-authoritative"
+   * broadcast for this one case — there is nothing for the two copies to
+   * disagree about. `ownerId` still has to point at one of the two members
+   * (the type requires it) but carries no special authority here; it is
+   * just whichever device id sorts first, so both sides agree on it too.
+   *
+   * Never advertised (`toAdvert` skips `type: 'direct'`) and never listed
+   * among "your rooms" (the renderer's own room list filters it out).
+   */
+  ensureDirectRoom(selfId: string, selfName: string, peerId: string, peerName: string): RoomInfo {
+    const roomId = directRoomId(selfId, peerId);
+    const existing = this.rooms.get(roomId);
+    if (existing) {
+      // Keep the peer's display name current — a device that has since
+      // renamed itself should not leave a stale name pinned to a room
+      // nobody ever otherwise edits.
+      const member = existing.members.find((candidate) => candidate.deviceId === peerId);
+      if (member && member.deviceName !== peerName) {
+        member.deviceName = peerName;
+        this.persist();
+      }
+      return existing;
+    }
+
+    const ownerFirst = selfId < peerId;
+    const owner = ownerFirst ? { id: selfId, name: selfName } : { id: peerId, name: peerName };
+    const other = ownerFirst ? { id: peerId, name: peerName } : { id: selfId, name: selfName };
+
+    const room: RoomInfo = {
+      roomId,
+      name: peerName,
+      type: 'direct',
+      ownerId: owner.id,
+      ownerName: owner.name,
+      keySalt: '',
+      encrypted: false,
+      createdAt: Date.now(),
+      members: [
+        { deviceId: owner.id, deviceName: owner.name, status: 'accepted', role: 'owner', joinedAt: Date.now() },
+        { deviceId: other.id, deviceName: other.name, status: 'accepted', role: 'member', joinedAt: Date.now() }
+      ]
+    };
+
+    this.rooms.set(roomId, room);
     this.persist();
     return room;
   }

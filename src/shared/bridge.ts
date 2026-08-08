@@ -19,6 +19,7 @@ import type {
   RemoteSessionState,
   RemoteSignal,
   RoomInvite,
+  RoomRestrictions,
   SearchHit,
   Snippet,
   RoomType,
@@ -45,6 +46,12 @@ export type TypingEvent = {
   roomId: string;
   deviceId: string;
   deviceName: string;
+  typing: boolean;
+};
+
+export type DmTypingEvent = {
+  peerId: string;
+  peerName: string;
   typing: boolean;
 };
 
@@ -111,6 +118,8 @@ export type CampusConnectApi = {
   updateDeviceName: (deviceName: string) => Promise<AppState>;
   updateSettings: (patch: Partial<AppSettings>) => Promise<AppState>;
   connectPeer: (host: string, port: number, name: string) => Promise<AppState>;
+  /** Stops reconnecting to a device added by IP on every launch. Any live connection is untouched. */
+  forgetPeer: (host: string, port: number) => Promise<AppState>;
   /** Opens one of the project's own links in the system browser. Allowlisted. */
   openExternal: (url: string) => Promise<ActionResult>;
   /**
@@ -135,6 +144,7 @@ export type CampusConnectApi = {
   roomApproveMember: (roomId: string, memberId: string) => Promise<ActionResult>;
   roomRejectMember: (roomId: string, memberId: string) => Promise<ActionResult>;
   roomRemoveMember: (roomId: string, memberId: string) => Promise<ActionResult>;
+  roomSetRestrictions: (roomId: string, memberId: string, restrictions: RoomRestrictions) => Promise<ActionResult>;
   /** PNG data URL of the room's join code, or null if it has none. */
   roomQrCode: (roomId: string) => Promise<string | null>;
   /** Owner only. Invites a device seen on the network; sends no credentials. */
@@ -147,6 +157,11 @@ export type CampusConnectApi = {
   historyDeleteEntry: (entryId: string) => Promise<ActionResult>;
   historyTogglePin: (entryId: string) => Promise<ActionResult>;
   historyClearRoom: (roomId: string) => Promise<ActionResult>;
+  /**
+   * Writes a room's chat out as a plain-text file, through a native save
+   * dialog. An export, not a backup — attachments are named, not written.
+   */
+  historyExport: (roomId: string) => Promise<ActionResult>;
 
   chatSend: (
     type: ChatMessage['type'],
@@ -166,6 +181,8 @@ export type CampusConnectApi = {
   chatDelete: (messageId: string, forEveryone: boolean) => Promise<ActionResult>;
   /** Adds this device's reaction, or takes it back if it is already there. */
   chatReact: (messageId: string, emoji: string) => Promise<ActionResult>;
+  /** Bookmarks a message on this device alone. Never sent — see `ChatMessage.pinned`. */
+  chatTogglePin: (messageId: string) => Promise<ActionResult>;
   /** Tells the room whether this device is composing. Never stored. */
   chatTyping: (roomId: string, typing: boolean) => Promise<void>;
   /** Opens a native picker, then sends the chosen file into the room. */
@@ -229,6 +246,8 @@ export type CampusConnectApi = {
   /** Whole displays only — a window cannot be clicked on reliably. */
   remoteScreens: () => Promise<ScreenSource[]>;
   remoteCapabilities: () => Promise<RemoteCapabilities>;
+  /** Hides the floating "you are being driven" reminder without ending the session. */
+  remoteHideIndicator: () => Promise<void>;
 
   /**
    * Claims the `campusconnect://` link that brought the app here, if any.
@@ -266,13 +285,56 @@ export type CampusConnectApi = {
 
   /**
    * Direct 1:1 messages. Same reach as file sharing — any device currently
-   * visible on the network, no room in common required.
+   * visible on the network, no room in common required. Edit/delete/react
+   * mirror `chatEdit`/`chatDelete`/`chatReact` exactly, just addressed to a
+   * peer instead of a room, so the same message-row UI can drive both.
    */
-  dmSend: (peerId: string, peerName: string, content: string) => Promise<ActionResult>;
+  dmSend: (
+    peerId: string,
+    peerName: string,
+    type: DirectMessage['type'],
+    content: string,
+    dataUrl?: string,
+    fileName?: string,
+    /** Id of the message being answered; the quote is built from the thread. */
+    replyToId?: string
+  ) => Promise<ActionResult>;
+  /** Opens a native picker, then sends the chosen file into the thread. */
+  dmSendFile: (peerId: string, peerName: string) => Promise<ActionResult>;
+  /** Rewrites your own message, everywhere. */
+  dmEdit: (peerId: string, messageId: string, content: string) => Promise<ActionResult>;
+  /**
+   * Removes a message. `forEveryone` withdraws it from the thread and is only
+   * allowed on your own; without it, only this device forgets it.
+   */
+  dmDelete: (peerId: string, messageId: string, forEveryone: boolean) => Promise<ActionResult>;
+  /** Adds this device's reaction, or takes it back if it is already there. */
+  dmReact: (peerId: string, messageId: string, emoji: string) => Promise<ActionResult>;
+  /** The DM half of `chatTogglePin` — local to this device, never sent. */
+  dmTogglePin: (peerId: string, messageId: string) => Promise<ActionResult>;
+  /** Opens a native save dialog for a received file. Never opens the file. */
+  dmSaveFile: (peerId: string, messageId: string) => Promise<ActionResult>;
   dmGetThread: (peerId: string) => Promise<DirectMessage[]>;
   dmMarkRead: (peerId: string) => Promise<void>;
-  /** A message arrived, either direction — the renderer already knows which. */
+  /** Collapses a thread into the Messages page's Archived section — never a delete. */
+  dmArchiveThread: (peerId: string, archived: boolean) => Promise<void>;
+  /** Removes a thread's history from this device alone. */
+  dmDeleteThread: (peerId: string) => Promise<void>;
+  /** The DM half of `historyExport` — same format, same dialog. */
+  dmExport: (peerId: string) => Promise<ActionResult>;
+  /**
+   * Resolves (creating if needed) the hidden 1:1 room a call with this DM
+   * peer belongs in, and returns its id — pass the result straight to
+   * `callWindowOpen({ kind: 'start', roomId, mode, targetDeviceId: peerId })`,
+   * the same as any other call.
+   */
+  dmEnsureCallRoom: (peerId: string, peerName: string) => Promise<string>;
+  /** Tells a DM peer whether this device is currently composing. Never stored. */
+  dmTyping: (peerId: string, typing: boolean) => Promise<void>;
+  /** A message arrived or changed, either direction — the renderer already knows which and upserts by id. */
   onDmMessage: (handler: (message: DirectMessage) => void) => () => void;
+  /** Someone started or stopped composing in a direct thread. */
+  onDmTyping: (handler: (event: DmTypingEvent) => void) => () => void;
 
   /**
    * Blocking. Total and local: nothing from a blocked device is read, stored,

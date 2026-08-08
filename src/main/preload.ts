@@ -15,6 +15,7 @@ const api: CampusConnectApi = {
   updateDeviceName: (deviceName) => ipcRenderer.invoke('app:update-device-name', deviceName),
   updateSettings: (patch) => ipcRenderer.invoke('app:update-settings', patch),
   connectPeer: (host, port, name) => ipcRenderer.invoke('app:connect-peer', host, port, name),
+  forgetPeer: (host, port) => ipcRenderer.invoke('app:forget-peer', host, port),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
   openLink: (url) => ipcRenderer.invoke('app:open-link', url),
 
@@ -29,6 +30,8 @@ const api: CampusConnectApi = {
   roomApproveMember: (roomId, memberId) => ipcRenderer.invoke('room:approve-member', roomId, memberId),
   roomRejectMember: (roomId, memberId) => ipcRenderer.invoke('room:reject-member', roomId, memberId),
   roomRemoveMember: (roomId, memberId) => ipcRenderer.invoke('room:remove-member', roomId, memberId),
+  roomSetRestrictions: (roomId, memberId, restrictions) =>
+    ipcRenderer.invoke('room:set-restrictions', roomId, memberId, restrictions),
   roomQrCode: (roomId) => ipcRenderer.invoke('room:qr-code', roomId),
   roomInvite: (roomId, targetDeviceId) => ipcRenderer.invoke('room:invite', roomId, targetDeviceId),
   roomRespondInvite: (roomId, accept) => ipcRenderer.invoke('room:respond-invite', roomId, accept),
@@ -38,6 +41,9 @@ const api: CampusConnectApi = {
   historyDeleteEntry: (entryId) => ipcRenderer.invoke('history:delete-entry', entryId),
   historyTogglePin: (entryId) => ipcRenderer.invoke('history:toggle-pin', entryId),
   historyClearRoom: (roomId) => ipcRenderer.invoke('history:clear-room', roomId),
+  historyExport: (roomId) => ipcRenderer.invoke('history:export', roomId),
+  chatTogglePin: (messageId) => ipcRenderer.invoke('chat:toggle-pin', messageId),
+  dmTogglePin: (peerId, messageId) => ipcRenderer.invoke('dm:toggle-pin', peerId, messageId),
 
   chatSend: (type, content, roomId, dataUrl, fileName, replyToId) =>
     ipcRenderer.invoke('chat:send', type, content, roomId, dataUrl, fileName, replyToId),
@@ -69,6 +75,7 @@ const api: CampusConnectApi = {
     ipcRenderer.invoke('remote:input', sessionId, fromDeviceId, event),
   remoteScreens: () => ipcRenderer.invoke('remote:screens'),
   remoteCapabilities: () => ipcRenderer.invoke('remote:capabilities'),
+  remoteHideIndicator: () => ipcRenderer.invoke('remote:hide-indicator'),
 
   takeDeepLink: () => ipcRenderer.invoke('app:take-deep-link'),
 
@@ -84,9 +91,21 @@ const api: CampusConnectApi = {
   fileShareDismiss: (transferId) => ipcRenderer.invoke('files:dismiss', transferId),
   fileShareOpenFolder: () => ipcRenderer.invoke('files:open-folder'),
 
-  dmSend: (peerId, peerName, content) => ipcRenderer.invoke('dm:send', peerId, peerName, content),
+  dmSend: (peerId, peerName, type, content, dataUrl, fileName, replyToId) =>
+    ipcRenderer.invoke('dm:send', peerId, peerName, type, content, dataUrl, fileName, replyToId),
+  dmSendFile: (peerId, peerName) => ipcRenderer.invoke('dm:send-file', peerId, peerName),
+  dmEdit: (peerId, messageId, content) => ipcRenderer.invoke('dm:edit', peerId, messageId, content),
+  dmDelete: (peerId, messageId, forEveryone) =>
+    ipcRenderer.invoke('dm:delete', peerId, messageId, forEveryone),
+  dmReact: (peerId, messageId, emoji) => ipcRenderer.invoke('dm:react', peerId, messageId, emoji),
+  dmSaveFile: (peerId, messageId) => ipcRenderer.invoke('dm:save-file', peerId, messageId),
   dmGetThread: (peerId) => ipcRenderer.invoke('dm:get-thread', peerId),
   dmMarkRead: (peerId) => ipcRenderer.invoke('dm:mark-read', peerId),
+  dmArchiveThread: (peerId, archived) => ipcRenderer.invoke('dm:archive-thread', peerId, archived),
+  dmDeleteThread: (peerId) => ipcRenderer.invoke('dm:delete-thread', peerId),
+  dmExport: (peerId) => ipcRenderer.invoke('dm:export', peerId),
+  dmEnsureCallRoom: (peerId, peerName) => ipcRenderer.invoke('dm:ensure-call-room', peerId, peerName),
+  dmTyping: (peerId, typing) => ipcRenderer.invoke('dm:typing', peerId, typing),
 
   blockDevice: (deviceId, deviceName) => ipcRenderer.invoke('privacy:block', deviceId, deviceName),
   unblockDevice: (deviceId) => ipcRenderer.invoke('privacy:unblock', deviceId),
@@ -130,6 +149,7 @@ const api: CampusConnectApi = {
   onCallSignal: (handler) => subscribe('call:signal', handler),
   onCallEnded: (handler) => subscribe('call:ended', handler),
   onDmMessage: (handler) => subscribe('dm:message', handler),
+  onDmTyping: (handler) => subscribe('dm:typing', handler),
   onQuickPasteOpened: (handler) => subscribe('quick-paste:opened', handler),
 
   onDeepLink: (handler) => subscribe('app:deep-link', handler),

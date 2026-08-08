@@ -8,6 +8,7 @@ import {
   AlertIcon,
   BellIcon,
   BookmarkIcon,
+  CheckIcon,
   CopyIcon,
   QrIcon,
   XIcon,
@@ -63,6 +64,7 @@ export function SettingsPage({
   onRename,
   onUpdateSettings,
   onConnectPeer,
+  onForgetPeer,
   onOpenExternal,
   onCompactStorage,
   onUnblockDevice,
@@ -83,6 +85,7 @@ export function SettingsPage({
   onRename: (name: string) => void;
   onUpdateSettings: (patch: Partial<AppSettings>) => void;
   onConnectPeer: (host: string) => void;
+  onForgetPeer: (host: string, port: number) => void;
   onOpenExternal: (url: string) => void;
   onCompactStorage: () => void;
   onUnblockDevice: (deviceId: string) => void;
@@ -106,6 +109,15 @@ export function SettingsPage({
   const [testing, setTesting] = React.useState(false);
   const [result, setResult] = React.useState<ConnectivityResult | null>(null);
   const [fonts, setFonts] = React.useState<string[] | null>(null);
+  const [idCopied, setIdCopied] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!idCopied) {
+      return;
+    }
+    const timer = window.setTimeout(() => setIdCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [idCopied]);
 
   const settings = state.settings;
   const scale = Number.isFinite(settings.fontScale) ? settings.fontScale : 1;
@@ -234,11 +246,31 @@ export function SettingsPage({
               </div>
               <div>
                 <dt>Device id</dt>
-                <dd className="mono truncate">{state.deviceId}</dd>
+                <dd className="mono truncate" title={state.deviceId}>{state.deviceId}</dd>
+                {/*
+                 * This is the network-wide unique id "Find someone to
+                 * message" searches by — shown truncated above so it never
+                 * breaks the layout, so the only way to actually hand it to
+                 * someone is to copy the whole thing, not the visible slice.
+                 */}
+                <Button
+                  size="sm"
+                  icon
+                  variant="ghost"
+                  onClick={() => {
+                    navigator.clipboard.writeText(state.deviceId);
+                    setIdCopied(true);
+                  }}
+                  aria-label="Copy device id"
+                  title="Copy device id"
+                >
+                  {idCopied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+                </Button>
               </div>
               <div>
                 <dt>Rooms</dt>
-                <dd>{state.rooms.length}</dd>
+                {/* Excludes the hidden 1:1 room a DM call is placed in — not a room from the user's point of view. */}
+                <dd>{state.rooms.filter((room) => room.type !== 'direct').length}</dd>
               </div>
             </dl>
           </section>
@@ -338,14 +370,14 @@ export function SettingsPage({
             <p className="settings__lede">What leaves this device, and what arrives on it.</p>
 
             <SwitchRow
-              title="Shared clipboard"
-              description="The master switch, also on the header. Off means nothing is shared, received or announced, and this device is invisible to the others."
+              title="Campus Connect"
+              description="The master switch, also on the header. Off means nothing at all — not just the clipboard, but chat, rooms, calls, files and messages too — is shared, received or announced, and this device is invisible to the others."
               checked={settings.online !== false}
               onChange={(next) => onUpdateSettings({ online: next })}
             />
             <SwitchRow
               title="Share my clipboard"
-              description="Send what you copy to the room you have selected."
+              description="Send what you copy to the room you have selected. Chat, calls and everything else keep working either way — this switch is the clipboard alone."
               checked={settings.syncEnabled}
               onChange={(next) => onUpdateSettings({ syncEnabled: next })}
             />
@@ -826,6 +858,36 @@ export function SettingsPage({
                 </Button>
               </div>
             </Field>
+
+            {state.rememberedPeers.length > 0 && (
+              <>
+                <h3 className="h3" style={{ margin: 'var(--space-6) 0 var(--space-3)' }}>
+                  Remembered devices
+                </h3>
+                <p className="field__hint" style={{ marginBottom: 'var(--space-3)' }}>
+                  Reconnected to automatically every time Campus Connect starts, so the address only
+                  has to be typed once.
+                </p>
+                <div className="blocklist">
+                  {state.rememberedPeers.map((peer) => (
+                    <div key={`${peer.host}:${peer.port}`} className="blocklist__row">
+                      <span className="blocklist__icon">
+                        <SignalIcon size={15} />
+                      </span>
+                      <span className="blocklist__body">
+                        <span className="blocklist__name">{peer.name}</span>
+                        <span className="blocklist__meta mono">
+                          {peer.host}:{peer.port}
+                        </span>
+                      </span>
+                      <Button size="sm" onClick={() => onForgetPeer(peer.host, peer.port)}>
+                        Forget
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </section>
         )}
 

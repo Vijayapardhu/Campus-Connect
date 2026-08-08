@@ -21,8 +21,9 @@ if (!fs.existsSync(path.join(ROOT, 'crypto.js'))) {
 }
 
 const crypto = require(path.join(ROOT, 'crypto.js'));
-const { RoomManager } = require(path.join(ROOT, 'roomManager.js'));
+const { RoomManager, directRoomId } = require(path.join(ROOT, 'roomManager.js'));
 const { HistoryManager } = require(path.join(ROOT, 'historyManager.js'));
+const { DirectMessageManager } = require(path.join(ROOT, 'directMessage.js'));
 const { CallManager, PARTICIPANT_TTL_MS } = require(path.join(ROOT, 'callManager.js'));
 const { migrateUserData } = require(path.join(ROOT, 'migrate.js'));
 const {
@@ -30,6 +31,7 @@ const {
   parseRemoteInput,
   toRobotKey,
   toScreenPoint,
+  scaleBounds,
   MAX_TEXT_LENGTH,
   MAX_SCROLL_NOTCHES
 } = require(path.join(ROOT, 'remoteControl.js'));
@@ -43,6 +45,13 @@ const {
   PAIRING_TTL_MS
 } = require(path.join(ROOT, 'phoneSession.js'));
 const { detectContent, isOpenableUrl } = require(path.join(__dirname, '..', 'dist', 'shared', 'contentType.js'));
+const { findMentions, mentionedDeviceIds, splitOnMentions } = require(
+  path.join(__dirname, '..', 'dist', 'shared', 'mentions.js')
+);
+const { dataUrlBytes } = require(path.join(__dirname, '..', 'dist', 'shared', 'dataUrl.js'));
+const { formatTranscript, transcriptFileName } = require(
+  path.join(__dirname, '..', 'dist', 'shared', 'transcript.js')
+);
 const { ChunkAssembler, splitIntoChunks } = require(path.join(ROOT, 'transfer.js'));
 const net = require(path.join(ROOT, 'network.js'));
 const { FrameDecoder, encodeFrame, HEADER_BYTES } = require(path.join(ROOT, 'framing.js'));
@@ -336,6 +345,292 @@ test('an unjoined advert shows as discovered; a joined one does not', () => {
   assert.strictEqual(rm.getDiscoveredRooms().length, 1, 'a room we are in must not appear as discoverable');
 });
 
+console.log('\n-- member restrictions --');
+
+/** A room with one accepted, non-owner member — the only kind that can be restricted. */
+function makeRestrictableRoom() {
+  const rm = makeManager();
+  const room = rm.createRoom({ name: 'R', type: 'public', password: '', ownerId: 'A', ownerName: 'A' });
+  rm.addPendingMember(room.roomId, 'B', 'Phone-B');
+  rm.approveMember(room.roomId, 'B');
+  return { rm, roomId: room.roomId };
+}
+
+test('each restriction is stored independently of the others', () => {
+  const { rm, roomId } = makeRestrictableRoom();
+  rm.setMemberRestrictions(roomId, 'B', { remote: true });
+  assert.deepStrictEqual(rm.getRestrictions(roomId, 'B'), {
+    chat: false,
+    files: false,
+    calls: false,
+    remote: true
+  }, 'screen sharing must not be inferred from, or fold into, the calls flag');
+});
+
+test('restricting calls leaves screen sharing alone, and the reverse', () => {
+  const { rm, roomId } = makeRestrictableRoom();
+  rm.setMemberRestrictions(roomId, 'B', { calls: true });
+  assert.strictEqual(rm.getRestrictions(roomId, 'B').remote, false);
+  rm.setMemberRestrictions(roomId, 'B', { remote: true });
+  assert.strictEqual(rm.getRestrictions(roomId, 'B').calls, false);
+});
+
+test('clearing every flag drops the record rather than storing an all-false one', () => {
+  const { rm, roomId } = makeRestrictableRoom();
+  rm.setMemberRestrictions(roomId, 'B', { chat: true, remote: true });
+  assert.ok(rm.getRestrictions(roomId, 'B'));
+  rm.setMemberRestrictions(roomId, 'B', {});
+  assert.strictEqual(rm.getRestrictions(roomId, 'B'), undefined, 'all-false must not read as restricted');
+});
+
+test('the owner cannot be restricted', () => {
+  const { rm, roomId } = makeRestrictableRoom();
+  assert.strictEqual(rm.setMemberRestrictions(roomId, 'A', { remote: true }), undefined);
+  assert.strictEqual(rm.getRestrictions(roomId, 'A'), undefined);
+});
+
+test('restrictions survive a reload, since they ride the persisted roster', () => {
+  // One backing store, two managers — what a restart actually looks like.
+  let rooms = [];
+  let keys = {};
+  const store = {
+    readRooms: () => rooms,
+    writeRooms: (next) => { rooms = next; },
+    readKeys: () => keys,
+    writeKeys: (next) => { keys = next; }
+  };
+
+  const first = new RoomManager(store);
+  const room = first.createRoom({ name: 'R', type: 'public', password: '', ownerId: 'A', ownerName: 'A' });
+  first.addPendingMember(room.roomId, 'B', 'Phone-B');
+  first.approveMember(room.roomId, 'B');
+  first.setMemberRestrictions(room.roomId, 'B', { remote: true, files: true });
+
+  const reloaded = new RoomManager(store);
+  assert.deepStrictEqual(reloaded.getRestrictions(room.roomId, 'B'), {
+    chat: false,
+    files: true,
+    calls: false,
+    remote: true
+  });
+});
+
+console.log('\n-- direct-call rooms --');
+
+test('directRoomId is deterministic and order-independent', () => {
+  assert.strictEqual(directRoomId('A', 'B'), directRoomId('B', 'A'));
+  assert.notStrictEqual(directRoomId('A', 'B'), directRoomId('A', 'C'));
+});
+
+test('ensureDirectRoom is computed identically from either side', () => {
+  const caller = makeManager().ensureDirectRoom('A', 'Laptop-A', 'B', 'Phone-B');
+  const callee = makeManager().ensureDirectRoom('B', 'Phone-B', 'A', 'Laptop-A');
+  assert.strictEqual(caller.roomId, callee.roomId);
+  assert.strictEqual(caller.ownerId, callee.ownerId, 'whichever id sorts first, both sides must agree on it');
+  assert.strictEqual(caller.type, 'direct');
+  assert.strictEqual(caller.encrypted, false);
+  assert.deepStrictEqual(
+    caller.members.map((m) => m.deviceId).sort(),
+    callee.members.map((m) => m.deviceId).sort()
+  );
+});
+
+test('a direct room is never advertised and never locked', () => {
+  const rm = makeManager();
+  const room = rm.ensureDirectRoom('A', 'A', 'B', 'B');
+  assert.strictEqual(rm.isLocked(room.roomId), false);
+  assert.strictEqual(rm.isAcceptedMember(room.roomId, 'A'), true);
+  assert.strictEqual(rm.isAcceptedMember(room.roomId, 'B'), true);
+});
+
+test('ensureDirectRoom is idempotent and keeps the peer name current', () => {
+  const rm = makeManager();
+  const first = rm.ensureDirectRoom('A', 'A', 'B', 'Old Name');
+  const second = rm.ensureDirectRoom('A', 'A', 'B', 'New Name');
+  assert.strictEqual(first.roomId, second.roomId);
+  assert.strictEqual(rm.getRoom(first.roomId).members.find((m) => m.deviceId === 'B').deviceName, 'New Name');
+});
+
+console.log('\n-- direct messages --');
+
+function makeDirectMessages() {
+  let messages = [];
+  let archived = [];
+  return new DirectMessageManager({
+    read: () => messages,
+    write: (next) => { messages = next; },
+    readArchived: () => archived,
+    writeArchived: (next) => { archived = next; }
+  });
+}
+
+test('a sent message round-trips through the thread and the summary', () => {
+  const dm = makeDirectMessages();
+  const sent = dm.send('B', 'Phone-B', { type: 'text', content: 'hi' });
+  assert.strictEqual(sent.fromSelf, true);
+  assert.deepStrictEqual(dm.getThread('B').map((m) => m.id), [sent.id]);
+  assert.strictEqual(dm.listThreads()[0].lastMessage, 'hi');
+});
+
+test('a retransmitted receive is not stored twice, but a genuinely new one from the same peer is', () => {
+  const dm = makeDirectMessages();
+  const signal = { kind: 'message', id: 'm1', type: 'text', content: 'hey', sentAt: Date.now() };
+  assert.ok(dm.receive('B', 'B', signal));
+  assert.strictEqual(dm.receive('B', 'B', signal), undefined, 'a repeat of the same id must be dropped');
+  assert.ok(dm.receive('B', 'B', { ...signal, id: 'm2' }));
+  assert.strictEqual(dm.getThread('B').length, 2);
+});
+
+test('only the message\'s own side may edit or delete it', () => {
+  const dm = makeDirectMessages();
+  const mine = dm.send('B', 'B', { type: 'text', content: 'draft' });
+  const theirs = dm.receive('B', 'B', { kind: 'message', id: 'x1', type: 'text', content: 'reply', sentAt: Date.now() });
+
+  assert.strictEqual(dm.editMessage('B', mine.id, 'fixed', Date.now(), true).content, 'fixed');
+  assert.strictEqual(dm.editMessage('B', mine.id, 'nope', Date.now(), false), undefined, 'the peer cannot edit our own message');
+  assert.strictEqual(dm.editMessage('B', theirs.id, 'nope', Date.now(), true), undefined, 'we cannot edit the peer\'s message');
+
+  const deleted = dm.markDeleted('B', mine.id, true);
+  assert.strictEqual(deleted.deleted, true);
+  assert.strictEqual(deleted.content, '', 'a tombstone keeps the row but scrubs the content');
+});
+
+test('a local-only delete removes the row without any ownership check', () => {
+  const dm = makeDirectMessages();
+  const theirs = dm.receive('B', 'B', { kind: 'message', id: 'x1', type: 'text', content: 'hi', sentAt: Date.now() });
+  assert.strictEqual(dm.deleteMessageLocal('B', theirs.id), true);
+  assert.strictEqual(dm.getThread('B').length, 0);
+});
+
+test('a reaction toggles on and off, keyed by whichever device reacted', () => {
+  const dm = makeDirectMessages();
+  const sent = dm.send('B', 'B', { type: 'text', content: 'hi' });
+  assert.strictEqual(dm.setReaction('B', sent.id, '👍', 'B', true), true);
+  assert.strictEqual(dm.findMessage('B', sent.id).reactions['👍'][0], 'B');
+  assert.strictEqual(dm.setReaction('B', sent.id, '👍', 'B', true), false, 'already on — no-op reports no change');
+  assert.strictEqual(dm.setReaction('B', sent.id, '👍', 'B', false), true);
+  assert.strictEqual(dm.findMessage('B', sent.id).reactions, undefined);
+});
+
+test('a receipt only ever acknowledges the messages this device sent', () => {
+  const dm = makeDirectMessages();
+  const mine = dm.send('B', 'B', { type: 'text', content: 'hi' });
+  const theirs = dm.receive('B', 'B', { kind: 'message', id: 'x1', type: 'text', content: 'hey', sentAt: Date.now() });
+
+  const changed = dm.recordReceipt('B', [mine.id, theirs.id], 'delivered');
+  assert.deepStrictEqual(changed.map((m) => m.id), [mine.id], 'the peer cannot mark their own message delivered to us');
+  assert.deepStrictEqual(dm.findMessage('B', mine.id).deliveredTo, ['B']);
+  assert.strictEqual(dm.findMessage('B', theirs.id).deliveredTo, undefined);
+});
+
+test('a receipt does not cross threads', () => {
+  const dm = makeDirectMessages();
+  const toB = dm.send('B', 'B', { type: 'text', content: 'hi B' });
+  dm.send('C', 'C', { type: 'text', content: 'hi C' });
+  assert.deepStrictEqual(dm.recordReceipt('B', [toB.id], 'delivered').map((m) => m.id), [toB.id]);
+  assert.strictEqual(dm.getThread('C')[0].deliveredTo, undefined, 'C never acknowledged anything');
+});
+
+test('a seen receipt implies delivered, even when the delivered one never arrived', () => {
+  const dm = makeDirectMessages();
+  const sent = dm.send('B', 'B', { type: 'text', content: 'hi' });
+  dm.recordReceipt('B', [sent.id], 'seen');
+  const stored = dm.findMessage('B', sent.id);
+  assert.deepStrictEqual(stored.deliveredTo, ['B']);
+  assert.deepStrictEqual(stored.seenBy, ['B']);
+});
+
+test('a repeated receipt reports no change rather than listing the peer twice', () => {
+  const dm = makeDirectMessages();
+  const sent = dm.send('B', 'B', { type: 'text', content: 'hi' });
+  assert.strictEqual(dm.recordReceipt('B', [sent.id], 'delivered').length, 1);
+  assert.strictEqual(dm.recordReceipt('B', [sent.id], 'delivered').length, 0, 'already delivered — nothing to emit');
+  assert.strictEqual(dm.recordReceipt('B', [sent.id], 'seen').length, 1, 'but seen is still new');
+  assert.strictEqual(dm.recordReceipt('B', [sent.id], 'seen').length, 0);
+  assert.deepStrictEqual(dm.findMessage('B', sent.id).deliveredTo, ['B'], 'the peer is listed once, not once per receipt');
+});
+
+test('a receipt naming a message this device has never heard of changes nothing', () => {
+  const dm = makeDirectMessages();
+  dm.send('B', 'B', { type: 'text', content: 'hi' });
+  assert.strictEqual(dm.recordReceipt('B', ['no-such-id'], 'seen').length, 0);
+});
+
+test('archiving a thread is undone by sending into it again', () => {
+  const dm = makeDirectMessages();
+  dm.send('B', 'B', { type: 'text', content: 'hi' });
+  dm.setArchived('B', true);
+  assert.strictEqual(dm.listThreads()[0].archived, true);
+  dm.send('B', 'B', { type: 'text', content: 'hi again' });
+  assert.strictEqual(dm.listThreads()[0].archived, false);
+});
+
+test('deleting a thread clears its messages, unread count and archived flag', () => {
+  const dm = makeDirectMessages();
+  dm.receive('B', 'B', { kind: 'message', id: 'x1', type: 'text', content: 'hi', sentAt: Date.now() });
+  dm.setArchived('B', true);
+  dm.deleteThread('B');
+  assert.strictEqual(dm.getThread('B').length, 0);
+  assert.strictEqual(dm.listThreads().length, 0);
+});
+
+test('search finds a DM by content, marked so the caller knows to open a thread rather than switch rooms', () => {
+  const dm = makeDirectMessages();
+  dm.send('B', 'Phone-B', { type: 'text', content: 'the wifi password is hunter2' });
+  const hits = dm.search('wifi password', 'My Laptop');
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].kind, 'dm');
+  assert.strictEqual(hits[0].peerId, 'B');
+  assert.strictEqual(hits[0].deviceName, 'My Laptop', 'a self-sent hit is labelled with this device, not the peer');
+});
+
+test('search does not surface a withdrawn message', () => {
+  const dm = makeDirectMessages();
+  const sent = dm.send('B', 'B', { type: 'text', content: 'oops sent the wrong link' });
+  dm.markDeleted('B', sent.id, true);
+  assert.strictEqual(dm.search('wrong link', 'Me').length, 0);
+});
+
+test('search covers every thread, each hit correctly tagged with its own peer', () => {
+  const dm = makeDirectMessages();
+  dm.send('B', 'B', { type: 'text', content: 'same phrase' });
+  dm.send('C', 'C', { type: 'text', content: 'same phrase' });
+  const hits = dm.search('same phrase', 'Me');
+  assert.deepStrictEqual(
+    hits.map((h) => h.peerId).sort(),
+    ['B', 'C']
+  );
+});
+
+test('a receipt only ever touches this device\'s own sent messages', () => {
+  const dm = makeDirectMessages();
+  const mine = dm.send('B', 'B', { type: 'text', content: 'hi' });
+  const theirs = dm.receive('B', 'B', { kind: 'message', id: 'x1', type: 'text', content: 'hey', sentAt: Date.now() });
+
+  const changed = dm.recordReceipt('B', [mine.id, theirs.id], 'delivered');
+  assert.deepStrictEqual(changed.map((m) => m.id), [mine.id], 'the receipt is about our own message, not theirs');
+  assert.deepStrictEqual(dm.findMessage('B', mine.id).deliveredTo, ['B']);
+  assert.strictEqual(dm.findMessage('B', theirs.id).deliveredTo, undefined);
+});
+
+test('a seen receipt implies delivered, even if delivered never arrived first', () => {
+  const dm = makeDirectMessages();
+  const mine = dm.send('B', 'B', { type: 'text', content: 'hi' });
+  dm.recordReceipt('B', [mine.id], 'seen');
+  const after = dm.findMessage('B', mine.id);
+  assert.deepStrictEqual(after.deliveredTo, ['B']);
+  assert.deepStrictEqual(after.seenBy, ['B']);
+});
+
+test('a repeated receipt is a no-op, not a duplicate entry', () => {
+  const dm = makeDirectMessages();
+  const mine = dm.send('B', 'B', { type: 'text', content: 'hi' });
+  dm.recordReceipt('B', [mine.id], 'delivered');
+  const second = dm.recordReceipt('B', [mine.id], 'delivered');
+  assert.strictEqual(second.length, 0, 'nothing changed, so nothing is reported changed');
+  assert.deepStrictEqual(dm.findMessage('B', mine.id).deliveredTo, ['B']);
+});
+
 console.log('\n-- history --');
 
 function makeHistory() {
@@ -457,6 +752,69 @@ test('pinning survives a restart', () => {
 test('pinning something that is gone reports failure', () => {
   const h = makeHistory();
   assert.strictEqual(h.togglePin('does-not-exist'), undefined);
+});
+
+console.log('\n-- pinned messages --');
+
+function addChat(h, roomId, content) {
+  return h.addChatMessage({ type: 'text', content, deviceId: 'A', deviceName: 'A', roomId });
+}
+
+test('a pinned chat message is not evicted by the ones after it', () => {
+  const h = makeHistory();
+  const first = addChat(h, 'r1', 'keep me');
+  assert.strictEqual(h.toggleChatPin(first.id), true);
+  for (let i = 0; i < 600; i++) addChat(h, 'r1', `noise-${i}`);
+  assert.ok(h.getChatHistory('r1').some((m) => m.id === first.id), 'the pinned message was evicted');
+});
+
+test('pinned chat messages do not consume the cap', () => {
+  const h = makeHistory();
+  for (let i = 0; i < 5; i++) {
+    h.toggleChatPin(addChat(h, 'r1', `pin-${i}`).id);
+  }
+  for (let i = 0; i < 600; i++) addChat(h, 'r1', `noise-${i}`);
+  const all = h.getChatHistory('r1');
+  assert.strictEqual(all.filter((m) => m.pinned).length, 5);
+  assert.strictEqual(all.filter((m) => !m.pinned).length, 500, 'unpinned messages are still capped');
+});
+
+test('unpinning a chat message re-exposes it to the cap', () => {
+  const h = makeHistory();
+  const first = addChat(h, 'r1', 'temporary');
+  h.toggleChatPin(first.id);
+  for (let i = 0; i < 600; i++) addChat(h, 'r1', `noise-${i}`);
+  assert.strictEqual(h.toggleChatPin(first.id), false);
+  assert.ok(!h.getChatHistory('r1').some((m) => m.id === first.id), 'it should be trimmed once unpinned');
+});
+
+test('pinning a chat message that is gone reports failure', () => {
+  assert.strictEqual(makeHistory().toggleChatPin('does-not-exist'), undefined);
+});
+
+test('a pinned DM survives the per-peer cap, and unpinning gives it back', () => {
+  const dm = makeDirectMessages();
+  const kept = dm.send('B', 'B', { type: 'text', content: 'keep me' });
+  assert.strictEqual(dm.togglePin('B', kept.id).pinned, true);
+  for (let i = 0; i < 600; i++) dm.send('B', 'B', { type: 'text', content: `noise-${i}` });
+  assert.ok(dm.findMessage('B', kept.id), 'the pinned message was evicted');
+
+  assert.strictEqual(dm.togglePin('B', kept.id).pinned, false);
+  dm.send('B', 'B', { type: 'text', content: 'one more' });
+  assert.strictEqual(dm.findMessage('B', kept.id), undefined, 'it should be trimmed once unpinned');
+});
+
+test('pinning a DM is local: it never touches the peer or another thread', () => {
+  const dm = makeDirectMessages();
+  const mine = dm.send('B', 'B', { type: 'text', content: 'hi' });
+  dm.send('C', 'C', { type: 'text', content: 'hi' });
+  dm.togglePin('B', mine.id);
+  assert.strictEqual(dm.getThread('C')[0].pinned, undefined, 'another thread must be untouched');
+  assert.strictEqual(dm.togglePin('C', mine.id), undefined, 'a message is only pinnable from its own thread');
+});
+
+test('pinning a DM that is gone reports failure', () => {
+  assert.strictEqual(makeDirectMessages().togglePin('B', 'does-not-exist'), undefined);
 });
 
 console.log('\n-- chunked transfer --');
@@ -1105,6 +1463,29 @@ test('out-of-range coordinates are clamped, not obeyed', () => {
   assert.deepStrictEqual(toScreenPoint(NaN, Infinity, bounds), { x: 0, y: 0 });
 });
 
+test('bounds are scaled from logical to physical pixels for a non-100% display', () => {
+  // A 1920x1080 *logical* display at 150% Windows scaling is really
+  // 2880x1620 physical pixels — what the native cursor APIs expect.
+  const logical = { x: 0, y: 0, width: 1920, height: 1080 };
+  assert.deepStrictEqual(scaleBounds(logical, 1.5), { x: 0, y: 0, width: 2880, height: 1620 });
+
+  // A second, logical-space display to the right of a scaled primary one —
+  // its origin scales along with everything else.
+  const secondary = { x: 1920, y: 0, width: 1280, height: 720 };
+  assert.deepStrictEqual(scaleBounds(secondary, 1.5), { x: 2880, y: 0, width: 1920, height: 1080 });
+
+  // 100% scaling is a no-op, and negative origins (a monitor above/left of
+  // the primary) scale arithmetically rather than being treated specially.
+  assert.deepStrictEqual(scaleBounds(logical, 1), logical);
+  const aboveLeft = { x: -1920, y: -200, width: 1920, height: 1080 };
+  assert.deepStrictEqual(scaleBounds(aboveLeft, 2), { x: -3840, y: -400, width: 3840, height: 2160 });
+
+  // A missing or nonsensical scale factor falls back to 1 rather than
+  // producing NaN/Infinity coordinates the injector would then clamp oddly.
+  assert.deepStrictEqual(scaleBounds(logical, 0), logical);
+  assert.deepStrictEqual(scaleBounds(logical, NaN), logical);
+});
+
 console.log('\n-- remote desktop: event validation --');
 
 test('well-formed events survive validation', () => {
@@ -1694,6 +2075,204 @@ test('only http and https are ever openable', () => {
   }
 });
 
+console.log('\n-- exporting a conversation --');
+
+// Injected so the assertions do not depend on the machine's locale or timezone.
+const AT = (t) => `T${t}`;
+const OPTS = { title: 'Team Room', exportedAt: 500, formatTime: AT };
+
+function textEntry(timestamp, author, content, extra = {}) {
+  return { timestamp, author, type: 'text', content, ...extra };
+}
+
+test('a transcript reads oldest first, whatever order it was handed', () => {
+  const out = formatTranscript(
+    [textEntry(300, 'Bob', 'third'), textEntry(100, 'Alice', 'first'), textEntry(200, 'Bob', 'second')],
+    OPTS
+  );
+  const body = out.split('\n').filter((line) => line.startsWith('[T'));
+  assert.deepStrictEqual(body, ['[T100] Alice: first', '[T200] Bob: second', '[T300] Bob: third']);
+});
+
+test('the header names the conversation and counts what is in it', () => {
+  const out = formatTranscript([textEntry(1, 'A', 'x'), textEntry(2, 'B', 'y')], OPTS);
+  assert.ok(out.startsWith('Campus Connect — Team Room\n'), 'the title comes first');
+  assert.ok(out.includes('Exported T500'));
+  assert.ok(out.includes('2 messages'));
+});
+
+test('one message is counted in the singular', () => {
+  assert.ok(formatTranscript([textEntry(1, 'A', 'x')], OPTS).includes('1 message\n'));
+});
+
+test('an attachment is named rather than written, and says which kind it was', () => {
+  const out = formatTranscript(
+    [
+      { timestamp: 1, author: 'A', type: 'file', content: '', fileName: 'report.pdf' },
+      { timestamp: 2, author: 'A', type: 'image', content: '', fileName: 'screen.png' }
+    ],
+    OPTS
+  );
+  assert.ok(out.includes('[T1] A: [sent a file: report.pdf]'));
+  assert.ok(out.includes('[T2] A: [sent an image: screen.png]'));
+});
+
+test('an attachment with no name still exports as something readable', () => {
+  const out = formatTranscript([{ timestamp: 1, author: 'A', type: 'file', content: '' }], OPTS);
+  assert.ok(out.includes('[sent a file: attachment]'));
+});
+
+test('a withdrawn message leaves a marker, not its content', () => {
+  const out = formatTranscript([textEntry(1, 'A', '', { deleted: true })], OPTS);
+  assert.ok(out.includes('[T1] A: (message deleted)'));
+});
+
+test('a deleted attachment reports as deleted rather than as a file', () => {
+  const out = formatTranscript(
+    [{ timestamp: 1, author: 'A', type: 'file', content: '', fileName: 'gone.pdf', deleted: true }],
+    OPTS
+  );
+  assert.ok(out.includes('(message deleted)'));
+  assert.ok(!out.includes('gone.pdf'), 'a withdrawn message must not leak its filename');
+});
+
+test('an edited message is marked as edited', () => {
+  const out = formatTranscript([textEntry(1, 'A', 'fixed', { editedAt: 9 })], OPTS);
+  assert.ok(out.includes('[T1] A: fixed (edited)'));
+});
+
+test('a multi-line message is indented under its own header, so it cannot read as two', () => {
+  const out = formatTranscript([textEntry(1, 'A', 'line one\nline two'), textEntry(2, 'B', 'after')], OPTS);
+  assert.ok(out.includes('[T1] A: line one\n    line two\n'));
+  assert.ok(out.includes('[T2] B: after'));
+});
+
+test('an empty conversation still produces a well-formed file', () => {
+  const out = formatTranscript([], OPTS);
+  assert.ok(out.includes('0 messages'));
+  assert.ok(out.endsWith('\n'));
+});
+
+test('the file ends with a newline, the way a text file should', () => {
+  assert.ok(formatTranscript([textEntry(1, 'A', 'x')], OPTS).endsWith('\n'));
+});
+
+test('a filename is dated and stripped of anything a filesystem would object to', () => {
+  assert.strictEqual(transcriptFileName('Team Room', Date.UTC(2026, 7, 8)), 'Team-Room-2026-08-08.txt');
+  assert.strictEqual(transcriptFileName('a/b\\c:d*?"<>|', Date.UTC(2026, 7, 8)), 'a-b-c-d-2026-08-08.txt');
+});
+
+test('a name that is entirely punctuation still yields a usable filename', () => {
+  assert.strictEqual(transcriptFileName('***', Date.UTC(2026, 7, 8)), 'conversation-2026-08-08.txt');
+});
+
+test('a very long conversation name is truncated rather than refused', () => {
+  const name = transcriptFileName('x'.repeat(200), Date.UTC(2026, 7, 8));
+  assert.ok(name.length < 60, 'the filename must stay a sane length');
+  assert.ok(name.endsWith('-2026-08-08.txt'));
+});
+
+console.log('\n-- measuring an encoded attachment --');
+
+test('a data URL measures to exactly the bytes it encodes', () => {
+  for (const size of [0, 1, 2, 3, 4, 5, 100, 1023, 4096]) {
+    const bytes = Buffer.alloc(size, 7);
+    const url = `data:application/octet-stream;base64,${bytes.toString('base64')}`;
+    assert.strictEqual(dataUrlBytes(url), size, `${size} bytes must measure as ${size}`);
+  }
+});
+
+test('every padding case is accounted for', () => {
+  // 1 byte pads with '==', 2 bytes with '=', 3 bytes with nothing.
+  assert.strictEqual(dataUrlBytes('data:x;base64,QQ=='), 1);
+  assert.strictEqual(dataUrlBytes('data:x;base64,QUI='), 2);
+  assert.strictEqual(dataUrlBytes('data:x;base64,QUJD'), 3);
+});
+
+test('bare base64 with no data: prefix still measures', () => {
+  assert.strictEqual(dataUrlBytes(Buffer.from('hello').toString('base64')), 5);
+});
+
+test('an empty payload measures as nothing rather than going negative', () => {
+  assert.strictEqual(dataUrlBytes('data:image/png;base64,'), 0);
+  assert.strictEqual(dataUrlBytes(''), 0);
+});
+
+test('the measurement never under-reports, which is what the size ceiling relies on', () => {
+  // Anything that read low would let an oversized attachment past the check.
+  for (let size = 0; size < 300; size++) {
+    const url = `data:x;base64,${Buffer.alloc(size, 1).toString('base64')}`;
+    assert.ok(dataUrlBytes(url) >= size, `${size} bytes must not measure below ${size}`);
+  }
+});
+
+console.log('\n-- @mentions --');
+
+const ROSTER = [
+  { deviceId: 'a', deviceName: 'Alice' },
+  { deviceId: 'b', deviceName: 'Bob' },
+  { deviceId: 'c', deviceName: 'Lab PC 3' },
+  { deviceId: 'd', deviceName: 'Ali' }
+];
+
+test('a plain mention resolves to the device that owns the name', () => {
+  assert.deepStrictEqual(mentionedDeviceIds('hey @Bob look at this', ROSTER), ['b']);
+});
+
+test('a name with spaces is matched whole, not clipped at the first space', () => {
+  const spans = findMentions('ask @Lab PC 3 to restart', ROSTER);
+  assert.strictEqual(spans.length, 1);
+  assert.strictEqual(spans[0].deviceId, 'c');
+  assert.strictEqual('ask @Lab PC 3 to restart'.slice(spans[0].start, spans[0].end), '@Lab PC 3');
+});
+
+test('the longest matching name wins, so a shorter one does not swallow it', () => {
+  assert.deepStrictEqual(mentionedDeviceIds('@Alice hi', ROSTER), ['a'], '"Ali" must not win over "Alice"');
+  assert.deepStrictEqual(mentionedDeviceIds('@Ali hi', ROSTER), ['d'], 'but "Ali" alone still resolves');
+});
+
+test('a name matching nobody stays ordinary text', () => {
+  assert.deepStrictEqual(mentionedDeviceIds('@Nobody are you there', ROSTER), []);
+  assert.deepStrictEqual(splitOnMentions('@Nobody there', ROSTER), [{ kind: 'text', text: '@Nobody there' }]);
+});
+
+test('an email address is not a mention', () => {
+  assert.deepStrictEqual(mentionedDeviceIds('write to bob@Alice.example', ROSTER), []);
+});
+
+test('matching ignores case, since nobody types a device name exactly', () => {
+  assert.deepStrictEqual(mentionedDeviceIds('@bob @ALICE', ROSTER), ['b', 'a']);
+});
+
+test('a device mentioned twice is listed once', () => {
+  assert.deepStrictEqual(mentionedDeviceIds('@Bob and again @Bob', ROSTER), ['b']);
+});
+
+test('mentions are found at the very start and the very end of a message', () => {
+  assert.deepStrictEqual(mentionedDeviceIds('@Bob', ROSTER), ['b']);
+  assert.deepStrictEqual(mentionedDeviceIds('ping @Alice', ROSTER), ['a']);
+});
+
+test('punctuation right after a name still closes the mention', () => {
+  assert.deepStrictEqual(mentionedDeviceIds('thanks @Bob!', ROSTER), ['b']);
+  assert.deepStrictEqual(mentionedDeviceIds('(@Alice), see this', ROSTER), ['a']);
+});
+
+test('splitOnMentions alternates text and mentions without losing a character', () => {
+  const content = 'hi @Bob and @Alice, done';
+  const parts = splitOnMentions(content, ROSTER);
+  assert.strictEqual(parts.map((p) => p.text).join(''), content, 'the parts must rebuild the original exactly');
+  assert.deepStrictEqual(
+    parts.filter((p) => p.kind === 'mention').map((p) => p.deviceId),
+    ['b', 'a']
+  );
+});
+
+test('an empty roster, or one with a blank name, mentions nobody', () => {
+  assert.deepStrictEqual(mentionedDeviceIds('@Bob', []), []);
+  assert.deepStrictEqual(mentionedDeviceIds('@ hello', [{ deviceId: 'x', deviceName: '   ' }]), []);
+});
+
 console.log('\n-- phone pairing --');
 
 function makePhone() {
@@ -2119,6 +2698,56 @@ test('files and direct messages stay desktop-only', () => {
   // bridge, bypassing the client's own refusal, has to land here just the same.
   assert.strictEqual(isPhoneMethodAllowed('files:request'), false);
   assert.strictEqual(isPhoneMethodAllowed('dm:send'), false);
+});
+
+/*
+ * Every method that opens a native dialog on the laptop.
+ *
+ * A phone is often in another room, and a modal nobody is standing in front of
+ * blocks the window it is attached to until somebody walks over to it. This
+ * list is checked against the source below, so adding a `dialog.show*` call
+ * without denying it to phones fails here rather than in somebody's hands.
+ */
+const OPENS_A_NATIVE_DIALOG = [
+  'chat:send-file',
+  'chat:save-file',
+  'history:export',
+  'dm:send-file',
+  'dm:save-file',
+  'dm:export',
+  'files:pick'
+];
+
+test('nothing that opens a native dialog on the laptop is reachable from a phone', () => {
+  for (const method of OPENS_A_NATIVE_DIALOG) {
+    assert.strictEqual(isPhoneMethodAllowed(method), false, `${method} must be denied`);
+  }
+});
+
+test('the dialog list above still matches what main.ts actually opens', () => {
+  // The guard is only worth anything if it is kept current, and a list in a
+  // test file does not update itself. Counting the call sites is crude, but it
+  // is enough to fail loudly when a new one appears.
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.ts'), 'utf8');
+  const sites = source.match(/dialog\.show(Open|Save)Dialog/g) ?? [];
+  assert.strictEqual(
+    sites.length,
+    // Both exports share one `exportTranscript` helper, so seven methods are
+    // opened by six call sites.
+    OPENS_A_NATIVE_DIALOG.length - 1,
+    'a dialog was added or removed in main.ts — check it is denied to phones, then update OPENS_A_NATIVE_DIALOG'
+  );
+});
+
+test('the rest of chat and history stays ordinary, everyday phone use', () => {
+  // Only the two dialogs are denied — a phone can still read a file somebody
+  // sent, since it arrives in the message like any other content.
+  for (const method of ['chat:send', 'chat:edit', 'chat:react', 'chat:toggle-pin', 'chat:mark-seen']) {
+    assert.strictEqual(isPhoneMethodAllowed(method), true, method);
+  }
+  assert.strictEqual(isPhoneMethodAllowed('history:get-chat'), true);
+  assert.strictEqual(isPhoneMethodAllowed('history:toggle-pin'), true);
+  assert.strictEqual(isPhoneMethodAllowed('history:clear-room'), true);
 });
 
 test('the quick-paste overlay and self-install stay desktop-only', () => {
@@ -3307,6 +3936,52 @@ test("nonsense in place of an envelope or a key returns null", () => {
   const ck = crypto.generateContentKey();
   const env = crypto.wrapKeyFor(ck, owner.boxPrivateKey, joiner.boxPublicKey, "room-1");
   assert.strictEqual(crypto.unwrapKeyFrom(env, "not-a-key", owner.boxPublicKey, "room-1"), null);
+});
+
+console.log("\n-- direct-message encryption --");
+
+/*
+ * A direct message has no room and so no password to derive a key from —
+ * `dmAgreedKey` is what makes it end-to-end encrypted anyway: the same X25519
+ * agreement `wrapKeyFor` uses, domain-separated by the sorted pair of device
+ * ids instead of a room id, so both sides land on the identical key with no
+ * exchange round trip of their own.
+ */
+
+const dmA = identity.createIdentity();
+const dmB = identity.createIdentity();
+const dmEve = identity.createIdentity();
+
+test("both sides compute the identical key, whichever is 'self'", () => {
+  const fromA = crypto.dmAgreedKey(dmA.boxPrivateKey, dmB.boxPublicKey, "a-id", "b-id");
+  const fromB = crypto.dmAgreedKey(dmB.boxPrivateKey, dmA.boxPublicKey, "b-id", "a-id");
+  assert.strictEqual(fromA.toString("hex"), fromB.toString("hex"));
+});
+
+test("a message sealed for one pair does not open for a different one", () => {
+  const key = crypto.dmAgreedKey(dmA.boxPrivateKey, dmB.boxPublicKey, "a-id", "b-id");
+  const sealed = crypto.sealJson(key, { text: "only for b" });
+
+  const wrongPeer = crypto.dmAgreedKey(dmA.boxPrivateKey, dmEve.boxPublicKey, "a-id", "eve-id");
+  assert.strictEqual(crypto.openJson(wrongPeer, sealed), null);
+
+  const right = crypto.dmAgreedKey(dmB.boxPrivateKey, dmA.boxPublicKey, "b-id", "a-id");
+  assert.deepStrictEqual(crypto.openJson(right, sealed), { text: "only for b" });
+});
+
+test("the key changes if either device id changes, even with the same two devices", () => {
+  const a = crypto.dmAgreedKey(dmA.boxPrivateKey, dmB.boxPublicKey, "a-id", "b-id");
+  const b = crypto.dmAgreedKey(dmA.boxPrivateKey, dmB.boxPublicKey, "a-id-2", "b-id");
+  assert.notStrictEqual(a.toString("hex"), b.toString("hex"));
+});
+
+test("an eavesdropper who only sees the sealed envelope cannot open it", () => {
+  const key = crypto.dmAgreedKey(dmA.boxPrivateKey, dmB.boxPublicKey, "a-id", "b-id");
+  const sealed = crypto.sealJson(key, { text: "secret" });
+  // Eve holds neither box private key for this pair, so no key she can
+  // derive from her own keypair and anyone else's public one will match.
+  const eveGuess = crypto.dmAgreedKey(dmEve.boxPrivateKey, dmB.boxPublicKey, "eve-id", "b-id");
+  assert.strictEqual(crypto.openJson(eveGuess, sealed), null);
 });
 
 (async () => {

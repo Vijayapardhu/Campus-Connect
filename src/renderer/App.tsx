@@ -9,12 +9,22 @@ import type {
   DiscoveredRoom,
   RoomInfo,
   RoomInvite,
+  RoomMember,
   RoomType,
   SearchHit
 } from '../shared/types';
 import { Sidebar } from './sidebar';
 import { ChatPanel, ClipboardPanel, MembersPanel } from './panels';
-import { CreateRoomModal, EditRoomModal, InviteModal, JoinRoomModal, UnlockRoomModal } from './modals';
+import {
+  CreateRoomModal,
+  EditRoomModal,
+  ForwardMessageModal,
+  InviteModal,
+  JoinRoomModal,
+  RestrictMemberModal,
+  UnlockRoomModal,
+  type ForwardTarget
+} from './modals';
 import { SettingsPage } from './settings';
 import { Badge, Button, ConfirmModal, EmptyState, Toasts, useToasts } from './ui';
 import {
@@ -86,12 +96,21 @@ type ModalState =
   | { kind: 'join'; target: DiscoveredRoom | null; code?: string; roomName?: string }
   | { kind: 'unlock'; roomId: string }
   | { kind: 'edit'; room: RoomInfo }
+  | { kind: 'restrict'; room: RoomInfo; member: RoomMember }
   | { kind: 'invite'; invite: RoomInvite }
+  /** Held at this level, not in the panel, because the destination can be a room *or* a DM thread. */
+  | { kind: 'forward'; message: ChatMessage }
   | { kind: 'confirm'; title: string; description: string; confirmLabel: string; action: () => void }
   | null;
 
 /** A typing indicator with no follow-up is dropped after this. */
 const TYPING_EXPIRY_MS = 6000;
+
+/** The one line the forward dialog shows, so it says what it is about to send. */
+function forwardPreview(message: ChatMessage): string {
+  const text = message.type === 'text' ? message.content : (message.fileName ?? 'Attachment');
+  return text.length > 80 ? `${text.slice(0, 79)}…` : text;
+}
 
 export default function App() {
   const [state, setState] = React.useState<AppState | null>(null);
@@ -404,7 +423,11 @@ export default function App() {
   // Ctrl+1..9 switches rooms, Ctrl+F focuses the history search. Both are
   // suppressed while a dialog is open or the caret is in a field, so they can
   // never fire mid-password.
-  const roomIds = state?.rooms.map((candidate) => candidate.roomId).join(',') ?? '';
+  // Excludes the hidden 1:1 room a DM call is placed in — it has nothing a
+  // Ctrl+1..9 shortcut could usefully switch to.
+  const roomIds =
+    state?.rooms.filter((candidate) => candidate.type !== 'direct').map((candidate) => candidate.roomId).join(',') ??
+    '';
   const modalOpen = modal !== null || palette !== null;
   React.useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -514,6 +537,28 @@ export default function App() {
       (transfer) => transfer.status === 'requested' || transfer.status === 'active'
     ).length ?? 0;
   const unreadMessages = state.dmThreads.reduce((total, thread) => total + thread.unread, 0);
+  // Same reasoning as the sidebar's own room list: a hidden direct-call room
+  // is not "a room" from the user's point of view.
+  const visibleRoomCount = state.rooms.filter((candidate) => candidate.type !== 'direct').length;
+  const blockedIds = new Set(state.blocked.map((device) => device.deviceId));
+
+  /**
+   * Sends a copy of a message somewhere else.
+   *
+   * Nothing new crosses the wire: a forward is the existing send, called again
+   * with the original's content. That deliberately makes the copy a message in
+   * its own right — the destination can edit, react to and delete it without
+   * any of that reaching back to where it came from.
+   */
+  async function forwardMessage(message: ChatMessage, target: ForwardTarget): Promise<boolean> {
+    const result =
+      target.kind === 'room'
+        ? await api.chatSend(message.type, message.content, target.id, message.dataUrl, message.fileName)
+        : await api.dmSend(target.id, target.name, message.type, message.content, message.dataUrl, message.fileName);
+
+    push(result.ok ? `Forwarded to ${target.name}.` : result.message, result.ok ? 'success' : 'error');
+    return result.ok;
+  }
 
   /**
    * Places or joins a call. On the phone client, which has no second window,
@@ -537,6 +582,19 @@ export default function App() {
   }
 
   /**
+   * Calls a DM peer directly. There is no room for the renderer to already
+   * know about — `dmEnsureCallRoom` resolves (creating if needed) the hidden
+   * 1:1 room the main process places the call in, and everything after that
+   * is the ordinary `startCall` path, unchanged.
+   */
+  function startDirectCall(peerId: string, peerName: string, mode: 'audio' | 'video') {
+    void api.dmEnsureCallRoom(peerId, peerName).then(
+      (roomId) => startCall(roomId, mode, peerId),
+      (error: Error) => push(error.message, 'error')
+    );
+  }
+
+  /**
    * Everything the palette can do.
    *
    * Built from the current state rather than a static list, so it only ever
@@ -550,7 +608,9 @@ export default function App() {
     const online = state!.settings.online !== false;
 
     for (const candidate of state!.rooms) {
-      if (candidate.roomId === state!.currentRoomId) {
+      // The hidden 1:1 room a DM call is placed in is not something to
+      // switch to — it has no clipboard/chat surface of its own to show.
+      if (candidate.roomId === state!.currentRoomId || candidate.type === 'direct') {
         continue;
       }
       list.push({
@@ -754,8 +814,13 @@ export default function App() {
 
   /** Takes a search hit back to where it came from. */
   function openHit(hit: SearchHit) {
+    if (hit.kind === 'dm') {
+      dm.openThread(hit.peerId!, hit.peerName!);
+      setView('messages');
+      return;
+    }
     setView('room');
-    api.roomSwitch(hit.roomId).then(() => setTab(hit.kind === 'chat' ? 'chat' : 'clipboard'));
+    api.roomSwitch(hit.roomId!).then(() => setTab(hit.kind === 'chat' ? 'chat' : 'clipboard'));
   }
 
   /** Phone only — the desktop's own instance of `useCall` stays inert. */
@@ -953,8 +1018,10 @@ export default function App() {
             ) : null}
 
             {/* The master switch. Off means the app shares and receives nothing
-                at all, so it says which of the two it is rather than making you
-                work it out from an icon. */}
+                at all — not just the clipboard, everything — so it says which
+                of the two it is rather than making you work it out from an
+                icon, and says *what* it switches rather than naming the one
+                feature that happens to sit next to it in the topbar. */}
             <button
               className={online ? 'power-toggle is-on' : 'power-toggle'}
               onClick={() => api.updateSettings({ online: !online }).then(setState)}
@@ -962,8 +1029,8 @@ export default function App() {
               aria-checked={online}
               title={
                 online
-                  ? 'Shared clipboard is on. Click to switch it off.'
-                  : 'Shared clipboard is off. Click to switch it on.'
+                  ? 'Campus Connect is on. Click to switch everything off — clipboard, chat, rooms, calls, all of it.'
+                  : 'Campus Connect is off. Nothing is being shared or received. Click to switch it back on.'
               }
             >
               <PowerIcon size={14} />
@@ -1047,6 +1114,7 @@ export default function App() {
               onRename={(name) => api.updateDeviceName(name).then(setState)}
               onUpdateSettings={(patch) => api.updateSettings(patch).then(setState)}
               onConnectPeer={(host) => api.connectPeer(host, state.listenPort, '').then(setState)}
+              onForgetPeer={(host, port) => api.forgetPeer(host, port).then(setState)}
               onOpenExternal={(url) => {
                 api.openExternal(url).then((result) => {
                   if (!result.ok) {
@@ -1125,21 +1193,30 @@ export default function App() {
               controller={dm}
               peers={state.peers}
               deviceId={state.deviceId}
+              deviceName={state.deviceName}
               blockedIds={new Set(state.blocked.map((device) => device.deviceId))}
+              canSendFiles={native}
+              onCallRequest={startDirectCall}
+              onForward={(message) => setModal({ kind: 'forward', message })}
+              listenPort={state.listenPort}
+              onConnectByIp={(host, port) => api.connectPeer(host, port, '').then(setState)}
             />
           </div>
         ) : !room ? (
           <div className="panel">
             <EmptyState
               icon={<ClipboardIcon size={22} />}
-              title={state.rooms.length === 0 ? 'Create your first room' : 'Pick a room'}
+              // The hidden 1:1 room a DM call is placed in does not count as
+              // "a room" here — a device that has only ever called someone
+              // directly should still be told to create or join a real one.
+              title={visibleRoomCount === 0 ? 'Create your first room' : 'Pick a room'}
               text={
-                state.rooms.length === 0
+                visibleRoomCount === 0
                   ? 'Rooms decide who can see what you copy. Make a private one for yourself, or a public one to share with everyone on this WiFi.'
                   : 'Choose a room from the left to start sharing your clipboard with it.'
               }
               actions={
-                state.rooms.length === 0 ? (
+                visibleRoomCount === 0 ? (
                   <>
                     <Button variant="primary" onClick={() => setModal({ kind: 'create' })}>
                       <PlusIcon size={15} />
@@ -1215,6 +1292,15 @@ export default function App() {
               }}
               canSendFiles={native}
               onSendFile={() => run(api.chatSendFile(room.roomId))}
+              // The bytes are already in hand from the clipboard, so this goes
+              // straight to the ordinary send rather than through the picker.
+              onSendImage={(dataUrl, fileName) => {
+                api.chatSend('image', fileName, room.roomId, dataUrl, fileName).then((result) => {
+                  if (!result.ok) {
+                    push(result.message, 'error');
+                  }
+                });
+              }}
               onSaveFile={(messageId) => run(api.chatSaveFile(messageId))}
               onEdit={(messageId, content) => {
                 api.chatEdit(messageId, content).then((result) => {
@@ -1237,6 +1323,10 @@ export default function App() {
                 navigator.clipboard.writeText(text);
                 push('Copied to your clipboard.', 'success');
               }}
+              onForward={(message) => setModal({ kind: 'forward', message })}
+              onTogglePin={(messageId) => run(api.chatTogglePin(messageId))}
+              // The save dialog is native, so this is desktop-only.
+              onExport={native ? () => run(api.historyExport(room.roomId)) : undefined}
               onTyping={(isTyping) => api.chatTyping(room.roomId, isTyping)}
             />
           </div>
@@ -1296,6 +1386,7 @@ export default function App() {
                     action: () => run(api.blockDevice(memberId, memberName))
                   })
                 }
+                onRestrict={(member) => setModal({ kind: 'restrict', room, member })}
                 onRemove={(memberId) => {
                   const name =
                     room.members.find((member) => member.deviceId === memberId)?.deviceName ?? 'This device';
@@ -1376,6 +1467,18 @@ export default function App() {
         />
       )}
 
+      {modal?.kind === 'restrict' && (
+        <RestrictMemberModal
+          key={modal.member.deviceId}
+          room={modal.room}
+          member={modal.member}
+          onClose={() => setModal(null)}
+          onSave={(restrictions) =>
+            run(api.roomSetRestrictions(modal.room.roomId, modal.member.deviceId, restrictions))
+          }
+        />
+      )}
+
       {modal?.kind === 'unlock' && room && (
         <UnlockRoomModal
           room={room}
@@ -1389,6 +1492,19 @@ export default function App() {
           invite={modal.invite}
           onClose={() => setModal(null)}
           onRespond={(roomId, accept) => run(api.roomRespondInvite(roomId, accept))}
+        />
+      )}
+
+      {modal?.kind === 'forward' && (
+        <ForwardMessageModal
+          preview={forwardPreview(modal.message)}
+          rooms={state.rooms}
+          threads={state.dmThreads}
+          peers={state.peers}
+          selfDeviceId={state.deviceId}
+          blockedIds={blockedIds}
+          onClose={() => setModal(null)}
+          onForward={(target) => forwardMessage(modal.message, target)}
         />
       )}
 

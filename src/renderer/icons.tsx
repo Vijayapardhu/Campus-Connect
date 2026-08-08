@@ -184,6 +184,14 @@ export const ReplyIcon = (p: IconProps) => (
   </Svg>
 );
 
+/** ReplyIcon's mirror image: the same arrow, turned the other way. */
+export const ForwardIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m15 7 5 5-5 5" />
+    <path d="M20 12h-9a7 7 0 0 0-7 7v1" />
+  </Svg>
+);
+
 export const PencilIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 20h4L20 8l-4-4L4 16v4Z" />
@@ -436,5 +444,48 @@ export const ImageIcon = (p: IconProps) => (
     <rect x="3" y="4" width="18" height="16" rx="2" />
     <circle cx="9" cy="9.5" r="1.5" />
     <path d="m4 17 5-4 4 3 3-2 4 3" />
+  </Svg>
+);
+
+/**
+ * Enter/leave fullscreen — the call stage and remote viewer's own toggle.
+ *
+ * Deliberately not `MaximiseIcon`/`MinimiseIcon` (the window's own controls):
+ * those two sitting one above the other, drawing the same square-and-line
+ * glyphs for two unrelated actions, read as a second, confusing set of
+ * window buttons rather than a fullscreen toggle for the video underneath.
+ */
+export const FullscreenIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3" />
+  </Svg>
+);
+
+export const FullscreenExitIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3" />
+  </Svg>
+);
+
+/** A collapsible section's expand/collapse indicator — rotate 180° when open. */
+export const ChevronDownIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m6 9 6 6 6-6" />
+  </Svg>
+);
+
+/** The "more actions" kebab — a thread row's Archive/Delete menu. */
+export const MoreIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="5" r="1" />
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="12" cy="19" r="1" />
+  </Svg>
+);
+
+export const ArchiveIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="5" rx="1.5" />
+    <path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4" />
   </Svg>
 );

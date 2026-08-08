@@ -4,12 +4,14 @@ import type {
   ClipboardHistoryEntry,
   MessageStatus,
   PeerInfo,
-  RoomInfo
+  RoomInfo,
+  RoomMember
 } from '../shared/types';
 import { REACTION_CHOICES } from '../shared/types';
 import { Badge, Button, Callout, EmptyState } from './ui';
 import { clockTime, formatBytes, initials, relativeTime, truncate } from './format';
 import { detectContent, isOpenableUrl, type ContentInfo } from '../shared/contentType';
+import { splitOnMentions, type MentionTarget } from '../shared/mentions';
 import {
   AlertIcon,
   BookmarkIcon,
@@ -22,6 +24,7 @@ import {
   DownloadIcon,
   ExitIcon,
   FileIcon,
+  ForwardIcon,
   ImageIcon,
   GlobeIcon,
   LockIcon,
@@ -629,10 +632,113 @@ function dayLabel(timestamp: number): string {
   });
 }
 
+/**
+ * Ceiling on an image pasted into the composer.
+ *
+ * The main process enforces the real limit (`MAX_FILE_BYTES`) — this is only so
+ * an oversized paste is refused before 50 MB of base64 is built in the renderer
+ * and pushed across the IPC boundary to be rejected at the other end. It must
+ * not be *stricter* than the main-process limit, or a paste would be refused
+ * here that the file picker would have accepted.
+ */
+const MAX_PASTE_BYTES = 50 * 1024 * 1024;
+
+/** A name for something that arrived on the clipboard with no name of its own. */
+function pastedImageName(mimeType: string): string {
+  const extension = mimeType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png';
+  // Stamped, so pasting several in a row does not offer the same filename in
+  // the save dialog every time.
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  return `pasted-${stamp}.${extension}`;
+}
+
+/** The image on a paste event, if there is one. Text pastes fall through untouched. */
+function pastedImage(event: React.ClipboardEvent): File | null {
+  for (const item of Array.from(event.clipboardData.items)) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) {
+        return file;
+      }
+    }
+  }
+  return null;
+}
+
+/** Most names offered at once while typing `@` — enough to choose from, short enough to read. */
+const MENTION_CHOICES = 6;
+
+/**
+ * The `@` fragment immediately before the caret, or null.
+ *
+ * Deliberately permissive about spaces: device names have them ("Lab PC 3"), so
+ * a fragment runs until something that could not be part of a name. It gives up
+ * after a couple of words, otherwise every `@` early in a message would keep
+ * matching against the whole rest of the sentence.
+ */
+function mentionFragment(text: string, caret: number): { start: number; query: string } | null {
+  const upToCaret = text.slice(0, caret);
+  const at = upToCaret.lastIndexOf('@');
+  if (at < 0) {
+    return null;
+  }
+
+  const before = upToCaret[at - 1];
+  if (before !== undefined && !/[\s(\[{<"']/.test(before)) {
+    return null; // Part of an email address, not the start of a mention.
+  }
+
+  const query = upToCaret.slice(at + 1);
+  if (query.includes('\n') || query.split(/\s+/).length > 3) {
+    return null;
+  }
+
+  return { start: at, query };
+}
+
 function typingLine(names: string[]): string {
   if (names.length === 1) return `${names[0]} is typing…`;
   if (names.length === 2) return `${names[0]} and ${names[1]} are typing…`;
   return `${names[0]} and ${names.length - 1} others are typing…`;
+}
+
+/**
+ * Message text with any `@Name` picked out.
+ *
+ * Re-resolved from the roster on every render rather than trusting the stored
+ * `mentions` ids, for the same reason the main process re-resolves on receipt:
+ * the text is the source of truth, and the roster it is read against is the one
+ * this device holds right now. `mentions` is only ever consulted to know
+ * whether *this* device was named, which is a question about ids, not spans.
+ */
+function MessageText({
+  content,
+  members,
+  deviceId
+}: {
+  content: string;
+  members: MentionTarget[];
+  deviceId: string;
+}) {
+  const parts = React.useMemo(() => splitOnMentions(content, members), [content, members]);
+
+  return (
+    <>
+      {parts.map((part, index) =>
+        part.kind === 'mention' ? (
+          <span
+            key={index}
+            className={part.deviceId === deviceId ? 'mention is-me' : 'mention'}
+            title={part.deviceId === deviceId ? 'This mentions you' : undefined}
+          >
+            {part.text}
+          </span>
+        ) : (
+          <React.Fragment key={index}>{part.text}</React.Fragment>
+        )
+      )}
+    </>
+  );
 }
 
 /** The hover toolbar, the reaction picker, and the two ways to delete. */
@@ -641,8 +747,11 @@ function MessageRow({
   room,
   deviceId,
   showHeader,
+  showReceipts = true,
   onSaveFile,
   onReply,
+  onForward,
+  onTogglePin,
   onEdit,
   onDelete,
   onReact,
@@ -652,8 +761,14 @@ function MessageRow({
   room: RoomInfo;
   deviceId: string;
   showHeader: boolean;
+  /** Off where there is nothing to track it against — see `statusOf`. */
+  showReceipts?: boolean;
   onSaveFile: (messageId: string) => void;
   onReply: (message: ChatMessage) => void;
+  /** Absent where there is nowhere to forward to, which hides the button entirely. */
+  onForward?: (message: ChatMessage) => void;
+  /** Bookmarks the message on this device. Absent hides the button. */
+  onTogglePin?: (messageId: string) => void;
   onEdit: (message: ChatMessage) => void;
   onDelete: (messageId: string, forEveryone: boolean) => void;
   onReact: (messageId: string, emoji: string) => void;
@@ -668,7 +783,20 @@ function MessageRow({
   const used = Object.keys(message.reactions ?? {});
   const choices = [...REACTION_CHOICES, ...used.filter((emoji) => !REACTION_CHOICES.includes(emoji as never))];
 
-  const classes = ['msg', isMine ? 'is-mine' : '', showHeader ? '' : 'is-run', message.deleted ? 'is-deleted' : '']
+  // Named by someone else — a message this device wrote naming itself is not
+  // worth flagging, and would otherwise light up every "@me" note-to-self.
+  const mentionsMe = !isMine && !message.deleted && Boolean(message.mentions?.includes(deviceId));
+
+  const classes = [
+    'msg',
+    isMine ? 'is-mine' : '',
+    showHeader ? '' : 'is-run',
+    message.deleted ? 'is-deleted' : '',
+    mentionsMe ? 'is-mention' : '',
+    // Also a class, not just the header badge: a message inside a run has no
+    // header to put the badge in.
+    message.pinned ? 'is-pinned' : ''
+  ]
     .filter(Boolean)
     .join(' ');
 
@@ -678,7 +806,12 @@ function MessageRow({
         <div className="msg__head">
           <span className="msg__author">{isMine ? 'You' : message.deviceName}</span>
           <span className="msg__time">{clockTime(message.timestamp)}</span>
-          {isMine && !message.deleted && <Receipt status={statusOf(message, room)} />}
+          {message.pinned && (
+            <span className="msg__pin" title="Pinned on this device — kept out of the history cap">
+              <PinIcon size={11} />
+            </span>
+          )}
+          {isMine && !message.deleted && showReceipts && <Receipt status={statusOf(message, room)} />}
         </div>
       )}
 
@@ -698,7 +831,7 @@ function MessageRow({
 
           {message.type === 'text' ? (
             <div className="msg__body">
-              {message.content}
+              <MessageText content={message.content} members={room.members} deviceId={deviceId} />
               {message.editedAt ? <span className="msg__edited" title={`Edited ${clockTime(message.editedAt)}`}>edited</span> : null}
             </div>
           ) : (
@@ -773,6 +906,22 @@ function MessageRow({
           <button className="msg__tool" onClick={() => onReply(message)} title="Reply" aria-label="Reply">
             <ReplyIcon size={14} />
           </button>
+          {onForward && (
+            <button className="msg__tool" onClick={() => onForward(message)} title="Forward" aria-label="Forward">
+              <ForwardIcon size={14} />
+            </button>
+          )}
+          {onTogglePin && (
+            <button
+              className={message.pinned ? 'msg__tool is-on' : 'msg__tool'}
+              onClick={() => onTogglePin(message.id)}
+              title={message.pinned ? 'Unpin' : 'Pin — keeps it out of the history cap, on this device only'}
+              aria-label={message.pinned ? 'Unpin' : 'Pin'}
+              aria-pressed={Boolean(message.pinned)}
+            >
+              <PinIcon size={14} />
+            </button>
+          )}
           {message.type === 'text' && (
             <button className="msg__tool" onClick={() => onCopy(message.content)} title="Copy text" aria-label="Copy text">
               <CopyIcon size={14} />
@@ -799,13 +948,20 @@ export function ChatPanel({
   typingNames,
   onSend,
   onSendFile,
+  onSendImage,
   canSendFiles,
   onSaveFile,
   onEdit,
   onDelete,
   onReact,
   onCopy,
-  onTyping
+  onForward,
+  onTogglePin,
+  onExport,
+  onTyping,
+  showReceipts = true,
+  headerExtra,
+  emptyText
 }: {
   room: RoomInfo;
   messages: ChatMessage[];
@@ -814,6 +970,11 @@ export function ChatPanel({
   typingNames: string[];
   onSend: (text: string, replyToId?: string) => void;
   onSendFile: () => void;
+  /**
+   * Sends an image pasted straight into the composer. Absent disables pasting
+   * an image, which is what a device restricted from files should get.
+   */
+  onSendImage?: (dataUrl: string, fileName: string) => void;
   /** False on a phone: the picker and the save dialog are native. */
   canSendFiles: boolean;
   onSaveFile: (messageId: string) => void;
@@ -821,7 +982,17 @@ export function ChatPanel({
   onDelete: (messageId: string, forEveryone: boolean) => void;
   onReact: (messageId: string, emoji: string) => void;
   onCopy: (text: string) => void;
+  /** Opens the destination picker. Absent hides the forward button — see `MessageRow`. */
+  onForward?: (message: ChatMessage) => void;
+  /** Bookmarks a message on this device — see `MessageRow`. */
+  onTogglePin?: (messageId: string) => void;
+  /** Saves the conversation as a text file. Absent on the phone, where there is no native dialog. */
+  onExport?: () => void;
   onTyping: (typing: boolean) => void;
+  showReceipts?: boolean;
+  /** Rendered at the start of the bar — a back button and a Call button, for a DM thread. */
+  headerExtra?: React.ReactNode;
+  emptyText?: string;
 }) {
   const [draft, setDraft] = React.useState('');
   const [dragging, setDragging] = React.useState(false);
@@ -829,6 +1000,67 @@ export function ChatPanel({
   const [editing, setEditing] = React.useState<ChatMessage | null>(null);
   const [query, setQuery] = React.useState('');
   const [searching, setSearching] = React.useState(false);
+  // Where the caret was when the draft last changed — mention autocomplete
+  // reads the fragment before it, and a textarea will not tell us on render.
+  const [caret, setCaret] = React.useState(0);
+  const [mentionPick, setMentionPick] = React.useState(0);
+  // The offset of an `@` whose menu was dismissed with Escape. Kept rather than
+  // a plain boolean so starting a *different* mention opens the menu again,
+  // while returning to this one leaves it shut.
+  const [mentionDismissed, setMentionDismissed] = React.useState(-1);
+  // Shown inline above the composer rather than as a toast: it is about the
+  // thing being composed right now, and it clears on the next paste.
+  const [pasteError, setPasteError] = React.useState('');
+
+  // What this device itself is restricted from doing here — the roster is
+  // already synced from the owner, so this needs no request of its own.
+  const myRestrictions = room.members.find((member) => member.deviceId === deviceId)?.restricted;
+
+  /*
+   * Who `@` can name here: accepted members other than this device. Mentioning
+   * yourself is not useful, and offering a member who has not been approved yet
+   * would name somebody who cannot read the room.
+   */
+  const mentionable = React.useMemo(
+    () => room.members.filter((member) => member.status === 'accepted' && member.deviceId !== deviceId),
+    [room.members, deviceId]
+  );
+
+  // Only while composing something new: an edit reuses the same box, but the
+  // dropdown appearing over a correction is more startle than help.
+  const fragment = editing ? null : mentionFragment(draft, caret);
+  const mentionMatches = React.useMemo(() => {
+    if (!fragment) {
+      return [];
+    }
+    const needle = fragment.query.toLowerCase();
+    return mentionable
+      .filter((member) => member.deviceName.toLowerCase().includes(needle))
+      .slice(0, MENTION_CHOICES);
+  }, [fragment?.query, mentionable]);
+
+  const mentioning = Boolean(fragment) && fragment?.start !== mentionDismissed && mentionMatches.length > 0;
+
+  /** Replaces the `@fragment` under the caret with the chosen name, and a trailing space. */
+  function completeMention(member: RoomMember) {
+    if (!fragment) {
+      return;
+    }
+    const next = `${draft.slice(0, fragment.start)}@${member.deviceName} ${draft.slice(caret)}`;
+    const at = fragment.start + member.deviceName.length + 2;
+
+    setDraft(next);
+    setCaret(at);
+    setMentionPick(0);
+    // The completed name is itself a fragment that would match again, so the
+    // menu is shut for this `@` explicitly. Typing on re-opens it.
+    setMentionDismissed(fragment.start);
+
+    requestAnimationFrame(() => {
+      composerRef.current?.focus();
+      composerRef.current?.setSelectionRange(at, at);
+    });
+  }
 
   const composerRef = React.useRef<HTMLTextAreaElement | null>(null);
   // Typing is a side effect of writing, so it is kept out of render entirely.
@@ -854,8 +1086,11 @@ export function ChatPanel({
   // believing this device is still mid-sentence.
   React.useEffect(() => stopTyping, [room.roomId, stopTyping]);
 
-  function noteTyping(next: string) {
+  function noteTyping(next: string, at: number) {
     setDraft(next);
+    setCaret(at);
+    setMentionPick(0);
+    setMentionDismissed(-1);
 
     if (!next.trim()) {
       stopTyping();
@@ -879,6 +1114,7 @@ export function ChatPanel({
     }
 
     stopTyping();
+    setMentionPick(0);
 
     if (editing) {
       onEdit(editing.id, text);
@@ -889,6 +1125,46 @@ export function ChatPanel({
     }
 
     setDraft('');
+  }
+
+  /**
+   * An image pasted into the composer is sent as an attachment.
+   *
+   * The bytes are already in hand, so this skips the native picker entirely and
+   * goes straight to the same send a picked file uses. Anything that is not an
+   * image — text, a file, an empty clipboard — falls through to the textarea's
+   * own paste, which is what makes pasting text still work normally.
+   */
+  function handlePaste(event: React.ClipboardEvent) {
+    if (!onSendImage || myRestrictions?.files) {
+      return;
+    }
+
+    const image = pastedImage(event);
+    if (!image) {
+      return;
+    }
+
+    // Only now, once there is definitely an image to handle: preventing the
+    // default on a text paste would swallow it.
+    event.preventDefault();
+
+    if (image.size > MAX_PASTE_BYTES) {
+      setPasteError(
+        `That image is ${(image.size / 1024 / 1024).toFixed(1)} MB — the limit is ${Math.round(MAX_PASTE_BYTES / 1024 / 1024)} MB.`
+      );
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPasteError('');
+      if (typeof reader.result === 'string') {
+        onSendImage(reader.result, image.name || pastedImageName(image.type));
+      }
+    };
+    reader.onerror = () => setPasteError('That image could not be read from the clipboard.');
+    reader.readAsDataURL(image);
   }
 
   function beginEdit(message: ChatMessage) {
@@ -948,6 +1224,7 @@ export function ChatPanel({
       )}
 
       <div className="chat__bar">
+        {headerExtra}
         {searching ? (
           <>
             <div className="search">
@@ -990,6 +1267,17 @@ export function ChatPanel({
               {messages.length} {messages.length === 1 ? 'message' : 'messages'}
             </span>
             <span className="spacer" />
+            {onExport && messages.length > 0 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={onExport}
+                title="Save this conversation as a text file"
+              >
+                <DownloadIcon size={14} />
+                Export
+              </Button>
+            )}
             <Button size="sm" variant="ghost" onClick={() => setSearching(true)}>
               <SearchIcon size={14} />
               Search
@@ -1017,7 +1305,7 @@ export function ChatPanel({
           <EmptyState
             icon={<ChatIcon size={22} />}
             title="No messages yet"
-            text={`Say something to everyone in ${room.name}.`}
+            text={emptyText ?? `Say something to everyone in ${room.name}.`}
           />
         ) : visible.length === 0 ? (
           <EmptyState
@@ -1044,8 +1332,11 @@ export function ChatPanel({
                   room={room}
                   deviceId={deviceId}
                   showHeader={!inRun}
+                  showReceipts={showReceipts}
                   onSaveFile={onSaveFile}
                   onReply={beginReply}
+                  onForward={onForward}
+                  onTogglePin={onTogglePin}
                   onEdit={beginEdit}
                   onDelete={onDelete}
                   onReact={onReact}
@@ -1081,39 +1372,118 @@ export function ChatPanel({
         </div>
       )}
 
-      <div className="composer">
-        {/* The picker is a native dialog on the machine with the files on it. */}
-        {canSendFiles ? (
-          <Button icon onClick={onSendFile} aria-label="Attach a file" title="Attach a file">
-            <PaperclipIcon size={16} />
+      {pasteError && (
+        <div className="composer__context">
+          <span className="composer__context-icon">
+            <AlertIcon size={14} />
+          </span>
+          <div className="composer__context-body">
+            <div className="composer__context-title">That image was not sent</div>
+            <div className="composer__context-text">{pasteError}</div>
+          </div>
+          <Button size="sm" variant="ghost" icon onClick={() => setPasteError('')} aria-label="Dismiss">
+            <XIcon size={14} />
           </Button>
-        ) : null}
-        <textarea
-          ref={composerRef}
-          className="input composer__input"
-          value={draft}
-          rows={1}
-          onChange={(event) => noteTyping(event.target.value)}
-          onBlur={stopTyping}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
-              submit();
-              return;
-            }
-            if (event.key === 'Escape' && (editing || replyTo)) {
-              event.preventDefault();
-              cancelComposing();
-            }
-          }}
-          placeholder={editing ? 'Edit your message' : `Message ${room.name}`}
-          aria-label="Message"
+        </div>
+      )}
+
+      {myRestrictions?.chat ? (
+        <Callout
+          tone="warning"
+          icon={<AlertIcon size={17} />}
+          title="You can't send messages here"
+          text={`The owner of ${room.name} has restricted this device from sending messages in this room.`}
         />
-        <Button variant="primary" onClick={submit} disabled={!draft.trim()}>
-          <SendIcon size={15} />
-          {editing ? 'Save' : 'Send'}
-        </Button>
-      </div>
+      ) : (
+        <div className="composer">
+          {mentioning && (
+            <div className="mention-menu" role="listbox" aria-label="Mention someone">
+              {mentionMatches.map((member, index) => (
+                <button
+                  key={member.deviceId}
+                  type="button"
+                  role="option"
+                  aria-selected={index === mentionPick}
+                  className={index === mentionPick ? 'mention-menu__item is-active' : 'mention-menu__item'}
+                  // The composer must not lose focus, or the caret position
+                  // this insert is measured against is gone by the time it runs.
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setMentionPick(index)}
+                  onClick={() => completeMention(member)}
+                >
+                  <span className="mention-menu__avatar">{initials(member.deviceName)}</span>
+                  <span className="truncate">{member.deviceName}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* The picker is a native dialog on the machine with the files on it. */}
+          {canSendFiles ? (
+            <Button
+              icon
+              onClick={onSendFile}
+              disabled={Boolean(myRestrictions?.files)}
+              aria-label="Attach a file"
+              title={
+                myRestrictions?.files
+                  ? `You've been restricted from sending files in ${room.name}.`
+                  : 'Attach a file'
+              }
+            >
+              <PaperclipIcon size={16} />
+            </Button>
+          ) : null}
+          <textarea
+            ref={composerRef}
+            className="input composer__input"
+            value={draft}
+            rows={1}
+            onChange={(event) => noteTyping(event.target.value, event.target.selectionStart)}
+            onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
+            onPaste={handlePaste}
+            onBlur={stopTyping}
+            onKeyDown={(event) => {
+              // The mention menu owns these keys while it is open, so Enter
+              // picks a name rather than sending a half-typed one.
+              if (mentioning) {
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  const step = event.key === 'ArrowDown' ? 1 : mentionMatches.length - 1;
+                  setMentionPick((current) => (current + step) % mentionMatches.length);
+                  return;
+                }
+                if (event.key === 'Enter' || event.key === 'Tab') {
+                  event.preventDefault();
+                  completeMention(mentionMatches[mentionPick] ?? mentionMatches[0]);
+                  return;
+                }
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  setMentionDismissed(fragment?.start ?? -1);
+                  return;
+                }
+              }
+
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                submit();
+                return;
+              }
+              if (event.key === 'Escape' && (editing || replyTo)) {
+                event.preventDefault();
+                cancelComposing();
+              }
+            }}
+            placeholder={editing ? 'Edit your message' : `Message ${room.name}`}
+            aria-label="Message"
+          />
+          <Button variant="primary" onClick={submit} disabled={!draft.trim()}>
+            <SendIcon size={15} />
+            {editing ? 'Save' : 'Send'}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1127,6 +1497,7 @@ export function MembersPanel({
   onReject,
   onRemove,
   onBlock,
+  onRestrict,
   onCallRequest,
   canCall,
   onMessageRequest,
@@ -1151,6 +1522,8 @@ export function MembersPanel({
   onRemove: (memberId: string) => void;
   /** Refuses this device everywhere, not just in this room. */
   onBlock: (memberId: string, memberName: string) => void;
+  /** Owner only. A lesser tier than a block — narrows what this member may do in this one room. */
+  onRestrict: (member: RoomMember) => void;
   /** Rings that one member directly instead of the whole room. */
   onCallRequest: (memberId: string) => void;
   /** True wherever a call can actually be placed — a phone included. */
@@ -1303,6 +1676,10 @@ export function MembersPanel({
               <div className="member__name">
                 {member.deviceId === deviceId ? `${member.deviceName} (this device)` : member.deviceName}
                 {member.role === 'owner' ? <Badge tone="accent">Owner</Badge> : null}
+                {/* Visible to everyone, not just the owner and the member it names —
+                    a restriction nobody else can see is a restriction that reads as
+                    a mystery when a message from this member never arrives. */}
+                {member.restricted ? <Badge tone="warning">Restricted</Badge> : null}
               </div>
               <div className="member__meta">Joined {relativeTime(member.joinedAt)}</div>
             </div>
@@ -1358,6 +1735,16 @@ export function MembersPanel({
                 >
                   Block
                 </Button>
+                {isOwner && (
+                  <Button
+                    size="sm"
+                    variant={member.restricted ? 'primary' : 'default'}
+                    onClick={() => onRestrict(member)}
+                    title={`Choose what ${member.deviceName} may do in ${room.name}`}
+                  >
+                    Restrict
+                  </Button>
+                )}
                 {isOwner && (
                   <Button size="sm" variant="danger" onClick={() => onRemove(member.deviceId)}>
                     Remove

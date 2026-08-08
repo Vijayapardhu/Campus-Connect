@@ -86,6 +86,8 @@ export class HistoryManager {
     fileName?: string;
     fileSize?: number;
     replyTo?: ChatReplyTo;
+    /** Resolved by the caller against the room roster — see `shared/mentions.ts`. */
+    mentions?: string[];
     /** Supplied when relaying a message received from another device. */
     id?: string;
     timestamp?: number;
@@ -98,6 +100,7 @@ export class HistoryManager {
       fileName: input.fileName,
       fileSize: input.fileSize,
       replyTo: input.replyTo,
+      mentions: input.mentions,
       deviceId: input.deviceId,
       deviceName: input.deviceName,
       roomId: input.roomId,
@@ -105,9 +108,31 @@ export class HistoryManager {
     };
 
     this.chat.unshift(message);
-    this.chat = trimPerRoom(this.chat, MAX_CHAT_PER_ROOM);
+    this.trimChat();
     this.scheduleFlush();
     return message;
+  }
+
+  /**
+   * Bookmarks a message, or takes the bookmark back. Returns the new state, or
+   * undefined when the message is gone.
+   *
+   * **Local to this device.** A pin is a note to yourself about where something
+   * useful is, the same as pinning a clipboard entry — not a claim about the
+   * conversation that everyone else has to agree with. Nothing is sent, and
+   * nobody else's copy changes.
+   */
+  toggleChatPin(id: string): boolean | undefined {
+    const message = this.findChatMessage(id);
+    if (!message) {
+      return undefined;
+    }
+
+    message.pinned = !message.pinned;
+    // Unpinning can push an old message back over the cap.
+    this.trimChat();
+    this.scheduleFlush();
+    return message.pinned;
   }
 
   findChatMessage(id: string): ChatMessage | undefined {
@@ -118,7 +143,14 @@ export class HistoryManager {
    * Rewrites a message's text. Only the author may, which is checked here as
    * well as at the wire, because this is also reached from the local UI.
    */
-  editChatMessage(id: string, content: string, authorId: string, editedAt: number): ChatMessage | undefined {
+  editChatMessage(
+    id: string,
+    content: string,
+    authorId: string,
+    editedAt: number,
+    /** Re-resolved from the new text — an edit can add or remove an `@Name`. */
+    mentions?: string[]
+  ): ChatMessage | undefined {
     const message = this.findChatMessage(id);
     if (!message || message.deviceId !== authorId || message.deleted || message.type !== 'text') {
       return undefined;
@@ -126,6 +158,7 @@ export class HistoryManager {
 
     message.content = content;
     message.editedAt = editedAt;
+    message.mentions = mentions;
     this.scheduleFlush();
     return message;
   }
@@ -416,6 +449,12 @@ export class HistoryManager {
     this.persistence.writeChat(this.chat.map(stripHeavyDataUrl));
   }
 
+  private trimChat(): void {
+    // Same bargain pinning makes for the clipboard: a pinned message is exempt
+    // from the cap, because being evicted is exactly what pinning prevents.
+    this.chat = trimPerRoom(this.chat, MAX_CHAT_PER_ROOM, (message) => message.pinned === true);
+  }
+
   private trimClipboard(): void {
     // Pinned entries are the point of pinning: they never count toward the cap
     // and are never evicted by it.
@@ -475,7 +514,7 @@ const EXCERPT_AFTER = 120;
  * come back correct for the string that is actually displayed — the match can
  * then be highlighted rather than merely being somewhere in the excerpt.
  */
-function findExcerpt(
+export function findExcerpt(
   text: string,
   needle: string
 ): { excerpt: string; matchStart: number; matchLength: number } | null {

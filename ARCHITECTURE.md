@@ -18,10 +18,13 @@ without the password cannot read it even though they receive the same broadcast 
 | Rooms | Public (open) and private (join code **or** password, plus owner approval) |
 | Security | AES-256-GCM per room, key derived from the password with scrypt |
 | Membership | Owner-authoritative roster, approval queue, remove member, leave/close room |
-| Room admin | Owner can rename, retype, reissue the join code, and re-key the room |
-| Calls | Voice, video and screen sharing over WebRTC, full mesh, up to 6 devices |
-| Remote desktop | View or drive another member's screen, approved per session on the host |
-| Privacy | Per-device blocking, applied before anything arriving is acted on |
+| Room admin | Owner can rename, retype, reissue the join code, re-key the room, and restrict a member's chat/files/calls/screen-sharing without a full block |
+| Room chat | File sharing, paste-an-image, edit, delete (for me / for everyone), emoji reactions, reply quotes, `@mentions` with an autocomplete, per-device pins, and forwarding to any room or thread |
+| Direct messages | 1:1 device-to-device threads, end-to-end encrypted, at chat-parity with rooms — including receipts and typing — plus search, archive, and delete; reachable by name/device-id search or by IP address |
+| Keeping a record | Any room's chat or DM thread exported as a plain-text transcript through a native save dialog |
+| Calls | Voice, video and screen sharing over WebRTC, full mesh, up to 6 devices; a DM thread can call directly via a hidden 1:1 room |
+| Remote desktop | View or drive another member's screen, approved per session on the host, with pointer coordinates corrected for display scaling |
+| Privacy | Per-device blocking, applied before anything arriving is acted on; per-room restrictions for a lesser, scoped limit |
 | Phone access | One room served to a phone browser on the LAN, PIN-gated and opt-in |
 | Productivity | Global quick-paste overlay, command palette, snippets, cross-room search |
 | History | Per-room clipboard history and chat, persisted across restarts |
@@ -75,7 +78,12 @@ campus-connect-desktop/
 │   │   └── index.html
 │   └── shared/
 │       ├── types.ts              # Domain + wire types (shared by both processes)
-│       └── bridge.ts             # The IPC API contract
+│       ├── bridge.ts             # The IPC API contract
+│       ├── contentType.ts        # What a copied string actually is
+│       ├── mentions.ts           # @Name resolution against a roster
+│       ├── transcript.ts         # A conversation as an exportable text file
+│       ├── dataUrl.ts            # Sizing an already-encoded attachment
+│       └── deepLink.ts           # campusconnect:// parsing
 ├── test/
 │   └── run.js                    # Test suite — plain Node, no framework
 ├── docs/                         # GitHub Pages site (index.html + screenshots)
@@ -128,6 +136,16 @@ something if these four rules hold.
 | Public, no password | — | Yes | One click | Plain text |
 | Public, with password | Optional | Yes | **Password only** | AES-256-GCM |
 | Private | **Required** (≥ 4 chars) | Yes (name only) | Join code **or** password, plus **owner approval** | AES-256-GCM |
+| Direct (`type: 'direct'`) | — | **Never** advertised or listed | Never joined — both sides create their own identical copy locally | Plain text |
+
+A **direct** room is not something a user creates or sees. It exists only so a call placed from a DM
+thread has something to be gated by — every call in this app is authorized by room membership, and a
+direct room reuses that machinery rather than adding a second one. `roomManager.ensureDirectRoom`
+computes a deterministic id from the two device ids (`` `dm:${[a, b].sort().join(':')}` ``) and an
+identical two-member roster **independently on each device**, with no roster-sync message ever sent
+for it — there is nothing for the two copies to disagree about, so the ordinary "roster is
+owner-authoritative" rule simply does not apply here. It is excluded from `toAdvert`, from the
+sidebar's room list, from the command palette, and from every room count shown in the UI.
 
 **Either credential admits you to a private room.** The join code cannot always
 be passed along — read out over a call, or typed on a machine you are not
@@ -189,6 +207,15 @@ to anyone, it exists only to keep a proof from being confused with any other sea
 changing it would break every device that has not been updated yet in exchange for nothing.
 Binding the proof to the `roomId` stops a proof captured from one room being replayed at another.
 
+**`room:unlock` actually waits for this.** It used to derive a key from whatever was typed and report
+success unconditionally, without ever checking it against anything — a mistyped password left the
+room reporting as unlocked while nothing in it could actually decrypt, with no way back short of
+leaving and rejoining. It now either verifies the candidate key locally against a piece of history
+already sealed with the room's real key, or — when there is none yet — sends the proof and waits for
+the owner's actual `room-accept`/`room-reject` (bounded by a timeout, for an offline owner) before
+caching the key or reporting anything at all. A wrong password now correctly keeps the unlock dialog
+open with "Incorrect room password," rather than a room that looks fine and silently isn't.
+
 ### 5.5 The admission gate
 
 Before any inbound clipboard or chat packet is applied, `handleRoomPayload` in `main.ts` requires
@@ -232,6 +259,56 @@ State these honestly rather than overclaiming:
 - **Unencrypted public rooms are plain text** by definition. The UI labels them "Not encrypted".
 - **Device identity is a UUID**, not a certificate. A device that has been removed cannot decrypt
   new traffic, but nothing stops it presenting a fresh UUID and asking to join again.
+
+### 5.9 Direct message encryption
+
+A direct message has no room, and so no password to derive a key from the way §5.2 does. It is
+end-to-end encrypted anyway, unconditionally — every device already holds a second keypair for
+exactly this:
+
+```ts
+// deviceIdentity.ts
+boxPublicKey: string;   // X25519, SPKI base64 — travels on the wire
+boxPrivateKey: string;  // X25519, PKCS#8 base64 — never leaves this device
+```
+
+Separate from the Ed25519 pair that signs messages, because signing and key agreement are different
+operations and Node does not expose a conversion between the two. This pair existed before DM
+encryption did — it backs `wrapKeyFor`/`unwrapKeyFrom` in `crypto.ts`, the mechanism room re-keying
+uses to hand a fresh content key to one device at a time — and this reuses the same X25519 agreement
+for a second purpose it was already shaped for.
+
+**No exchange round trip.** Every outbound message already carries the sender's box public key
+(`WireMessage.boxPubKey`, attached in `deliver()` next to `pubKey`/`sig`), so any device that has
+ever received *one* authenticated message from a peer already has what it needs to seal a message
+to them — which in practice means every peer visible in `state.peers` at all. `dmAgreedKey` derives
+the pairwise AES key from nothing but each side's own private key and the other's public one:
+
+```
+dmKey = sha256(X25519(selfPrivate, peerPublic) || "campus-connect:dmkey:" || sort(selfId, peerId))
+```
+
+Sorting the two device ids before hashing is what makes both sides compute the identical key
+regardless of which one is "self" — X25519 agreement is already symmetric, so this is the only part
+that has to be made deliberately so.
+
+**Signed, not just carried.** `boxPubKey` is attached to a message *before* it is signed, not after,
+so it is covered by the same signature every other field is. Left unsigned, a device able to tamper
+with packets on this LAN — exactly what the signature exists to rule out everywhere else — could
+swap in a box key of its own choosing for someone else's device id and quietly sit in the middle of
+every future direct message to it. Signed, forging a different one needs the sender's signing
+private key, which `deviceRegistry` already binds per device id.
+
+**Sealed unconditionally.** `attachDmBody`/`readDmBody` are the DM equivalent of `attachRoomBody`/
+`readRoomBody` (§6.1), with one difference: there is no plaintext path. A room's encryption is
+conditional on whether it has a password; a DM's is not conditional on anything — `attachDmBody`
+either seals the body under `dmAgreedKey` or refuses to send at all.
+
+**What this does not cover.** The hidden 1:1 room a DM call is placed in (§5.1) is not sealed by this
+— its SDP/ICE signaling still travels the way an unencrypted room's does. The call's actual media
+is already end-to-end via SRTP regardless, the same as any other call in this app, so what is exposed
+is the *setup* metadata, not the conversation. Upgrading that room to use `dmAgreedKey` as its
+content key is a natural, cheap follow-on that was left out of this pass to keep it focused.
 
 ---
 
@@ -489,6 +566,12 @@ itself every 5 seconds and anyone who stops is dropped after 20; a call left wit
 by itself. `CallManager` (main process, Electron-free, unit-tested) holds that picture and nothing
 else — it never touches media.
 
+**A DM call is an ordinary room call.** Calling is gated by room membership everywhere in this app,
+and a direct message has no room — `roomManager.ensureDirectRoom` resolves (creating on first use) the
+hidden 1:1 room described in §5.1, and `call:start` proceeds exactly as it would for a real room. The
+renderer never manages the synthetic room id itself: `dm:ensure-call-room` resolves it, and the result
+is handed to the same call window the ordinary "call this room" path already opens.
+
 ### 6.8 Blocking
 
 Blocking is enforced in exactly one place: `receiveMessage`, before the packet is counted, stored,
@@ -507,6 +590,27 @@ Blocking also removes the device from every room **this** device owns, since ref
 while the blocked party carries on reading your messages would be worth very little. Rooms owned by
 someone else are outside this device's authority, and the UI says so rather than implying a
 guarantee that does not exist.
+
+**Restrictions are a lesser, per-room tier**, for when a full network-wide block is more than the
+situation calls for — muting one member's chat, files, calls, or screen sharing in one room without
+severing the device everywhere. The four flags are independent: screen sharing has its own rather
+than riding on `calls`, because watching or driving a desktop is a strictly larger ask than talking,
+and an owner needs to be able to withdraw it while still letting the member call. Unlike a block,
+restrictions live **on the roster** (`RoomMember.restricted`), so
+they piggyback on the existing owner-authoritative `room-roster` broadcast with no new wire message
+type — every device already reaches the same roster, so every device enforces the same restriction
+independently, the same reasoning that makes `isBlocked` a single choke point rather than a check
+repeated in every handler. Enforced on both sides of a restricted message: inbound, in
+`handleRoomPayload`, so a modified client cannot simply ignore its own copy of the rule; outbound, in
+the sending IPC handler itself, so the restricted device is told plainly why nothing happened rather
+than typing into a composer that quietly does nothing. Only the room's owner can set a restriction,
+and the owner can never restrict themselves.
+
+Every roster edit — approve, decline, remove, restrict — is gated on `requireOnline()`. The local
+edit would succeed while offline, but the half that makes it mean anything (the accept/reject packet
+to the device concerned, and the roster broadcast to everyone else) is fire-and-forget over a socket
+that is not open, with no retry behind it. Refusing outright keeps the owner's roster and everyone
+else's from silently disagreeing.
 
 ### 6.9 Re-keying a room
 
@@ -563,6 +667,23 @@ viewer is almost certainly scaled to fit a window. On arrival they are clamped i
 display's bounds — a hostile or simply buggy controller must not be able to fling the pointer onto
 another monitor.
 
+**Scaled to physical pixels.** Electron's `display.bounds` is in logical/DIP pixels, but the native
+cursor APIs `@jitsi/robotjs` calls expect physical ones — on any display that is not at 100% Windows
+scaling (or a Retina Mac), the two differ by `display.scaleFactor`, and the drift grows with distance
+from the display's origin. `boundsForDisplay` (`remoteInput.ts`) scales the bounds before they ever
+reach `toScreenPoint`, via the pure, unit-tested `scaleBounds` in `remoteControl.ts`. A secondary
+display at a *different* scale factor than the primary is not fully solved by this — Windows' virtual
+desktop coordinate math for mixed-DPI multi-monitor setups is a harder problem than a per-display
+scale multiply — stated here rather than left implicit.
+
+**Bitrate is capped, not left to chance.** The screen track's `contentHint` is set to `'detail'`
+(spatial clarity over frame-rate, the right tradeoff for text and UI rather than a face), and
+`RTCRtpSender.setParameters` caps `maxBitrate`/`maxFramerate` right after the track is added, so a
+burst of on-screen motion cannot push the encoder into congestion-driven queueing lag on a link that
+has headroom for a mostly-static desktop but not for an unbounded one. No codec preference, no
+simulcast, no adaptive resolution — for a single-peer, LAN-only, non-SFU session those are real
+complexity for a marginal gain once the bitrate ceiling is in place.
+
 **Held keys are tracked and released.** A session ending while Ctrl is down — the controller's window
 losing focus mid Ctrl+C is enough — would otherwise leave the host with a permanently held modifier
 and no idea why the keyboard had stopped working. Every session end funnels through one function
@@ -599,6 +720,8 @@ Pure functions, no Electron imports, fully unit-testable.
 | `seal(key, text)` / `open(key, env)` | AES-256-GCM; `open` returns `null` on any failure |
 | `sealJson` / `openJson` | JSON convenience wrappers |
 | `createProof` / `verifyProof` | Password-knowledge proof bound to a `roomId` |
+| `wrapKeyFor` / `unwrapKeyFrom` | X25519-agreed AES key wraps a room content key to one device (§6.9's re-key) |
+| `dmAgreedKey(selfPriv, peerPub, selfId, peerId)` | The same X25519 agreement, generalized to a device-id pair — what makes a direct message end to end encrypted (§5.9) |
 
 ### `roomManager.ts`
 Owns rooms, derived keys, and discovered adverts. Persists through a `RoomPersistence` interface so
@@ -606,7 +729,9 @@ it has no dependency on electron-store (which is what makes it testable).
 
 Key methods: `createRoom`, `saveRoom`, `deleteRoom`, `getKey`/`setKey`, `isLocked`,
 `isAcceptedMember`, `isOwner`, `addPendingMember`, `addAcceptedMember`, `approveMember`,
-`removeMember`, `toAdvert`, `recordAdvert`, `getDiscoveredRooms`.
+`removeMember`, `toAdvert`, `recordAdvert`, `getDiscoveredRooms`, `ensureDirectRoom` (the hidden
+1:1 call room, §5.1), `setMemberRestrictions`/`getRestrictions` (the per-room
+chat/files/calls/screen-sharing limit, §6.8).
 
 Invariants worth knowing:
 - `removeMember` refuses to remove the owner.
@@ -614,10 +739,102 @@ Invariants worth knowing:
   downgrade someone to pending or duplicate them.
 - `isLocked(roomId)` is true when a room is encrypted but this device holds no key — the UI uses
   this to show the unlock screen.
+- `setMemberRestrictions` refuses to restrict the owner — there is nobody else in the room to enforce
+  it against them. It also normalises every flag and clears the record entirely when all four are
+  false, so an all-false object never reads as "restricted" to anything downstream.
+
+### `directMessage.ts`
+`DirectMessageManager` — the DM equivalent of `historyManager.ts`, keyed by peer device id instead of
+room id, since a direct message belongs to no room at all. Same shape: in-memory plus a 750 ms
+debounced flush, a 500-message-per-peer cap enforced independently per thread, author-only edit,
+tombstone-style delete-for-everyone (the row survives so a reply into it still resolves), and a
+reaction toggle keyed by whichever device reacted. `archived`/`deleteThread` are thread-level, not
+message-level: an archived thread collapses into the Messages page's own section rather than being
+removed, and a deleted thread is a local-only "for me" — DM history is already a local, per-device
+copy, so there is nothing else it could mean.
+
+`recordReceipt` deliberately reuses room chat's `deliveredTo`/`seenBy: string[]` shape rather than a
+DM-specific flag, which is what lets `panels.tsx`'s existing `statusOf`/`Receipt` rendering treat a
+DM exactly like a two-member room. A thread only ever has one other party, so each array holds at
+most one id. It only ever touches `fromSelf` rows of the named thread — the peer acknowledging a
+message can only mean one this device sent them — and `seen` implies `delivered`, so a receipt whose
+predecessor was lost still lands both.
+
+### `shared/transcript.ts`
+`formatTranscript` / `transcriptFileName` — a room's chat or a DM thread written
+out as plain text through a native save dialog (`history:export`, `dm:export`).
+Text rather than JSON, because an exported conversation is nearly always read by a
+person — pasted into a ticket, kept as a record of what was agreed — and a format
+needing a tool to read defeats that. It is an **export, not a backup**: attachments
+are named, not written, and nothing reads back into the app.
+
+Both exports are in `PHONE_DENIED`, under the rule described in `phoneServer.ts`:
+**no request from a phone may open a native dialog on the laptop.** The client-side
+refusal in `httpApi.ts` is cosmetic on its own — a request straight to `/api/rpc`
+never runs it — so the deny list is the real gate.
+
+Room chat and DM share the formatter because they are the same artefact to the
+reader; each manager maps its own shape into `TranscriptEntry` first. Entries are
+sorted oldest-first here rather than at the call site, since both managers store
+newest-first. `formatTime` is injected so the default locale-dependent rendering
+can be pinned in tests. A withdrawn message exports as `(message deleted)` and
+never leaks its filename; a multi-line message is indented under its own header so
+a stray newline cannot read as a second message.
+
+### `shared/dataUrl.ts`
+`dataUrlBytes` — the decoded size of a `data:` URL, computed from the encoded
+length rather than by decoding it. A file picked off disk is measured by `stat`
+before it is ever read; an attachment that arrives already encoded (a forward, an
+image pasted into the composer) has no such handle, and decoding 50 MB of base64
+purely to find out how big it is defeats the point of having a ceiling. It sits in
+`shared` because it is what stands between `MAX_FILE_BYTES` and an oversized
+attachment on every path that skips the file picker, and that arithmetic is worth
+testing in plain Node. `postChatMessage` and `postDirectMessage` both call it, then
+stamp the result onto `fileSize` so a forwarded attachment still shows its size.
+
+**Pasting an image into the composer** needs no new IPC either, for the same
+reason: `chatSend`/`dmSend` already take a `dataUrl`, and the bytes are already in
+hand from the clipboard, so it skips the native picker and goes straight to the
+ordinary send. `ChatPanel`'s `onPaste` only claims the event once it has confirmed
+there is an image on the clipboard — calling `preventDefault` any earlier would
+swallow an ordinary text paste. The renderer pre-checks the size purely to avoid
+building 50 MB of base64 that the main process would reject anyway; the real
+ceiling is still `MAX_FILE_BYTES`, enforced in `postChatMessage` via
+`dataUrlBytes`. It works on the phone client too, unlike `chatSendFile` — a paste
+needs no native dialog.
+
+**Forwarding** needs no wire protocol of its own: it is `chatSend`/`dmSend` called
+again with the original's `content`/`type`/`dataUrl`/`fileName`, which makes the
+copy a message in its own right — the destination can edit, react to and delete it
+without any of that reaching back to the original. The destination picker lists
+rooms and DM threads together (`ForwardMessageModal`), because "where do I send
+this" is one question rather than two, and it lives in `App` rather than in either
+panel because a forward out of a DM thread can land in a room.
+
+### `shared/mentions.ts`
+`@Name` resolution, in `shared` because both processes need the same answer and it
+is testable in plain Node. A device name is whatever its owner typed — "Lab PC 3",
+"Vijaya's Laptop" — so there is no character that reliably ends a mention and
+`@(\w+)` would clip half the roster. It therefore matches against the roster it is
+given, **longest name first**, so `@Lab PC 3` beats a member called `Lab`; a name
+matching nobody stays ordinary text, and an `@` preceded by a word character is an
+email address rather than a mention.
+
+`mentions` is **always re-resolved from the text**, never read off the wire — by
+`postChatMessage` on the way out, by `handleChatMessage` on the way in, and by
+`editChatMessage` when the text changes. A sender-supplied list of ids would let a
+modified client light up anybody's mention badge at will, and would go stale the
+moment a member was renamed. Being named raises the notification to `urgent`, the
+same tier as an expiring remote-access request, because it is a direct address
+rather than ambient room chatter.
 
 ### `historyManager.ts`
 Per-room caps (100 clipboard entries, 500 chat messages) enforced **independently per room**, so a
-busy room cannot evict a quiet one. Writes are debounced by 750 ms because the clipboard poller
+busy room cannot evict a quiet one. `toggleChatPin` gives a chat message the same bargain a pinned
+clipboard entry already had: exempt from the cap and never evicted by it, since being evicted is the
+one thing pinning exists to prevent. A pin is **local to the device that made it** — nothing is sent,
+no ownership is checked (any message you can see, you can bookmark), and nobody else's copy changes.
+`DirectMessageManager.togglePin` is the same thing for a thread. Writes are debounced by 750 ms because the clipboard poller
 would otherwise hit disk every second. Images larger than 256 KB stay in memory but are not written
 to disk. Consecutive identical clipboard entries are suppressed, which is what stops the polled
 clipboard producing duplicates.
@@ -669,6 +886,20 @@ room key, so the desktop decrypts and serves. That is documented in the interfac
 rather than hidden, and the exposure is bounded by being opt-in, single-room,
 PIN-gated, expiring and revocable.
 
+`PHONE_DENIED` is a **deny** list, not an allow list, because a paired phone is the
+same person holding the same laptop and the useful default is that everything
+works. The cost of that choice is that a new IPC handler is reachable from a phone
+the moment it exists, so anything that should not be has to be denied deliberately.
+Three rules decide it: *it cannot work* (remote desktop, screen capture), *it would
+be a surprise* (installing an update), and **it opens a native dialog on the
+laptop**. The third is the one that is easy to reintroduce — a phone is often in
+another room, and a modal nobody is standing in front of blocks the window it is
+attached to until somebody walks over and dismisses it. Every `dialog.show*` call
+in `main.ts` is behind an entry in the list: `files:`, `dm:` and `history:export`
+by prefix, `chat:send-file` and `chat:save-file` by name, since `chat:` as a whole
+must stay reachable. A test counts the call sites in `main.ts` against that list,
+so adding a dialog without denying it fails the suite rather than shipping.
+
 ### `snippetManager.ts`
 The snippet library and, more to the point, its ranking: recently used first, then
 most used, then newest. A library that always shows the same alphabetical list is
@@ -701,17 +932,25 @@ the camera. Lives in the renderer because that is the only process with a media 
 Declared once in `src/shared/bridge.ts` as `CampusConnectApi`, implemented in `preload.ts`, and
 used by the renderer as `window.campusConnect`. One contract, three consumers, no drift.
 
-**State** — `getState`, `updateDeviceName`, `updateSettings`, `connectPeer`
+**State** — `getState`, `updateDeviceName`, `updateSettings`, `connectPeer`, `forgetPeer`
 
 **Rooms** — `roomCreate`, `roomRequestJoin`, `roomJoinByCode`, `roomUnlock`, `roomSwitch`,
-`roomLeave`, `roomApproveMember`, `roomRejectMember`, `roomRemoveMember`
+`roomLeave`, `roomApproveMember`, `roomRejectMember`, `roomRemoveMember`, `roomSetRestrictions`
 
-**History** — `historyGetClipboard`, `historyGetChat`, `historyDeleteEntry`, `historyClearRoom`
+**History** — `historyGetClipboard`, `historyGetChat`, `historyDeleteEntry`, `historyTogglePin`,
+`historyClearRoom`, `historyExport`
 
-**Content** — `chatSend`, `readClipboard`, `clipboardApply`, `clipboardShareNow`
+**Content** — `chatSend`, `chatEdit`, `chatDelete`, `chatReact`, `chatTogglePin`, `chatSendFile`,
+`chatSaveFile`, `chatTyping`, `chatMarkSeen`, `readClipboard`, `clipboardApply`, `clipboardShareNow`
 
-**Events** — `onStateChanged`, `onStatus`, `onChatMessage`, `onHistoryChanged`, `onJoinRequest`,
-`onJoinResult`
+**Direct messages** — `dmSend`, `dmSendFile`, `dmEdit`, `dmDelete`, `dmReact`, `dmTogglePin`,
+`dmSaveFile`, `dmGetThread`, `dmMarkRead`, `dmTyping`, `dmArchiveThread`, `dmDeleteThread`,
+`dmExport`, `dmEnsureCallRoom`
+
+**Search** — `searchAll` (spans clipboard, room chat and DM threads)
+
+**Events** — `onStateChanged`, `onStatus`, `onChatMessage`, `onHistoryChanged`, `onTyping`,
+`onReceipts`, `onDmMessage`, `onDmTyping`, `onJoinRequest`, `onJoinResult`
 
 Mutating calls return `ActionResult { ok, message }` rather than throwing, so the UI always has a
 sentence to show the user. Each `on*` subscriber returns its own unsubscribe function.
@@ -884,6 +1123,20 @@ member; the owner cannot be removed; a removed member loses access; rooms and ke
 restart; a room whose key is absent reports as locked; a room you are in never appears as
 discoverable.
 
+**Direct-call rooms** — `directRoomId` is deterministic and order-independent; `ensureDirectRoom`
+computes an identical room id and roster from either side; a direct room is never locked and never
+advertised; creating it twice is idempotent and keeps the peer's display name current.
+
+**Direct messages** — a sent message round-trips through the thread and the thread-summary list; a
+retransmitted receive is deduplicated by id while a genuinely new one still lands; only the message's
+own side may edit or delete it; a local-only delete needs no ownership check; a reaction toggles on
+and off, keyed by whichever device reacted; archiving is undone by sending into the thread again;
+deleting a thread clears its messages, unread count, and archived flag together.
+
+**Remote desktop input mapping** — `scaleBounds` converts logical display bounds to physical pixels
+correctly for a scaled display, a secondary display at a different origin, 100% scaling as a no-op,
+and a missing/invalid scale factor falling back to 1 rather than producing `NaN`/`Infinity`.
+
 **History** — history is scoped per room; repeated polls do not duplicate; per-room caps are
 independent; clearing one room leaves others intact; chat messages dedupe by id on rebroadcast;
 pinned items survive the cap, do not consume it, sort to the top, persist across restart, and become
@@ -913,13 +1166,18 @@ transfers are swept and their memory released; progress resets the deadline.
 
 | Limitation | Note / next step |
 |-----------|------------------|
-| Payloads over ~60 KB are not transmitted | Chunk large images across datagrams and reassemble |
-| Chat file transfer | The type exists; the picker and transfer are not implemented |
+| A DM call leaves no call history entry | Room chat records one; DM now has receipts and a typing indicator, but a placed or missed DM call is still not written into the thread |
+| The hidden 1:1 room a DM call is placed in is not end-to-end encrypted | Only its SDP/ICE setup metadata — the call's actual media is already SRTP end-to-end regardless; upgrading it to use the same `dmAgreedKey` as its content key (§5.9) is a natural follow-on |
 | Keys readable by code running as you | A passphrase the user types and the app never stores |
 | Room names are public | Advertise a hash instead, discoverable only by those who know the name |
 | No forward secrecy | Rotating the password re-keys the room; consider per-session keys |
 | Device identity is a UUID | Certificate pinning would stop a removed device rejoining anonymously |
-| UDP only | A TCP fallback would work across subnets |
+| No cross-subnet discovery | Discovery is LAN broadcast only; a device on a different subnet has to be added by IP (already supported) rather than found automatically |
+| Mixed-DPI multi-monitor remote desktop | Per-display `scaleFactor` correction (§6.10) does not fully solve a secondary display at a *different* scale than the primary |
+| An exported transcript names attachments rather than writing them | It is an export, not a backup — the text of a conversation, not its bytes. Writing files alongside it would need a folder rather than a file, and a different dialog |
+| A pinned message is pinned only on the device that pinned it | Deliberate, and the same as a pinned clipboard entry: a pin is a bookmark, not a claim about the conversation everyone must agree with. Syncing it would need a wire message and a rule for who may unpin |
+| A forwarded message carries no "forwarded from" marker | It arrives as an ordinary message. Adding provenance means a new optional field and deciding whether it can be trusted, since the forwarder controls it |
+| Roster edits need the owner to be online | Approve, decline, remove and restrict are refused while the master switch is off, rather than applying locally and silently losing the packet that tells the other devices. Correct, but it does mean an owner cannot queue a decision to take effect later |
 
 ---
 

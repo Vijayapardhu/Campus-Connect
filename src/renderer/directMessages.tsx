@@ -1,22 +1,38 @@
 import React from 'react';
-import type { DirectMessage, DmThreadSummary, PeerInfo } from '../shared/types';
+import type { ChatMessage, DirectMessage, DmThreadSummary, PeerInfo, RoomInfo } from '../shared/types';
 import type { StatusTone } from '../shared/bridge';
-import { Badge, Button, EmptyState } from './ui';
-import { clockTime, initials, relativeTime, truncate } from './format';
-import { ChatIcon, ChevronLeftIcon, SendIcon, UsersIcon } from './icons';
+import { Badge, Button, ConfirmModal, EmptyState } from './ui';
+import { initials, relativeTime, truncate } from './format';
+import {
+  ArchiveIcon,
+  ChatIcon,
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  MoreIcon,
+  PhoneIcon,
+  PlusIcon,
+  SearchIcon,
+  ShieldIcon,
+  TrashIcon,
+  UsersIcon
+} from './icons';
 import { api } from './api';
+import { ChatPanel } from './panels';
+import { FindUserModal } from './modals';
 
 /**
  * Direct 1:1 messages, in the window.
  *
- * Deliberately not built on `ChatPanel`: that requires a `RoomInfo` and a
- * full `ChatMessage` with a required `roomId`, and this has neither — a
- * direct message belongs to no room, and carries none of edit, delete,
- * reactions or a reply quote. What it does share with room chat is the
- * bubble list and composer look, via the same `.msg`/`.chat`/`.composer`
- * classes — the two should read as the same kind of thing, not a different
- * feature that happens to also send text.
+ * Built on the same `ChatPanel`/`MessageRow` room chat uses — full parity
+ * (file share, edit, delete, react, reply, receipts, typing) is "reuse the
+ * UI," not "rebuild it." A `DirectMessage` is adapted into the `ChatMessage`
+ * shape `ChatPanel` already understands (`toBubble`), and the two-party
+ * thread is presented as a stand-in two-member `RoomInfo` (`stubRoom`) so
+ * nothing downstream needs to know it isn't a real room.
  */
+
+/** Silence for this long ends a typing indicator on its own — the DM equivalent of App.tsx's room `TYPING_EXPIRY_MS`. */
+const DM_TYPING_EXPIRY_MS = 6000;
 
 export type DirectMessageController = {
   threads: DmThreadSummary[];
@@ -24,9 +40,27 @@ export type DirectMessageController = {
   activePeerId: string;
   activePeerName: string;
   thread: DirectMessage[];
+  /** The peer's name while they are composing in the open thread, or '' otherwise. */
+  peerTyping: string;
   openThread: (peerId: string, peerName: string) => void;
   closeThread: () => void;
-  send: (content: string) => Promise<void>;
+  send: (content: string, replyToId?: string) => Promise<void>;
+  sendFile: () => Promise<void>;
+  /** Sends an image pasted into the composer, skipping the native picker. */
+  sendImage: (dataUrl: string, fileName: string) => Promise<void>;
+  editMessage: (messageId: string, content: string) => Promise<void>;
+  deleteMessage: (messageId: string, forEveryone: boolean) => Promise<void>;
+  react: (messageId: string, emoji: string) => Promise<void>;
+  saveFile: (messageId: string) => Promise<void>;
+  archiveThread: (peerId: string, archived: boolean) => Promise<void>;
+  deleteThread: (peerId: string) => Promise<void>;
+  /** Saves the thread as a text file through the native dialog. Refused on the phone. */
+  exportThread: (peerId: string) => Promise<void>;
+  /** Bookmarks a message in the open thread, on this device alone. */
+  togglePin: (messageId: string) => Promise<void>;
+  /** Copies text to the clipboard and confirms it, the same as room chat's own copy action does. */
+  copy: (text: string) => void;
+  setTyping: (typing: boolean) => void;
 };
 
 export function useDirectMessage({
@@ -39,6 +73,7 @@ export function useDirectMessage({
   const [activePeerId, setActivePeerId] = React.useState('');
   const [activePeerName, setActivePeerName] = React.useState('');
   const [thread, setThread] = React.useState<DirectMessage[]>([]);
+  const [peerTypingAt, setPeerTypingAt] = React.useState<{ name: string; at: number } | null>(null);
   const pushRef = React.useRef(push);
   pushRef.current = push;
   // Read inside the event subscription below, which is only ever registered
@@ -52,6 +87,7 @@ export function useDirectMessage({
     activePeerIdRef.current = peerId; // Read by the fetch below before React commits the state update.
     setActivePeerName(peerName);
     setThread([]);
+    setPeerTypingAt(null);
     // Newest-first, to match `.chat__scroll`'s column-reverse layout — the
     // same order room chat's own message list is already kept in.
     //
@@ -70,6 +106,39 @@ export function useDirectMessage({
     setActivePeerId('');
     setActivePeerName('');
     setThread([]);
+    setPeerTypingAt(null);
+  }, []);
+
+  React.useEffect(() => {
+    return api.onDmTyping(({ peerId, peerName, typing }) => {
+      if (peerId !== activePeerIdRef.current) {
+        return; // Some other thread — nothing currently on screen cares.
+      }
+      setPeerTypingAt(typing ? { name: peerName, at: Date.now() } : null);
+    });
+  }, []);
+
+  // An indicator that never hears "stopped" — a closed app, a dropped
+  // connection — is also allowed to time out rather than trusting the
+  // negative edge to always arrive, the same reasoning room chat's own
+  // typing sweep in App.tsx follows.
+  React.useEffect(() => {
+    if (!peerTypingAt) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setPeerTypingAt((current) =>
+        current && Date.now() - current.at >= DM_TYPING_EXPIRY_MS ? null : current
+      );
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [peerTypingAt]);
+
+  const setTyping = React.useCallback((typing: boolean) => {
+    if (!activePeerIdRef.current) {
+      return;
+    }
+    void api.dmTyping(activePeerIdRef.current, typing);
   }, []);
 
   React.useEffect(() => {
@@ -77,9 +146,19 @@ export function useDirectMessage({
       if (message.peerId !== activePeerIdRef.current) {
         return; // Some other thread's message — it still updated `dmThreads`.
       }
-      setThread((current) =>
-        current.some((existing) => existing.id === message.id) ? current : [message, ...current]
-      );
+      // A brand new message is prepended (the list is newest-first); an
+      // amendment to one already here — an edit, a delete, a reaction —
+      // replaces it in place instead, the same id arriving with new content
+      // rather than a second row.
+      setThread((current) => {
+        const index = current.findIndex((existing) => existing.id === message.id);
+        if (index === -1) {
+          return [message, ...current];
+        }
+        const next = [...current];
+        next[index] = message;
+        return next;
+      });
       if (!message.fromSelf) {
         void api.dmMarkRead(message.peerId);
       }
@@ -87,11 +166,11 @@ export function useDirectMessage({
   }, []);
 
   const send = React.useCallback(
-    async (content: string) => {
+    async (content: string, replyToId?: string) => {
       if (!activePeerId) {
         return;
       }
-      const result = await api.dmSend(activePeerId, activePeerName, content);
+      const result = await api.dmSend(activePeerId, activePeerName, 'text', content, undefined, undefined, replyToId);
       if (!result.ok) {
         pushRef.current(result.message, 'error');
       }
@@ -99,7 +178,178 @@ export function useDirectMessage({
     [activePeerId, activePeerName]
   );
 
-  return { threads: dmThreads, activePeerId, activePeerName, thread, openThread, closeThread, send };
+  const sendFile = React.useCallback(async () => {
+    if (!activePeerId) {
+      return;
+    }
+    const result = await api.dmSendFile(activePeerId, activePeerName);
+    pushRef.current(result.message, result.ok ? 'success' : 'error');
+  }, [activePeerId, activePeerName]);
+
+  /** An image pasted into the composer — already decoded, so no picker is involved. */
+  const sendImage = React.useCallback(
+    async (dataUrl: string, fileName: string) => {
+      if (!activePeerId) {
+        return;
+      }
+      const result = await api.dmSend(activePeerId, activePeerName, 'image', fileName, dataUrl, fileName);
+      if (!result.ok) {
+        pushRef.current(result.message, 'error');
+      }
+    },
+    [activePeerId, activePeerName]
+  );
+
+  const editMessage = React.useCallback(
+    async (messageId: string, content: string) => {
+      if (!activePeerId) {
+        return;
+      }
+      const result = await api.dmEdit(activePeerId, messageId, content);
+      if (!result.ok) {
+        pushRef.current(result.message, 'error');
+      }
+    },
+    [activePeerId]
+  );
+
+  const deleteMessage = React.useCallback(
+    async (messageId: string, forEveryone: boolean) => {
+      if (!activePeerId) {
+        return;
+      }
+      const result = await api.dmDelete(activePeerId, messageId, forEveryone);
+      pushRef.current(result.message, result.ok ? 'success' : 'error');
+    },
+    [activePeerId]
+  );
+
+  const react = React.useCallback(
+    async (messageId: string, emoji: string) => {
+      if (!activePeerId) {
+        return;
+      }
+      const result = await api.dmReact(activePeerId, messageId, emoji);
+      if (!result.ok) {
+        pushRef.current(result.message, 'error');
+      }
+    },
+    [activePeerId]
+  );
+
+  const saveFile = React.useCallback(
+    async (messageId: string) => {
+      if (!activePeerId) {
+        return;
+      }
+      const result = await api.dmSaveFile(activePeerId, messageId);
+      pushRef.current(result.message, result.ok ? 'success' : 'error');
+    },
+    [activePeerId]
+  );
+
+  const archiveThread = React.useCallback(async (peerId: string, archived: boolean) => {
+    await api.dmArchiveThread(peerId, archived);
+  }, []);
+
+  const deleteThread = React.useCallback(async (peerId: string) => {
+    await api.dmDeleteThread(peerId);
+    if (activePeerIdRef.current === peerId) {
+      closeThread();
+    }
+  }, [closeThread]);
+
+  const copy = React.useCallback((text: string) => {
+    navigator.clipboard.writeText(text);
+    pushRef.current('Copied to your clipboard.', 'success');
+  }, []);
+
+  const togglePin = React.useCallback(async (messageId: string) => {
+    if (!activePeerIdRef.current) {
+      return;
+    }
+    const result = await api.dmTogglePin(activePeerIdRef.current, messageId);
+    if (!result.ok) {
+      pushRef.current(result.message, 'error');
+    }
+  }, []);
+
+  const exportThread = React.useCallback(async (peerId: string) => {
+    const result = await api.dmExport(peerId);
+    pushRef.current(result.message, result.ok ? 'success' : 'error');
+  }, []);
+
+  return {
+    threads: dmThreads,
+    activePeerId,
+    activePeerName,
+    thread,
+    peerTyping: peerTypingAt?.name ?? '',
+    openThread,
+    closeThread,
+    send,
+    sendFile,
+    sendImage,
+    editMessage,
+    deleteMessage,
+    react,
+    saveFile,
+    archiveThread,
+    deleteThread,
+    exportThread,
+    togglePin,
+    copy,
+    setTyping
+  };
+}
+
+// ------------------------------------------------------------------ mapping
+
+/** A `DirectMessage`, reshaped into the `ChatMessage` `ChatPanel`/`MessageRow` already know how to render. */
+function toBubble(message: DirectMessage, selfId: string, selfName: string): ChatMessage {
+  return {
+    id: message.id,
+    type: message.type,
+    content: message.content,
+    dataUrl: message.dataUrl,
+    fileName: message.fileName,
+    fileSize: message.fileSize,
+    deviceId: message.fromSelf ? selfId : message.peerId,
+    deviceName: message.fromSelf ? selfName : message.peerName,
+    roomId: '',
+    timestamp: message.sentAt,
+    replyTo: message.replyTo,
+    editedAt: message.editedAt,
+    deleted: message.deleted,
+    reactions: message.reactions,
+    deliveredTo: message.deliveredTo,
+    seenBy: message.seenBy,
+    pinned: message.pinned
+  };
+}
+
+/**
+ * A stand-in two-member room so `ChatPanel` can render a DM thread as the
+ * thing it already knows how to render, rather than a fork of it. Never
+ * persisted, never sent anywhere — a plain local value built fresh on every
+ * render.
+ */
+function stubRoom(selfId: string, selfName: string, peerId: string, peerName: string): RoomInfo {
+  const now = Date.now();
+  return {
+    roomId: `dm:${peerId}`,
+    name: peerName,
+    type: 'direct',
+    ownerId: selfId,
+    ownerName: selfName,
+    keySalt: '',
+    encrypted: false,
+    createdAt: now,
+    members: [
+      { deviceId: selfId, deviceName: selfName, status: 'accepted', role: 'owner', joinedAt: now },
+      { deviceId: peerId, deviceName: peerName, status: 'accepted', role: 'member', joinedAt: now }
+    ]
+  };
 }
 
 // -------------------------------------------------------------------- panel
@@ -108,73 +358,121 @@ export function DmPanel({
   controller,
   peers,
   deviceId,
-  blockedIds
+  deviceName,
+  blockedIds,
+  canSendFiles,
+  onCallRequest,
+  onForward,
+  listenPort,
+  onConnectByIp
 }: {
   controller: DirectMessageController;
   peers: PeerInfo[];
   deviceId: string;
+  deviceName: string;
   blockedIds: Set<string>;
+  /** False on a phone — DMs are native-only there already, but `ChatPanel` still wants the flag. */
+  canSendFiles: boolean;
+  onCallRequest: (peerId: string, peerName: string, mode: 'audio' | 'video') => void;
+  /**
+   * Opens the destination picker. Owned by `App` rather than here because a
+   * forward out of a thread can land in a room, which this component knows
+   * nothing about.
+   */
+  onForward?: (message: ChatMessage) => void;
+  /** The port this device listens on — offered as the default in the by-IP search field. */
+  listenPort: number;
+  onConnectByIp: (host: string, port: number) => Promise<void>;
 }) {
-  const { threads, activePeerId, activePeerName, thread, openThread, closeThread, send } = controller;
-  const [draft, setDraft] = React.useState('');
+  const {
+    threads,
+    activePeerId,
+    activePeerName,
+    thread,
+    openThread,
+    closeThread,
+    send,
+    sendFile,
+    sendImage,
+    editMessage,
+    deleteMessage,
+    react,
+    saveFile,
+    archiveThread,
+    deleteThread,
+    exportThread,
+    togglePin,
+    copy,
+    peerTyping,
+    setTyping
+  } = controller;
+
+  const [query, setQuery] = React.useState('');
+  const [menuFor, setMenuFor] = React.useState('');
+  const [showArchived, setShowArchived] = React.useState(false);
+  const [confirmingDelete, setConfirmingDelete] = React.useState<DmThreadSummary | null>(null);
+  const [findUserOpen, setFindUserOpen] = React.useState(false);
+
+  // A popover that only ever closes by picking an item, or by opening a
+  // different row's, would stay open the moment someone clicks anywhere else
+  // on the page — the same "click outside to dismiss" every other menu here
+  // already gets for free by virtue of being a `Modal`.
+  React.useEffect(() => {
+    if (!menuFor) {
+      return;
+    }
+    const dismiss = () => setMenuFor('');
+    document.addEventListener('click', dismiss);
+    return () => document.removeEventListener('click', dismiss);
+  }, [menuFor]);
 
   if (activePeerId) {
-    const submit = () => {
-      const content = draft.trim();
-      if (!content) {
-        return;
-      }
-      setDraft('');
-      void send(content);
-    };
-
     return (
-      <div className="chat">
-        <div className="chat__bar">
-          <Button size="sm" variant="ghost" icon onClick={closeThread} aria-label="Back to messages">
-            <ChevronLeftIcon size={15} />
-          </Button>
-          <span className="card__title">{activePeerName}</span>
-        </div>
-
-        <div className="chat__scroll">
-          {thread.length === 0 ? (
-            <EmptyState
-              icon={<ChatIcon size={22} />}
-              title="No messages yet"
-              text={`Nothing sent between this device and ${activePeerName} yet.`}
-            />
-          ) : (
-            thread.map((message) => (
-              <div key={message.id} className={message.fromSelf ? 'msg is-mine' : 'msg'}>
-                <div className="msg__head">
-                  <span className="msg__author">{message.fromSelf ? 'You' : activePeerName}</span>
-                  <span className="msg__time">{clockTime(message.sentAt)}</span>
-                </div>
-                <div className="msg__body">{message.content}</div>
-              </div>
-            ))
-          )}
-        </div>
-
-        <div className="composer">
-          <textarea
-            className="input composer__input"
-            value={draft}
-            placeholder={`Message ${activePeerName}`}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                submit();
-              }
-            }}
-          />
-          <Button variant="primary" icon disabled={!draft.trim()} onClick={submit} aria-label="Send">
-            <SendIcon size={16} />
-          </Button>
-        </div>
-      </div>
+      <ChatPanel
+        room={stubRoom(deviceId, deviceName, activePeerId, activePeerName)}
+        messages={thread.map((message) => toBubble(message, deviceId, deviceName))}
+        deviceId={deviceId}
+        typingNames={peerTyping ? [peerTyping] : []}
+        showReceipts
+        emptyText={`Nothing sent between this device and ${activePeerName} yet.`}
+        onSend={(text, replyToId) => void send(text, replyToId)}
+        onSendFile={() => void sendFile()}
+        onSendImage={(dataUrl, fileName) => void sendImage(dataUrl, fileName)}
+        canSendFiles={canSendFiles}
+        onSaveFile={(messageId) => void saveFile(messageId)}
+        onEdit={(messageId, content) => void editMessage(messageId, content)}
+        onDelete={(messageId, forEveryone) => void deleteMessage(messageId, forEveryone)}
+        onReact={(messageId, emoji) => void react(messageId, emoji)}
+        onCopy={copy}
+        onForward={onForward}
+        onTogglePin={(messageId) => void togglePin(messageId)}
+        // Same reasoning as room chat's: the save dialog is native.
+        onExport={canSendFiles ? () => void exportThread(activePeerId) : undefined}
+        onTyping={setTyping}
+        headerExtra={
+          <>
+            <Button size="sm" variant="ghost" icon onClick={closeThread} aria-label="Back to messages">
+              <ChevronLeftIcon size={15} />
+            </Button>
+            <span className="card__title">{activePeerName}</span>
+            <span
+              className="text-tertiary text-sm"
+              title="Sealed with a key only this device and theirs can compute — nothing else on the network can read it."
+            >
+              <ShieldIcon size={13} />
+            </span>
+            <Button
+              size="sm"
+              onClick={() => onCallRequest(activePeerId, activePeerName, 'audio')}
+              title={`Call ${activePeerName}`}
+            >
+              <PhoneIcon size={14} />
+              Call
+            </Button>
+            <span className="spacer" />
+          </>
+        }
+      />
     );
   }
 
@@ -187,36 +485,143 @@ export function DmPanel({
   // offline should not make the conversation disappear, only pause it.
   const offlineThreads = threads.filter((thread) => !reachableIds.has(thread.peerId));
 
+  const needle = query.trim().toLowerCase();
+  const matchesThread = (summary: DmThreadSummary) =>
+    !needle ||
+    summary.peerName.toLowerCase().includes(needle) ||
+    summary.lastMessage.toLowerCase().includes(needle);
+
+  const activeThreads = threads.filter((summary) => !summary.archived && matchesThread(summary));
+  const archivedThreads = threads.filter((summary) => summary.archived && matchesThread(summary));
+  // A search that only matches something archived should not also require
+  // digging it out of a collapsed section — the query already did the work
+  // of finding it.
+  const archivedExpanded = showArchived || Boolean(needle);
+  const visiblePeers = needle
+    ? reachable.filter((peer) => peer.name.toLowerCase().includes(needle))
+    : reachable;
+
+  function openRow(summary: DmThreadSummary) {
+    setMenuFor('');
+    openThread(summary.peerId, summary.peerName);
+  }
+
+  function renderThreadRow(summary: DmThreadSummary) {
+    return (
+      <div
+        key={summary.peerId}
+        className="member dm-thread"
+        role="button"
+        tabIndex={0}
+        onClick={() => openRow(summary)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            openRow(summary);
+          }
+        }}
+      >
+        <span className="member__avatar">{initials(summary.peerName)}</span>
+        <div className="member__body">
+          <div className="member__name">
+            {summary.peerName}
+            {offlineThreads.includes(summary) ? <span className="text-secondary text-sm"> · offline</span> : null}
+          </div>
+          <div className="member__meta">
+            {truncate(summary.lastMessage, 60)} · {relativeTime(summary.lastAt)}
+          </div>
+        </div>
+        {summary.unread > 0 ? <Badge tone="accent">{summary.unread}</Badge> : null}
+        <div className="dm-thread__menu">
+          <Button
+            size="sm"
+            variant="ghost"
+            icon
+            aria-label={`More actions for ${summary.peerName}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              setMenuFor((current) => (current === summary.peerId ? '' : summary.peerId));
+            }}
+          >
+            <MoreIcon size={14} />
+          </Button>
+          {menuFor === summary.peerId ? (
+            <div className="dm-thread__popover" onClick={(event) => event.stopPropagation()}>
+              <button
+                type="button"
+                className="dm-thread__popover-item"
+                onClick={() => {
+                  void archiveThread(summary.peerId, !summary.archived);
+                  setMenuFor('');
+                }}
+              >
+                <ArchiveIcon size={13} />
+                {summary.archived ? 'Unarchive' : 'Archive'}
+              </button>
+              <button
+                type="button"
+                className="dm-thread__popover-item is-danger"
+                onClick={() => {
+                  setConfirmingDelete(summary);
+                  setMenuFor('');
+                }}
+              >
+                <TrashIcon size={13} />
+                Delete
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="stack">
-      {threads.length > 0 && (
+    <div className="stack dm-page">
+      <div className="search">
+        <SearchIcon size={14} />
+        <input
+          className="search__input"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search messages and devices"
+          aria-label="Search messages"
+          spellCheck={false}
+        />
+      </div>
+
+      {activeThreads.length > 0 && (
         <section className="card">
           <div className="card__header">
             <div style={{ flex: 1 }}>
               <h3 className="card__title">Recent</h3>
             </div>
           </div>
-          {threads.map((summary) => (
-            <button
-              key={summary.peerId}
-              className="member dm-thread"
-              onClick={() => openThread(summary.peerId, summary.peerName)}
-            >
-              <span className="member__avatar">{initials(summary.peerName)}</span>
-              <div className="member__body">
-                <div className="member__name">
-                  {summary.peerName}
-                  {offlineThreads.includes(summary) ? (
-                    <span className="text-secondary text-sm"> · offline</span>
-                  ) : null}
-                </div>
-                <div className="member__meta">
-                  {truncate(summary.lastMessage, 60)} · {relativeTime(summary.lastAt)}
-                </div>
-              </div>
-              {summary.unread > 0 ? <Badge tone="accent">{summary.unread}</Badge> : null}
-            </button>
-          ))}
+          {activeThreads.map(renderThreadRow)}
+        </section>
+      )}
+
+      {archivedThreads.length > 0 && (
+        <section className="card">
+          <div
+            className="card__header dm-archived-toggle"
+            role="button"
+            tabIndex={0}
+            onClick={() => setShowArchived((open) => !open)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                setShowArchived((open) => !open);
+              }
+            }}
+          >
+            <div style={{ flex: 1 }}>
+              <h3 className="card__title">Archived</h3>
+            </div>
+            <Badge>{archivedThreads.length}</Badge>
+            <ChevronDownIcon size={15} className={archivedExpanded ? 'dm-archived-chevron is-open' : 'dm-archived-chevron'} />
+          </div>
+          {archivedExpanded ? archivedThreads.map(renderThreadRow) : null}
         </section>
       )}
 
@@ -225,20 +630,25 @@ export function DmPanel({
           <div style={{ flex: 1 }}>
             <h3 className="card__title">Devices on this network</h3>
             <p className="card__desc">
-              Message another machine directly — no room, no history shared with anyone else.
+              Message another machine directly — no room, no history shared with anyone else, and
+              end-to-end encrypted the moment it appears on the network.
             </p>
           </div>
-          <Badge>{reachable.length}</Badge>
+          <Badge>{visiblePeers.length}</Badge>
         </div>
 
-        {reachable.length === 0 ? (
+        {visiblePeers.length === 0 ? (
           <EmptyState
             icon={<UsersIcon size={22} />}
-            title="No devices in range"
-            text="Devices appear here once Campus Connect is running on them and they are on the same network."
+            title={needle ? 'No matches' : 'No devices in range'}
+            text={
+              needle
+                ? `Nothing on this network matches “${query.trim()}”.`
+                : 'Devices appear here once Campus Connect is running on them and they are on the same network.'
+            }
           />
         ) : (
-          reachable.map((peer) => (
+          visiblePeers.map((peer) => (
             <div key={peer.id} className="member">
               <span className="member__avatar">{initials(peer.name)}</span>
               <div className="member__body">
@@ -255,6 +665,42 @@ export function DmPanel({
           ))
         )}
       </section>
+
+      <Button
+        className="fab"
+        variant="primary"
+        icon
+        onClick={() => setFindUserOpen(true)}
+        aria-label="Start a new chat"
+        title="Start a new chat"
+      >
+        <PlusIcon size={20} />
+      </Button>
+
+      {confirmingDelete ? (
+        <ConfirmModal
+          title="Delete this conversation?"
+          description={`This removes your copy of the conversation with ${confirmingDelete.peerName}. It stays on their device.`}
+          confirmLabel="Delete"
+          onConfirm={() => {
+            void deleteThread(confirmingDelete.peerId);
+            setConfirmingDelete(null);
+          }}
+          onClose={() => setConfirmingDelete(null)}
+        />
+      ) : null}
+
+      {findUserOpen ? (
+        <FindUserModal
+          peers={peers}
+          selfDeviceId={deviceId}
+          blockedIds={blockedIds}
+          defaultPort={listenPort}
+          onConnectByIp={onConnectByIp}
+          onOpenThread={(peerId, peerName) => openThread(peerId, peerName)}
+          onClose={() => setFindUserOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -11,10 +11,10 @@ import { CallEngine, describeMediaError, type CallPeer } from './callEngine';
 import { Button, Modal } from './ui';
 import { initials } from './format';
 import {
+  FullscreenExitIcon,
+  FullscreenIcon,
   MicIcon,
   MicOffIcon,
-  MaximiseIcon,
-  MinimiseIcon,
   MonitorIcon,
   PhoneIcon,
   PhoneOffIcon,
@@ -610,7 +610,7 @@ export function CallStage({
           onClick={fullscreen.toggle}
           title={fullscreen.active ? 'Leave full screen' : 'Full screen'}
         >
-          {fullscreen.active ? <MinimiseIcon size={15} /> : <MaximiseIcon size={15} />}
+          {fullscreen.active ? <FullscreenExitIcon size={15} /> : <FullscreenIcon size={15} />}
         </button>
       </header>
 

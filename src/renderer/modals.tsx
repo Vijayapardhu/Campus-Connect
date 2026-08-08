@@ -3,23 +3,30 @@ import type {
   AppSettings,
   AppState,
   DiscoveredRoom,
+  DmThreadSummary,
+  PeerInfo,
   RoomInfo,
   RoomInvite,
+  RoomMember,
+  RoomRestrictions,
   RoomType,
   RoomUpdate
 } from '../shared/types';
 import { APP_INFO, FONT_SCALES, MAX_FONT_SCALE, MIN_FONT_SCALE } from '../shared/types';
 import { Button, Field, Modal, SwitchRow } from './ui';
-import { passwordStrength } from './format';
+import { initials, passwordStrength } from './format';
 import { listSystemFonts } from './fonts';
 import {
+  ChatIcon,
   ClipboardIcon,
+  ForwardIcon,
   GithubIcon,
   GlobeIcon,
   LockIcon,
   MonitorIcon,
   MoonIcon,
-  SunIcon
+  SunIcon,
+  UsersIcon
 } from './icons';
 
 // ------------------------------------------------------------- create a room
@@ -345,6 +352,81 @@ export function EditRoomModal({
   );
 }
 
+// ------------------------------------------------------- restrict a member
+
+/**
+ * A lesser tier than a block. Owner-only, scoped to one room — narrows what
+ * one member may do here rather than severing the device from the network
+ * entirely, which is what `onBlock` in `MembersPanel` already does.
+ */
+export function RestrictMemberModal({
+  room,
+  member,
+  onClose,
+  onSave
+}: {
+  room: RoomInfo;
+  member: RoomMember;
+  onClose: () => void;
+  onSave: (restrictions: RoomRestrictions) => Promise<boolean>;
+}) {
+  const [chat, setChat] = React.useState(Boolean(member.restricted?.chat));
+  const [files, setFiles] = React.useState(Boolean(member.restricted?.files));
+  const [calls, setCalls] = React.useState(Boolean(member.restricted?.calls));
+  const [remote, setRemote] = React.useState(Boolean(member.restricted?.remote));
+  const [busy, setBusy] = React.useState(false);
+
+  async function submit() {
+    setBusy(true);
+    const saved = await onSave({ chat, files, calls, remote });
+    setBusy(false);
+    if (saved) {
+      onClose();
+    }
+  }
+
+  return (
+    <Modal
+      title={`Restrict ${member.deviceName}`}
+      description={`Applies only in ${room.name}. Visible to everyone in the room, including ${member.deviceName} — a restriction nobody can see is one that just looks like something is broken.`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" onClick={submit} disabled={busy}>
+            {busy ? 'Saving…' : 'Save'}
+          </Button>
+        </>
+      }
+    >
+      <SwitchRow
+        title="Messages"
+        description="Cannot send, edit, delete or react to chat messages in this room."
+        checked={chat}
+        onChange={setChat}
+      />
+      <SwitchRow
+        title="Files"
+        description="Cannot send files or images in this room. Text messages are unaffected."
+        checked={files}
+        onChange={setFiles}
+      />
+      <SwitchRow
+        title="Calls"
+        description="Cannot start or join a call in this room."
+        checked={calls}
+        onChange={setCalls}
+      />
+      <SwitchRow
+        title="Screen sharing"
+        description="Cannot ask to view or control another member's screen through this room. Calls are unaffected."
+        checked={remote}
+        onChange={setRemote}
+      />
+    </Modal>
+  );
+}
+
 // --------------------------------------------------------------- join a room
 
 export function JoinRoomModal({
@@ -492,6 +574,280 @@ export function JoinRoomModal({
       )}
 
       {error ? <p className="field__error" style={{ marginTop: 'var(--space-3)' }}>{error}</p> : null}
+    </Modal>
+  );
+}
+
+// ------------------------------------------------------- forward a message
+
+/** Where a forwarded message can be sent. */
+export type ForwardTarget =
+  | { kind: 'room'; id: string; name: string }
+  | { kind: 'dm'; id: string; name: string };
+
+/**
+ * The destination picker for forwarding.
+ *
+ * Rooms and DM threads are listed together, because "where do I send this" is
+ * one question, not two — the two kinds are labelled rather than separated into
+ * tabs the user has to guess between. Locked rooms are shown but not offered:
+ * a message cannot be sealed for a room whose key this device does not hold,
+ * and silently failing after the click would be worse than saying so up front.
+ */
+export function ForwardMessageModal({
+  preview,
+  rooms,
+  threads,
+  peers,
+  selfDeviceId,
+  blockedIds,
+  onForward,
+  onClose
+}: {
+  /** A line of the message being forwarded, so the modal says what it is about to send. */
+  preview: string;
+  rooms: RoomInfo[];
+  threads: DmThreadSummary[];
+  peers: PeerInfo[];
+  selfDeviceId: string;
+  blockedIds: Set<string>;
+  onForward: (target: ForwardTarget) => Promise<boolean>;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = React.useState('');
+  const [sending, setSending] = React.useState('');
+
+  const destinations = React.useMemo(() => {
+    const roomTargets = rooms
+      // A `direct` room is the hidden 1:1 room behind a DM call — it is not a
+      // place anyone chose to be, so it is never a destination.
+      .filter((room) => room.type !== 'direct')
+      .filter((room) => room.members.some((m) => m.deviceId === selfDeviceId && m.status === 'accepted'))
+      .map((room) => ({ kind: 'room' as const, id: room.roomId, name: room.name }));
+
+    // Threads first, then anyone visible this device has not written to yet —
+    // forwarding is often the first thing you ever send someone.
+    const known = new Set(threads.map((thread) => thread.peerId));
+    const dmTargets = [
+      ...threads.map((thread) => ({ kind: 'dm' as const, id: thread.peerId, name: thread.peerName })),
+      ...peers
+        .filter((peer) => peer.id !== selfDeviceId && !known.has(peer.id) && !blockedIds.has(peer.id))
+        .map((peer) => ({ kind: 'dm' as const, id: peer.id, name: peer.name }))
+    ].filter((target) => !blockedIds.has(target.id));
+
+    return [...roomTargets, ...dmTargets];
+  }, [rooms, threads, peers, selfDeviceId, blockedIds]);
+
+  const needle = query.trim().toLowerCase();
+  const matches = needle
+    ? destinations.filter((target) => target.name.toLowerCase().includes(needle))
+    : destinations;
+
+  async function pick(target: ForwardTarget) {
+    setSending(`${target.kind}:${target.id}`);
+    const sent = await onForward(target);
+    setSending('');
+    if (sent) {
+      onClose();
+    }
+  }
+
+  return (
+    <Modal
+      title="Forward this message"
+      description={preview ? `Sending: “${preview}”` : 'Choose where to send a copy.'}
+      onClose={onClose}
+      footer={<Button onClick={onClose}>Cancel</Button>}
+    >
+      <Field label="Where to" hint="Any room you are in, or any device you can reach.">
+        <input
+          className="input"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search rooms and people"
+          autoFocus
+          spellCheck={false}
+        />
+      </Field>
+
+      {matches.length === 0 ? (
+        <p className="field__hint">
+          {destinations.length === 0
+            ? 'There is nowhere to forward this yet — join a room, or find a device to message.'
+            : `Nothing matches “${query.trim()}”.`}
+        </p>
+      ) : (
+        <div className="stack" style={{ marginTop: 'var(--space-2)' }}>
+          {matches.map((target) => (
+            <button
+              key={`${target.kind}:${target.id}`}
+              type="button"
+              className="member"
+              disabled={sending !== ''}
+              onClick={() => void pick(target)}
+            >
+              <span className="member__avatar">
+                {target.kind === 'room' ? <UsersIcon size={15} /> : initials(target.name)}
+              </span>
+              <div className="member__body">
+                <div className="member__name">{target.name}</div>
+                <div className="member__meta">{target.kind === 'room' ? 'Room' : 'Direct message'}</div>
+              </div>
+              {sending === `${target.kind}:${target.id}` ? (
+                <span className="text-sm text-tertiary">Sending…</span>
+              ) : (
+                <ForwardIcon size={14} />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// --------------------------------------------------- find someone to message
+
+/**
+ * The FAB's destination on the Messages page. Modelled on `JoinRoomModal`'s
+ * "either credential admits you" shape — here, either a name/device-id match
+ * among already-visible peers, or a direct-by-IP connect, gets you to the
+ * same place: a device you can open a thread with.
+ */
+export function FindUserModal({
+  peers,
+  selfDeviceId,
+  blockedIds,
+  defaultPort,
+  onConnectByIp,
+  onOpenThread,
+  onClose
+}: {
+  peers: PeerInfo[];
+  selfDeviceId: string;
+  blockedIds: Set<string>;
+  defaultPort: number;
+  onConnectByIp: (host: string, port: number) => Promise<void>;
+  onOpenThread: (peerId: string, peerName: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = React.useState('');
+  const [host, setHost] = React.useState('');
+  const [port, setPort] = React.useState(String(defaultPort));
+  const [connecting, setConnecting] = React.useState(false);
+  const [lookingForHost, setLookingForHost] = React.useState('');
+
+  const reachable = peers.filter((peer) => peer.id !== selfDeviceId && !blockedIds.has(peer.id));
+
+  const needle = query.trim().toLowerCase();
+  const matches = needle
+    ? reachable.filter(
+        (peer) => peer.name.toLowerCase().includes(needle) || peer.id.toLowerCase().includes(needle)
+      )
+    : [];
+
+  // Once a device answers at the address just connected to, it is offered
+  // directly — `peers` is the live, ever-updating list from `AppState`, so
+  // this just needs to notice a new entry at that host, not poll for one.
+  const justConnected = lookingForHost ? reachable.find((peer) => peer.host === lookingForHost) : undefined;
+
+  async function connect() {
+    const trimmedHost = host.trim();
+    if (!trimmedHost) {
+      return;
+    }
+    const parsedPort = Number(port) || defaultPort;
+    setConnecting(true);
+    await onConnectByIp(trimmedHost, parsedPort);
+    setConnecting(false);
+    setLookingForHost(trimmedHost);
+  }
+
+  function choose(peer: PeerInfo) {
+    onOpenThread(peer.id, peer.name);
+    onClose();
+  }
+
+  return (
+    <Modal
+      title="Find someone to message"
+      description="Search by name or device ID, or connect directly by IP address."
+      onClose={onClose}
+      footer={<Button onClick={onClose}>Close</Button>}
+    >
+      <Field label="Name or device ID" hint="Matches anyone currently visible on the network.">
+        <input
+          className="input"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="A name, or a device id"
+          autoFocus
+          spellCheck={false}
+        />
+      </Field>
+
+      {needle ? (
+        matches.length > 0 ? (
+          <div className="stack" style={{ marginTop: 'var(--space-2)' }}>
+            {matches.map((peer) => (
+              <button key={peer.id} type="button" className="member" onClick={() => choose(peer)}>
+                <span className="member__avatar">{initials(peer.name)}</span>
+                <div className="member__body">
+                  <div className="member__name">{peer.name}</div>
+                  <div className="member__meta mono truncate">{peer.id}</div>
+                </div>
+                <ChatIcon size={14} />
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="field__hint">No one visible right now matches “{query.trim()}”.</p>
+        )
+      ) : null}
+
+      <div className="or-divider">or</div>
+
+      <Field label="IP address" hint="For a device not yet visible on this network segment.">
+        <div className="row">
+          <input
+            className="input"
+            value={host}
+            onChange={(event) => {
+              setHost(event.target.value);
+              setLookingForHost('');
+            }}
+            onKeyDown={(event) => event.key === 'Enter' && connect()}
+            placeholder="192.168.1.42"
+            spellCheck={false}
+            style={{ flex: 2 }}
+          />
+          <input
+            className="input"
+            value={port}
+            onChange={(event) => setPort(event.target.value.replace(/\D/g, ''))}
+            placeholder={String(defaultPort)}
+            style={{ flex: 1 }}
+          />
+          <Button onClick={connect} disabled={connecting || !host.trim()}>
+            {connecting ? 'Connecting…' : 'Connect'}
+          </Button>
+        </div>
+      </Field>
+
+      {justConnected ? (
+        <button type="button" className="member" onClick={() => choose(justConnected)}>
+          <span className="member__avatar">{initials(justConnected.name)}</span>
+          <div className="member__body">
+            <div className="member__name">{justConnected.name}</div>
+            <div className="member__meta">Answered at {justConnected.host}</div>
+          </div>
+          <ChatIcon size={14} />
+        </button>
+      ) : lookingForHost ? (
+        <p className="field__hint">
+          Waiting for a device to answer at {lookingForHost} — it will appear here once it does.
+        </p>
+      ) : null}
     </Modal>
   );
 }

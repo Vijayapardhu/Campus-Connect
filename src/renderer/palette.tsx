@@ -231,7 +231,7 @@ export function CommandPalette({
                   ? searching
                     ? 'Searching…'
                     : `Nothing matches “${term}”.`
-                  : 'Type to search your clipboard history and every room’s chat.'
+                  : 'Type to search your clipboard history, every room’s chat, and your direct messages.'
                 : `No command matches “${query}”.`}
             </div>
           ) : searchMode ? (
@@ -243,14 +243,15 @@ export function CommandPalette({
                 onClick={() => choose(index)}
               >
                 <span className="qp-row__icon">
-                  {hit.kind === 'chat' ? <ChatIcon size={14} /> : <ClipboardIcon size={14} />}
+                  {hit.kind === 'clipboard' ? <ClipboardIcon size={14} /> : <ChatIcon size={14} />}
                 </span>
                 <span className="qp-row__body">
                   <span className="qp-row__text">
                     <Highlighted hit={hit} />
                   </span>
                   <span className="qp-row__meta">
-                    {hit.roomName} · {hit.deviceName} · {relativeTime(hit.timestamp)}
+                    {hit.kind === 'dm' ? `Message with ${hit.peerName}` : hit.roomName} · {hit.deviceName} ·{' '}
+                    {relativeTime(hit.timestamp)}
                     {hit.fileName ? ` · ${hit.fileName}` : ''}
                   </span>
                 </span>

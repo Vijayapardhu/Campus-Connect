@@ -14,8 +14,8 @@ import {
   AlertIcon,
   CheckIcon,
   EyeIcon,
-  MaximiseIcon,
-  MinimiseIcon,
+  FullscreenExitIcon,
+  FullscreenIcon,
   MonitorIcon,
   MousePointerIcon,
   ShieldIcon,
@@ -764,7 +764,7 @@ export function RemoteViewer({
             onClick={fullscreen.toggle}
             title={fullscreen.active ? 'Leave full screen (Esc)' : 'Full screen (F)'}
           >
-            {fullscreen.active ? <MinimiseIcon size={15} /> : <MaximiseIcon size={15} />}
+            {fullscreen.active ? <FullscreenExitIcon size={15} /> : <FullscreenIcon size={15} />}
           </button>
           <button className="call-btn call-btn--slim call-btn--leave" onClick={onEnd}>
             <XIcon size={14} />

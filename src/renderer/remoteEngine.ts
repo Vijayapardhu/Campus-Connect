@@ -50,6 +50,20 @@ const SCREEN_MAX_WIDTH = 1920;
 const SCREEN_MAX_HEIGHT = 1080;
 const SCREEN_FRAME_RATE = 20;
 
+/**
+ * A ceiling on the video sender's bitrate, in bits per second.
+ *
+ * Without this the encoder runs on whatever Chromium's default congestion
+ * control picks, with no floor or ceiling tuned for screen content — a burst
+ * of on-screen motion (scrolling a long document, dragging a window) can spike
+ * the target bitrate far past what a real-world WiFi link comfortably carries,
+ * and the resulting queueing delay is what "streaming lag" actually is on a
+ * link that has plenty of headroom for a mostly-static desktop. 4 Mbps is
+ * generous for 1080p20 of mostly-static screen content — comparable to a
+ * decent single 1080p stream — while still bounding the worst case.
+ */
+const SCREEN_MAX_BITRATE_BPS = 4_000_000;
+
 type DesktopMediaConstraints = {
   mandatory: {
     chromeMediaSource: 'desktop';
@@ -112,6 +126,14 @@ export class RemoteEngine {
     }
 
     this.screenTrack = track;
+    /*
+     * Hints the encoder to prioritise spatial detail over motion smoothness —
+     * the right tradeoff for a desktop full of text and UI edges, as opposed
+     * to `motion`, which is tuned for a face on a webcam. This is a real,
+     * standard `MediaStreamTrack` hint the encoder reads directly; it costs
+     * nothing to set and measurably sharpens text at a given bitrate.
+     */
+    track.contentHint = 'detail';
     // The screen going away — unplugged, or the session ended from the OS — has
     // to end the session rather than leave the far end on a frozen frame.
     track.addEventListener('ended', () => {
@@ -128,11 +150,41 @@ export class RemoteEngine {
      * would have two, and half the input would go down the wrong one.
      *
      * Ordered and reliable: an out-of-order mouse-up after a mouse-down is a
-     * stuck button, and a dropped key-up is a stuck key.
+     * stuck button, and a dropped key-up is a stuck key. Left this way
+     * deliberately even while tuning the video side for latency — the rAF
+     * coalescing in `createInputCapture` already keeps this channel from being
+     * flooded, so there is little latency to buy by making it unreliable, and
+     * an unordered/unreliable channel risks a mouse-down arriving without its
+     * mouse-up: a stuck button on the host, which is a far worse failure than
+     * a few extra milliseconds of input latency.
      */
     this.attachChannel(pc.createDataChannel('remote-input', { ordered: true }));
 
-    pc.addTrack(track, stream);
+    const sender = pc.addTrack(track, stream);
+    /*
+     * A ceiling, not a target — Chromium's own congestion control still backs
+     * off below this when the link cannot sustain it. What this adds is the
+     * missing upper bound: nothing here today stops the encoder ramping past
+     * what the network can carry the moment the screen stops being static,
+     * and the queueing delay that causes is what reads as "lag" even though
+     * the link has ample headroom for the steady state.
+     */
+    try {
+      const parameters = sender.getParameters();
+      parameters.encodings = parameters.encodings?.length
+        ? parameters.encodings.map((encoding) => ({
+            ...encoding,
+            maxBitrate: SCREEN_MAX_BITRATE_BPS,
+            maxFramerate: SCREEN_FRAME_RATE
+          }))
+        : [{ maxBitrate: SCREEN_MAX_BITRATE_BPS, maxFramerate: SCREEN_FRAME_RATE }];
+      await sender.setParameters(parameters);
+    } catch (error) {
+      // Best-effort tuning: an unsupported combination here must not stop the
+      // session from starting, only leave it on the browser's own defaults.
+      console.warn('Could not set a bitrate ceiling for the shared screen', error);
+    }
+
     await this.offer();
   }
 

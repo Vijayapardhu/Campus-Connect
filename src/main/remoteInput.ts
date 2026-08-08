@@ -1,7 +1,7 @@
 import { screen, systemPreferences } from 'electron';
 import log from 'electron-log';
 import type { RemoteCapabilities } from '../shared/types';
-import { createInjector, type Injector, type RobotLike, type ScreenBounds } from './remoteControl';
+import { createInjector, scaleBounds, type Injector, type RobotLike, type ScreenBounds } from './remoteControl';
 
 /**
  * The bridge to the one native thing this application does.
@@ -106,10 +106,15 @@ export function getRemoteCapabilities(prompt = false): RemoteCapabilities {
  * rotated or unplugged mid-session, and a stale rectangle would put the pointer
  * somewhere other than where the controller is pointing — on a multi-monitor
  * machine, possibly on an entirely different screen.
+ *
+ * Converted to physical pixels via `scaleFactor` before it is returned —
+ * `display.bounds` itself is in logical/DIP pixels, which is one scale removed
+ * from what the native cursor APIs `createInjector` ultimately calls expect.
+ * See `scaleBounds`'s own comment for exactly what this does and does not fix.
  */
 export function boundsForDisplay(displayId: string): ScreenBounds | null {
   const display = screen.getAllDisplays().find((candidate) => String(candidate.id) === displayId);
-  return display ? { ...display.bounds } : null;
+  return display ? scaleBounds(display.bounds, display.scaleFactor) : null;
 }
 
 /**

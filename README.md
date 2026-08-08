@@ -673,7 +673,7 @@ $ npm test
   PASS  a removed member loses access
   ...
 
-29 passed, 0 failed
+358 passed, 0 failed
 ```
 
 ---
@@ -685,9 +685,13 @@ Shipped:
 - [x] **Chunked transfer** so large screenshots sync, with NACK-based retransmission
 - [x] **File transfer** in chat, up to 50 MB
 - [x] **QR codes** for join codes so phones can scan them
-- [x] **Pinned clipboard items** that survive the history cap
-- [x] **Search** across clipboard history
+- [x] **Pinned clipboard items** that survive the history cap — and pinned chat messages too
+- [x] **Search** across clipboard history, room chat and direct messages
 - [x] **Keyboard shortcuts** — `Ctrl+1..9` for rooms, `Ctrl+F` for search
+- [x] **End-to-end encrypted direct messages**, with delivered/seen receipts and typing
+- [x] **`@mentions`** in room chat, with an autocomplete and a stronger notification
+- [x] **Message forwarding** to any room or thread, and **paste an image** into the composer
+- [x] **Export a conversation** to a plain-text file
 
 Open, and every one of these is yours if you want it:
 

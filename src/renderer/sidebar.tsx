@@ -69,6 +69,11 @@ export function Sidebar({
 }) {
   const online = state.settings.online !== false;
 
+  // A `'direct'` room is the hidden 1:1 room a DM call is placed in — never
+  // something to show or select here, only something `ensureDirectRoom`
+  // maintains behind the scenes.
+  const visibleRooms = state.rooms.filter((room) => room.type !== 'direct');
+
   // Reachable, but speaking a protocol this build cannot talk to.
   const outdated = state.peers.filter(
     (peer) =>
@@ -134,13 +139,13 @@ export function Sidebar({
         <section className="sidebar__section">
           <div className="sidebar__label">
             <span>Your rooms</span>
-            <span>{state.rooms.length}</span>
+            <span>{visibleRooms.length}</span>
           </div>
 
-          {state.rooms.length === 0 ? (
+          {visibleRooms.length === 0 ? (
             <p className="sidebar__empty">You are not in any room yet.</p>
           ) : (
-            state.rooms.map((room) => {
+            visibleRooms.map((room) => {
               const locked = lockedRoomIds.has(room.roomId);
               const pending =
                 room.ownerId === state.deviceId
@@ -216,53 +221,53 @@ export function Sidebar({
             history, no members and nobody else sees it — so it sits beside
             Settings rather than inside a room, and works with none selected. */}
         {showFiles ? (
-        <button
-          className={filesOpen ? 'room-item is-active' : 'room-item'}
-          onClick={onOpenFiles}
-          title="Send files to a nearby device"
-          aria-current={filesOpen}
-        >
-          <span className="room-item__icon">
-            <PaperclipIcon size={13} />
-          </span>
-          <span className="room-item__body">
-            <span className="room-item__name">Files</span>
-            <span className="room-item__meta">
-              {runningTransfers > 0
-                ? `${runningTransfers} in progress`
-                : online
-                  ? 'Send to a nearby device'
-                  : 'Switched off'}
+          <button
+            className={filesOpen ? 'room-item is-active' : 'room-item'}
+            onClick={onOpenFiles}
+            title="Send files to a nearby device"
+            aria-current={filesOpen}
+          >
+            <span className="room-item__icon">
+              <PaperclipIcon size={13} />
             </span>
-          </span>
-          {runningTransfers > 0 ? <span className="room-item__badge">{runningTransfers}</span> : null}
-        </button>
+            <span className="room-item__body">
+              <span className="room-item__name">Files</span>
+              <span className="room-item__meta">
+                {runningTransfers > 0
+                  ? `${runningTransfers} in progress`
+                  : online
+                    ? 'Send to a nearby device'
+                    : 'Switched off'}
+              </span>
+            </span>
+            {runningTransfers > 0 ? <span className="room-item__badge">{runningTransfers}</span> : null}
+          </button>
         ) : null}
 
         {/* Same reasoning as Files: a direct message belongs to no room
             either, so it sits beside it rather than inside one. */}
         {showMessages ? (
-        <button
-          className={messagesOpen ? 'room-item is-active' : 'room-item'}
-          onClick={onOpenMessages}
-          title="Message a nearby device directly"
-          aria-current={messagesOpen}
-        >
-          <span className="room-item__icon">
-            <ChatIcon size={13} />
-          </span>
-          <span className="room-item__body">
-            <span className="room-item__name">Messages</span>
-            <span className="room-item__meta">
-              {unreadMessages > 0
-                ? `${unreadMessages} unread`
-                : online
-                  ? 'Message a nearby device'
-                  : 'Switched off'}
+          <button
+            className={messagesOpen ? 'room-item is-active' : 'room-item'}
+            onClick={onOpenMessages}
+            title="Message a nearby device directly"
+            aria-current={messagesOpen}
+          >
+            <span className="room-item__icon">
+              <ChatIcon size={13} />
             </span>
-          </span>
-          {unreadMessages > 0 ? <span className="room-item__badge">{unreadMessages}</span> : null}
-        </button>
+            <span className="room-item__body">
+              <span className="room-item__name">Messages</span>
+              <span className="room-item__meta">
+                {unreadMessages > 0
+                  ? `${unreadMessages} unread`
+                  : online
+                    ? 'Message a nearby device'
+                    : 'Switched off'}
+              </span>
+            </span>
+            {unreadMessages > 0 ? <span className="room-item__badge">{unreadMessages}</span> : null}
+          </button>
         ) : null}
 
         <button

@@ -43,7 +43,7 @@ import {
   type Signable
 } from './deviceIdentity';
 import { DeviceRegistry, type DeviceKeyRecord } from './deviceRegistry';
-import { RoomManager } from './roomManager';
+import { directRoomId, RoomManager } from './roomManager';
 import { HistoryManager } from './historyManager';
 import { CallManager } from './callManager';
 import { SnippetManager } from './snippetManager';
@@ -73,6 +73,7 @@ import {
 import {
   createProof,
   deriveRoomKey,
+  dmAgreedKey,
   generateJoinCode,
   generateSalt,
   normalizeJoinCode,
@@ -101,12 +102,14 @@ import {
   type ConnectivityResult,
   type JoinRequest,
   type PeerInfo,
+  type RememberedPeer,
   type RoomInfo,
   type RoomInvite,
   type RemoteCapabilities,
   type RemoteGrant,
   type RemoteRequest,
   type RemoteSignal,
+  type RoomRestrictions,
   type RoomType,
   type SearchHit,
   type PhoneAccess,
@@ -123,11 +126,16 @@ import {
 } from '../shared/types';
 import type { CallSignalEvent, CallStartResult, ScreenSource } from '../shared/bridge';
 import { isOpenableUrl } from '../shared/contentType';
+import { mentionedDeviceIds } from '../shared/mentions';
+import { dataUrlBytes } from '../shared/dataUrl';
+import { formatTranscript, transcriptFileName, type TranscriptEntry } from '../shared/transcript';
 
 type AppStore = {
   deviceId: string;
   deviceName: string;
   peers: PeerInfo[];
+  /** Devices added by IP at some point — reconnected to automatically on every launch. */
+  rememberedPeers: RememberedPeer[];
   currentRoomId?: string;
   settings: AppSettings;
   rooms: RoomInfo[];
@@ -148,6 +156,8 @@ type AppStore = {
   chatHistory: ChatMessage[];
   /** Direct 1:1 messages, device-to-device — not part of any room's history. */
   directMessages: DirectMessage[];
+  /** Peer ids whose DM thread is archived — collapsed in the Messages page, not deleted. */
+  dmArchivedThreads: string[];
   blocked: BlockedDevice[];
   snippets: Snippet[];
   phonePairings: PhonePairing[];
@@ -226,6 +236,16 @@ const MAX_NACK_INDICES = 512;
  * memory is what would lift this properly.
  */
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
+
+/** The shared "that is too big" answer, so every send path says the same thing. */
+function refuseIfTooLarge(bytes: number): ActionResult | null {
+  if (bytes <= MAX_FILE_BYTES) {
+    return null;
+  }
+  return fail(
+    `Files are limited to ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB — that one is ${(bytes / 1024 / 1024).toFixed(1)} MB.`
+  );
+}
 
 /**
  * How far ahead of the network a file transfer may queue before it waits.
@@ -314,6 +334,7 @@ const store = new Store<AppStore>({
     deviceId: randomUUID(),
     deviceName: getSystemDeviceName(),
     peers: [],
+    rememberedPeers: [],
     currentRoomId: undefined,
     settings: DEFAULT_SETTINGS,
     rooms: [],
@@ -322,6 +343,7 @@ const store = new Store<AppStore>({
     clipboardHistory: [],
     chatHistory: [],
     directMessages: [],
+    dmArchivedThreads: [],
     blocked: [],
     snippets: [],
     phonePairings: []
@@ -585,8 +607,47 @@ const fileShares = new FileShareManager({
  */
 const directMessages = new DirectMessageManager({
   read: () => read('directMessages'),
-  write: (messages) => write('directMessages', messages)
+  write: (messages) => write('directMessages', messages),
+  readArchived: () => read('dmArchivedThreads'),
+  writeArchived: (peerIds) => write('dmArchivedThreads', peerIds)
 });
+
+/**
+ * The pairwise AES key this device and `peerId` use to seal a direct message,
+ * or `null` if that peer's box public key is not known yet.
+ *
+ * In practice this is only null for a device that has never sent this one a
+ * single authenticated packet — every message carries its sender's box key
+ * (`deliver`), so anything already visible in `state.peers` already has one
+ * recorded. No exchange round trip is needed: X25519 agreement gives both
+ * sides the identical key from nothing but their own private key and the
+ * other's public one.
+ */
+function dmKeyFor(peerId: string): Buffer | null {
+  const boxKey = read('peers').find((peer) => peer.id === peerId)?.boxPublicKey;
+  return boxKey ? dmAgreedKey(identity.boxPrivateKey, boxKey, deviceId(), peerId) : null;
+}
+
+/**
+ * Seals a direct-message body under the pairwise key for that peer. Unlike
+ * `attachRoomBody`, there is no unencrypted path — a DM has no password to
+ * make encryption conditional on, so it is unconditional instead: every
+ * direct message is end-to-end encrypted, or it is not sent at all.
+ */
+function attachDmBody(message: WireMessage, peerId: string, body: Partial<WireMessage>): boolean {
+  const key = dmKeyFor(peerId);
+  if (!key) {
+    return false;
+  }
+  message.dmSealed = sealJson(key, body);
+  return true;
+}
+
+/** The other half of `attachDmBody` — `null` if the seal cannot be opened (wrong/unknown key, tampered packet). */
+function readDmBody(message: WireMessage): Partial<WireMessage> | null {
+  const key = dmKeyFor(message.deviceId);
+  return key ? openJson<Partial<WireMessage>>(key, message.dmSealed) : null;
+}
 
 function sendDirectMessage(peerId: string, signal: DirectMessageSignal): boolean {
   const host = getPeerHost(peerId);
@@ -599,7 +660,9 @@ function sendDirectMessage(peerId: string, signal: DirectMessageSignal): boolean
   // deliver this to whoever now answers at that host instead of the one
   // asked for.
   message.targetDeviceId = peerId;
-  message.directMessage = signal;
+  if (!attachDmBody(message, peerId, { directMessage: signal })) {
+    return false; // This device's box key has not been heard yet — nothing to seal to.
+  }
   return sendUdpMessage(message, host);
 }
 
@@ -699,6 +762,7 @@ function getAppState(): AppState {
     listenPort: BROADCAST_PORT,
     localAddress: getLocalIpAddress(),
     peers: read('peers'),
+    rememberedPeers: read('rememberedPeers'),
     currentRoomId: read('currentRoomId'),
     rooms: roomManager.getRooms(),
     discovered: roomManager.getDiscoveredRooms(),
@@ -979,6 +1043,16 @@ function deliver(message: WireMessage, targets: string[]): boolean {
    * large payload is split into, which are messages in their own right.
    */
   message.pubKey = identity.publicKey;
+  // Set *before* signing, not after — `signableOf`'s digest covers whatever
+  // is on the message at this point, and this has to be one of them. Unsigned,
+  // an attacker able to tamper with packets on this LAN (exactly what the
+  // signature exists to rule out everywhere else) could swap in a box key of
+  // their own choosing for someone else's device id and silently place
+  // themselves in the middle of every future direct message to it. Signed
+  // alongside everything else, forging a different one needs the sender's
+  // signing private key — which is the same guarantee `deviceRegistry`
+  // already gives every other field on the message.
+  message.boxPubKey = identity.boxPublicKey;
   message.sig = signPayload(identity.privateKey, signableOf(message));
 
   const json = JSON.stringify(message);
@@ -1336,7 +1410,13 @@ function updatePeer(peer: PeerInfo) {
     existing.host !== nextPeer.host ||
     existing.name !== nextPeer.name ||
     existing.port !== nextPeer.port ||
-    existing.protocolVersion !== nextPeer.protocolVersion;
+    existing.protocolVersion !== nextPeer.protocolVersion ||
+    // A device's box key never changes once created, so this only ever fires
+    // once per peer — the first message from it that carries one. Without
+    // this it would fall into the "not news" branch below and its box key
+    // would stay unrecorded until some other field happened to change too,
+    // leaving direct messages to it unable to seal in the meantime.
+    existing.boxPublicKey !== nextPeer.boxPublicKey;
 
   if (!isNews) {
     existing.lastSeen = nextPeer.lastSeen;
@@ -1383,7 +1463,11 @@ function touchPeerFromMessage(message: WireMessage, host: string) {
     name: message.deviceName,
     host,
     port: message.port,
-    lastSeen: Date.now()
+    lastSeen: Date.now(),
+    // Safe to trust: this function only ever runs on a message `authenticate`
+    // has already verified, and `boxPubKey` is part of what that signature
+    // covers — see the comment where it is attached, in `deliver`.
+    boxPublicKey: message.boxPubKey
   });
 }
 
@@ -1459,7 +1543,10 @@ function buildAcceptMessage(room: RoomInfo, targetDeviceId: string): WireMessage
 
 function advertiseOwnedRooms() {
   for (const room of roomManager.getRooms()) {
-    if (room.ownerId !== deviceId()) {
+    // A hidden direct-call room is never discoverable — advertising it would
+    // defeat the entire point of it being hidden, and its `ownerId` carries
+    // no real ownership, just whichever device id happened to sort first.
+    if (room.ownerId !== deviceId() || room.type === 'direct') {
       continue;
     }
 
@@ -1578,6 +1665,21 @@ function pollLocalClipboard() {
 
 // --- inbound handlers --------------------------------------------------------
 
+/**
+ * Resolved by `handleRoomAccept`/`handleRoomReject` once `room:unlock`'s proof
+ * round-trip with the owner actually completes, keyed by roomId.
+ *
+ * `room:unlock` used to derive a key from whatever was typed and report
+ * success unconditionally, without ever checking it was right — a wrong
+ * password left the room reporting as unlocked while nothing in it could
+ * actually decrypt, with no way back in short of leaving and rejoining. This
+ * is what makes the IPC call wait for the owner's actual answer before
+ * either caching the key for good or telling the user it was wrong.
+ */
+const pendingUnlocks = new Map<string, (result: ActionResult) => void>();
+/** How long to wait for the owner before assuming they are just offline. */
+const UNLOCK_CONFIRM_TIMEOUT_MS = 8000;
+
 function handleRoomRequest(message: WireMessage, host: string) {
   const room = message.roomId ? roomManager.getRoom(message.roomId) : undefined;
   if (!room || room.ownerId !== deviceId()) {
@@ -1693,6 +1795,16 @@ function handleRoomAccept(message: WireMessage) {
   roomManager.dropAdvert(room.roomId);
   write('currentRoomId', room.roomId);
   sendStateToRenderer();
+
+  // room:unlock is waiting on this exact response — tell it directly rather
+  // than the generic join-result/toast pair, which would otherwise double up.
+  const pendingUnlock = pendingUnlocks.get(room.roomId);
+  if (pendingUnlock) {
+    pendingUnlocks.delete(room.roomId);
+    pendingUnlock(ok(`${room.name} unlocked.`));
+    return;
+  }
+
   emit('room:join-result', {
     roomId: room.roomId,
     ok: true,
@@ -1708,20 +1820,36 @@ function handleRoomReject(message: WireMessage) {
 
   const name =
     roomManager.getRoom(message.roomId)?.name ?? roomManager.getAdvert(message.roomId)?.name ?? 'that room';
+  const reason = message.reason ?? `Your request to join ${name} was declined.`;
 
   // Clear the provisional key from the failed attempt, but never tear down a
   // room we are already a confirmed member of on the word of one packet.
   if (!roomManager.isAcceptedMember(message.roomId, deviceId())) {
     roomManager.deleteRoom(message.roomId);
+  } else {
+    // An *accepted* member being rejected here can only mean one thing: this
+    // was room:unlock's proof round-trip and the typed password was wrong.
+    // The provisional key it set has to go — keeping a wrong key cached as
+    // if it were correct is exactly what used to make the room look
+    // unlocked while silently decrypting nothing.
+    roomManager.dropKey(message.roomId);
   }
 
   sendStateToRenderer();
+
+  const pendingUnlock = pendingUnlocks.get(message.roomId);
+  if (pendingUnlock) {
+    pendingUnlocks.delete(message.roomId);
+    pendingUnlock(fail(reason));
+    return; // room:unlock's own promise already tells the caller — no second toast.
+  }
+
   emit('room:join-result', {
     roomId: message.roomId,
     ok: false,
-    message: message.reason ?? `Your request to join ${name} was declined.`
+    message: reason
   } satisfies JoinResultEvent);
-  sendStatus(message.reason ?? `Request to join ${name} was declined.`, 'error');
+  sendStatus(reason, 'error');
 }
 
 function handleRoomRoster(message: WireMessage) {
@@ -1869,6 +1997,9 @@ function handleRoomClosed(message: WireMessage) {
   sendStatus(`${room.name} was closed by its owner.`, 'warning');
 }
 
+/** Wire types a `chat` restriction covers — every kind of chat activity, not just new messages. */
+const CHAT_WIRE_TYPES = new Set(['chat', 'chat-edit', 'chat-delete', 'chat-reaction', 'chat-typing']);
+
 /**
  * The gate that makes rooms mean something: a packet is only applied when the
  * room exists here, we are an accepted member, the sender is an accepted member,
@@ -1891,6 +2022,33 @@ function handleRoomPayload(message: WireMessage): Partial<WireMessage> | null {
 
   if (!roomManager.isAcceptedMember(roomId, message.deviceId)) {
     log.warn(`Dropped ${message.type} for ${room.name} from non-member ${message.deviceName}`);
+    return null;
+  }
+
+  /*
+   * Enforced here, not just on the sender's own outbound handlers — a
+   * restriction is only worth anything if a modified or misbehaving client
+   * cannot simply ignore its own copy of it. Every device shares the same
+   * roster, so every device reaches the same answer independently, the same
+   * way `isBlocked` is one choke point rather than a check repeated (and
+   * eventually forgotten) in each handler. The files-specific half of this
+   * lives in `handleChatMessage`, since it needs the decrypted body to know
+   * a chat message's type.
+   */
+  const restrictions = roomManager.getRestrictions(roomId, message.deviceId);
+  if (restrictions?.chat && CHAT_WIRE_TYPES.has(message.type)) {
+    log.warn(`Dropped ${message.type} for ${room.name} from restricted member ${message.deviceName}`);
+    return null;
+  }
+  if (restrictions?.calls && message.type === 'call') {
+    log.warn(`Dropped ${message.type} for ${room.name} from restricted member ${message.deviceName}`);
+    return null;
+  }
+  // Screen sharing answers to its own restriction rather than riding on
+  // `calls`, so an owner can withdraw the far larger ask — watching or
+  // driving a desktop — while still letting the member talk.
+  if (restrictions?.remote && message.type === 'remote') {
+    log.warn(`Dropped ${message.type} for ${room.name} from restricted member ${message.deviceName}`);
     return null;
   }
 
@@ -1979,6 +2137,16 @@ function handleChatMessage(message: WireMessage) {
     return;
   }
 
+  // The files-specific half of the restriction check: this needs the
+  // decrypted body to know the message is a file/image, so it cannot live in
+  // `handleRoomPayload` alongside the broader `chat` check.
+  if (chat.type !== 'text' && roomManager.getRestrictions(message.roomId!, message.deviceId)?.files) {
+    log.warn(`Dropped a file from restricted member ${message.deviceName} in ${message.roomId}`);
+    return;
+  }
+
+  const room = roomManager.getRoom(message.roomId!);
+
   const stored = historyManager.addChatMessage({
     type: chat.type,
     content: chat.content,
@@ -1989,15 +2157,23 @@ function handleChatMessage(message: WireMessage) {
     fileName: chat.fileName,
     fileSize: chat.fileSize,
     id: chat.id,
-    timestamp: chat.timestamp
+    timestamp: chat.timestamp,
+    // Re-resolved against this device's own copy of the roster, never read
+    // from the packet — see `mentionsIn`. `chat.mentions` is discarded.
+    mentions: room && chat.type === 'text' ? mentionsIn(chat.content, room) : undefined
   });
   emit('chat:message', stored);
   sendReceipt(chat.deviceId, message.roomId!, [stored.id], 'delivered');
 
-  const room = roomManager.getRoom(message.roomId!);
+  // Being named is a direct address, not ambient room chatter, so it gets the
+  // same urgency as a request that expires — see the remote-access notify.
+  const mentionsMe = stored.mentions?.includes(deviceId()) ?? false;
   notify(
-    `${stored.deviceName} in ${room?.name ?? 'a room'}`,
-    stored.type === 'text' ? stored.content : (stored.fileName ?? 'Sent a file')
+    mentionsMe
+      ? `${stored.deviceName} mentioned you in ${room?.name ?? 'a room'}`
+      : `${stored.deviceName} in ${room?.name ?? 'a room'}`,
+    stored.type === 'text' ? stored.content : (stored.fileName ?? 'Sent a file'),
+    mentionsMe ? { urgent: true } : undefined
   );
 }
 
@@ -2021,11 +2197,13 @@ function handleChatEdit(message: WireMessage) {
     return;
   }
 
+  const room = roomManager.getRoom(message.roomId!);
   const updated = historyManager.editChatMessage(
     edit.messageId,
     edit.content,
     message.deviceId,
-    edit.editedAt ?? Date.now()
+    edit.editedAt ?? Date.now(),
+    room ? mentionsIn(edit.content, room) : undefined
   );
 
   if (updated) {
@@ -2450,7 +2628,25 @@ function handleCallRing(message: WireMessage, room: RoomInfo, signal: CallSignal
   });
 }
 
+/**
+ * A ring for a hidden direct-call room this device has not seen before, from
+ * whichever side of a DM call did not place it — `dm:ensure-call-room` only
+ * creates the room on the caller's own device, so the callee has to be able
+ * to materialize its own identical copy on demand. Only does so when the id
+ * is genuinely the deterministic one for this device and the sender (see
+ * `directRoomId`), so an arbitrary `dm:`-prefixed id on the wire cannot be
+ * used to plant a room this device never actually agreed to.
+ */
+function ensureDirectRoomForIncomingCall(message: WireMessage): void {
+  const roomId = message.roomId;
+  if (!roomId || roomManager.getRoom(roomId) || roomId !== directRoomId(deviceId(), message.deviceId)) {
+    return;
+  }
+  roomManager.ensureDirectRoom(deviceId(), deviceName(), message.deviceId, message.deviceName);
+}
+
 function handleCall(message: WireMessage): void {
+  ensureDirectRoomForIncomingCall(message);
   const signal = handleRoomPayload(message)?.call;
   if (!signal || typeof signal.kind !== 'string' || typeof signal.callId !== 'string' || !signal.callId) {
     return;
@@ -2929,9 +3125,16 @@ function handleFileXfer(message: WireMessage): void {
 }
 
 /**
- * A direct 1:1 message arriving off the wire. Same trust bar as file sharing:
- * no room in common required, only the universal `isBlocked()` gate already
+ * A direct 1:1 signal arriving off the wire — a new message, or an edit,
+ * delete or reaction to one already sent. Same trust bar as file sharing: no
+ * room in common required, only the universal `isBlocked()` gate already
  * applied to every inbound message before this is ever reached.
+ *
+ * Every branch below pushes through the same `dm:message` event whether it
+ * is a brand new message or an amendment to one — `useDirectMessage` in the
+ * renderer tells the two apart by whether the id is already in the thread,
+ * so this needs no separate "something changed" channel the way room chat's
+ * edits do.
  */
 function handleDirectMessage(message: WireMessage): void {
   // Addressed, like any other targeted signal — a message meant for a
@@ -2941,20 +3144,115 @@ function handleDirectMessage(message: WireMessage): void {
     return;
   }
 
-  const signal = message.directMessage;
-  if (!signal || signal.kind !== 'message' || typeof signal.id !== 'string') {
+  // Always sealed — see `attachDmBody`. Fails to open when this device does
+  // not yet have the sender's box key (should not happen for anyone already
+  // in `state.peers`), or the packet was tampered with in flight.
+  const signal = readDmBody(message)?.directMessage;
+  if (!signal) {
     return;
   }
 
-  const stored = directMessages.receive(message.deviceId, message.deviceName, signal);
-  if (!stored) {
-    return; // Already have it — a retransmit, not a new message.
-  }
+  // Only the kinds that act on one particular message carry an id — a
+  // receipt names a batch and typing names nothing at all, so this is
+  // checked per kind below rather than once up front.
+  switch (signal.kind) {
+    case 'message': {
+      if (typeof signal.id !== 'string') {
+        return;
+      }
+      const stored = directMessages.receive(message.deviceId, message.deviceName, signal);
+      if (!stored) {
+        return; // Already have it — a retransmit, not a new message.
+      }
+      emit('dm:message', stored);
+      sendStateToRenderer();
+      sendStatus(`${message.deviceName} sent you a message`, 'info');
+      notify(message.deviceName, stored.type === 'text' ? stored.content : (stored.fileName ?? 'Sent a file'));
+      sendDmReceipt(message.deviceId, [stored.id], 'delivered');
+      return;
+    }
 
-  emit('dm:message', stored);
-  sendStateToRenderer();
-  sendStatus(`${message.deviceName} sent you a message`, 'info');
-  notify(message.deviceName, stored.content);
+    case 'edit': {
+      if (typeof signal.id !== 'string' || typeof signal.content !== 'string') {
+        return;
+      }
+      // `fromSelf: false` — this can only be the peer editing a message *they*
+      // sent us. A device cannot reach into our own outbox from the wire.
+      const updated = directMessages.editMessage(
+        message.deviceId,
+        signal.id,
+        signal.content,
+        signal.editedAt ?? Date.now(),
+        false
+      );
+      if (updated) {
+        emit('dm:message', updated);
+        sendStateToRenderer();
+      }
+      return;
+    }
+
+    case 'delete': {
+      if (typeof signal.id !== 'string') {
+        return;
+      }
+      const updated = directMessages.markDeleted(message.deviceId, signal.id, false);
+      if (updated) {
+        emit('dm:message', updated);
+        sendStateToRenderer();
+      }
+      return;
+    }
+
+    case 'reaction': {
+      if (typeof signal.id !== 'string' || !signal.emoji || signal.emoji.length > 12) {
+        return; // Displayed as sent — capped the same way room chat's is.
+      }
+      if (directMessages.setReaction(message.deviceId, signal.id, signal.emoji, message.deviceId, Boolean(signal.on))) {
+        const updated = directMessages.findMessage(message.deviceId, signal.id);
+        if (updated) {
+          emit('dm:message', updated);
+          sendStateToRenderer();
+        }
+      }
+      return;
+    }
+
+    case 'receipt': {
+      if (!Array.isArray(signal.messageIds) || (signal.receipt !== 'delivered' && signal.receipt !== 'seen')) {
+        return;
+      }
+      // The receipt names the *sender's own* messages it is acknowledging —
+      // `recordReceipt` only ever touches this thread's `fromSelf` rows,
+      // which from this device's point of view are exactly the ones the
+      // peer sending this receipt could mean.
+      for (const updated of directMessages.recordReceipt(message.deviceId, signal.messageIds, signal.receipt)) {
+        emit('dm:message', updated);
+      }
+      return;
+    }
+
+    case 'typing': {
+      emit('dm:typing', { peerId: message.deviceId, peerName: message.deviceName, typing: Boolean(signal.typing) });
+      return;
+    }
+
+    default:
+      return;
+  }
+}
+
+/** Tells a DM peer that some of their messages were received or read, the same way `sendReceipt` does for a room. */
+function sendDmReceipt(peerId: string, messageIds: string[], receipt: 'delivered' | 'seen'): void {
+  if (!getSettings().sendReceipts || messageIds.length === 0) {
+    return;
+  }
+  sendDirectMessage(peerId, { kind: 'receipt', messageIds, receipt });
+}
+
+/** Tells a DM peer whether this device is currently composing a reply. */
+function sendDmTyping(peerId: string, typing: boolean): void {
+  sendDirectMessage(peerId, { kind: 'typing', typing });
 }
 
 /**
@@ -2988,8 +3286,25 @@ function sweepCalls(): void {
   }
   let changed = callManager.sweep();
 
+  /*
+   * An unanswered ring is cleared purely by its own age, not by whether the
+   * caller still counts as a "live participant" in `callManager`. It used to
+   * be both: `!callManager.getCall(callId)` also tore the ring down the
+   * moment the caller's single participant entry aged out of
+   * `PARTICIPANT_TTL_MS` (20s) — a check meant for noticing a participant
+   * who vanished mid-*conversation*, not a caller who has not been answered
+   * yet. Heartbeats only arrive every `CALL_HEARTBEAT_MS` (5s), so any one
+   * delayed or dropped packet near that 20s mark — ordinary jitter on a UDP
+   * broadcast, not a real disconnection — closed the ring dialog on its own,
+   * often well before a person had a chance to see it, let alone answer.
+   * `RING_TIMEOUT_MS` (45s) already exists as the deliberate, documented
+   * "nobody answered" window; a caller who actively hangs up while still
+   * ringing already clears it explicitly via the `'leave'` signal handler,
+   * so nothing here needs a second, shorter, less reliable path to the same
+   * effect.
+   */
   for (const [callId, ring] of Array.from(ringing)) {
-    if (!callManager.getCall(callId) || Date.now() - ring.at > RING_TIMEOUT_MS) {
+    if (Date.now() - ring.at > RING_TIMEOUT_MS) {
       clearRing(callId);
       changed = true;
     }
@@ -3291,6 +3606,7 @@ function setNetworkEnabled(next: boolean): void {
   if (next) {
     startUdpService();
     startTcpService();
+    reconnectRememberedPeers();
     updater?.start(getSettings().autoUpdate);
     sendStatus('Campus Connect is on.', 'success');
     return;
@@ -3862,6 +4178,7 @@ app.whenReady().then(() => {
   if (getSettings().online) {
     startUdpService();
     startTcpService();
+    reconnectRememberedPeers();
   } else {
     log.info('Starting with Campus Connect switched off');
   }
@@ -4029,6 +4346,26 @@ handle('app:open-link', (_event, url: string): ActionResult => {
   return ok('Opened in your browser.');
 });
 
+/**
+ * Remembers a device reached by IP, so its address only has to be typed once
+ * — reconnected to automatically on every future launch. Deduped by
+ * host:port; a repeat add just refreshes the name and the "added" stamp
+ * rather than creating a second entry.
+ */
+function rememberPeer(host: string, port: number, name: string): void {
+  const remembered = read('rememberedPeers');
+  const next: RememberedPeer = { host, port, name: name.trim() || host, addedAt: Date.now() };
+  write('rememberedPeers', [next, ...remembered.filter((p) => !(p.host === host && p.port === port))]);
+}
+
+/** Reaches out to every device this one has ever been told the address of, so it does not have to be told again. */
+function reconnectRememberedPeers(): void {
+  for (const remembered of read('rememberedPeers')) {
+    tcp?.connect(remembered.host);
+    sendUdpMessage(baseMessage('announce'), remembered.host);
+  }
+}
+
 handle('app:connect-peer', (_event, host: string, port: number, name: string) => {
   if (!getSettings().online) {
     sendStatus('Campus Connect is off. Turn it on from the header first.', 'warning');
@@ -4043,10 +4380,18 @@ handle('app:connect-peer', (_event, host: string, port: number, name: string) =>
     lastSeen: Date.now()
   };
   updatePeer(peer);
+  rememberPeer(host, port, peer.name);
   // Both transports: TCP for networks that filter UDP, UDP for the rest.
   tcp?.connect(host);
   sendUdpMessage(baseMessage('announce'), host);
   sendStatus(`Reaching out to ${peer.name}`, 'info');
+  return getAppState();
+});
+
+/** Stops reconnecting to a remembered device. Whatever live connection exists is untouched — this only forgets the address for next time. */
+handle('app:forget-peer', (_event, host: string, port: number): AppState => {
+  write('rememberedPeers', read('rememberedPeers').filter((p) => !(p.host === host && p.port === port)));
+  sendStateToRenderer();
   return getAppState();
 });
 
@@ -4197,31 +4542,69 @@ handle(
   }
 );
 
-/** Supply the password for an encrypted room we are already a member of. */
-handle('room:unlock', (_event, roomId: string, password: string): ActionResult => {
+/**
+ * Supply the password for an encrypted room we are already a member of.
+ *
+ * The derived key is never trusted just because it was typed: a password
+ * never leaves a device without going through this app, so the only way to
+ * know it is right is to have someone who already holds the correct key say
+ * so. That someone is the room's owner, so this waits for their actual
+ * `room-accept`/`room-reject` before reporting success — see
+ * `handleRoomAccept`/`handleRoomReject` for the other half of this, and
+ * `pendingUnlocks`'s comment for what used to go wrong without it.
+ */
+handle('room:unlock', (_event, roomId: string, password: string): Promise<ActionResult> => {
   const room = roomManager.getRoom(roomId);
   if (!room) {
-    return fail('Room not found.');
+    return Promise.resolve(fail('Room not found.'));
   }
   if (!room.encrypted) {
-    return ok('This room is not encrypted.');
+    return Promise.resolve(ok('This room is not encrypted.'));
   }
 
   const key = deriveRoomKey(password, room.keySalt);
-  roomManager.setKey(roomId, key);
 
-  // Ask the owner for the full roster. A device that joined on the join code
-  // alone only holds the cut-down one it could read at the time.
-  if (room.ownerId !== deviceId()) {
-    const request = baseMessage('room-request');
-    request.roomId = roomId;
-    request.proof = createProof(key, roomId);
-    const host = getPeerHost(room.ownerId);
-    fanOut(request, host ? [host] : []);
+  // The owner already holds the room's real key by definition — there is
+  // nobody else to ask, and nothing to verify against.
+  if (room.ownerId === deviceId()) {
+    roomManager.setKey(roomId, key);
+    sendStateToRenderer();
+    return Promise.resolve(ok(`${room.name} unlocked.`));
   }
 
-  sendStateToRenderer();
-  return ok(`${room.name} unlocked.`);
+  /*
+   * Held provisionally: needed right now to build the proof below and, if
+   * accepted, to open the owner's sealed roster reply. Not yet trusted as
+   * correct — `handleRoomReject` drops it again if the owner says it did
+   * not match, and until one or the other arrives this promise stays open.
+   */
+  roomManager.setKey(roomId, key);
+
+  const request = baseMessage('room-request');
+  request.roomId = roomId;
+  request.proof = createProof(key, roomId);
+  const host = getPeerHost(room.ownerId);
+  fanOut(request, host ? [host] : []);
+
+  return new Promise<ActionResult>((resolve) => {
+    const timer = setTimeout(() => {
+      pendingUnlocks.delete(roomId);
+      /*
+       * Neither confirmed nor refused — most likely the owner is simply
+       * offline right now. The key is not dropped on a timeout alone: doing
+       * that would re-lock a room over a *correct* password just because
+       * nobody was around to confirm it. The room stays usable and the
+       * roster catches up normally once the owner is next reachable.
+       */
+      resolve(ok(`${room.name} unlocked. Waiting to confirm with ${room.ownerName} once they're back online.`));
+    }, UNLOCK_CONFIRM_TIMEOUT_MS);
+    timer.unref?.();
+
+    pendingUnlocks.set(roomId, (result) => {
+      clearTimeout(timer);
+      resolve(result);
+    });
+  });
 });
 
 /**
@@ -4334,7 +4717,22 @@ handle('room:switch', (_event, roomId: string): ActionResult => {
   return ok(`Now sharing to ${room.name}`);
 });
 
+/*
+ * Every roster edit below is blocked while offline.
+ *
+ * The edit itself is local and would succeed, but the half that makes it mean
+ * anything — the accept/reject packet to the device concerned, and the roster
+ * broadcast that carries the change to everyone else — is fire-and-forget over
+ * a socket that is not open. The owner would see a member approved, and the
+ * member would see nothing at all, with no retry to close the gap. Refusing
+ * outright is the honest answer: it keeps the owner's copy of the roster and
+ * everyone else's from silently disagreeing.
+ */
 handle('room:approve-member', (_event, roomId: string, memberId: string): ActionResult => {
+  const offline = requireOnline();
+  if (offline) {
+    return offline;
+  }
   if (!roomManager.isOwner(roomId, deviceId())) {
     return fail('Only the room owner can approve members.');
   }
@@ -4366,6 +4764,10 @@ handle('room:approve-member', (_event, roomId: string, memberId: string): Action
 });
 
 handle('room:reject-member', (_event, roomId: string, memberId: string): ActionResult => {
+  const offline = requireOnline();
+  if (offline) {
+    return offline;
+  }
   if (!roomManager.isOwner(roomId, deviceId())) {
     return fail('Only the room owner can decline requests.');
   }
@@ -4386,6 +4788,10 @@ handle('room:reject-member', (_event, roomId: string, memberId: string): ActionR
 });
 
 handle('room:remove-member', (_event, roomId: string, memberId: string): ActionResult => {
+  const offline = requireOnline();
+  if (offline) {
+    return offline;
+  }
   if (!roomManager.isOwner(roomId, deviceId())) {
     return fail('Only the room owner can remove members.');
   }
@@ -4415,6 +4821,46 @@ handle('room:remove-member', (_event, roomId: string, memberId: string): ActionR
   sendStateToRenderer();
   return ok(`${member?.deviceName ?? 'Device'} was removed from ${room.name}.`);
 });
+
+/**
+ * A lesser tier than a full block — narrows what one member may do in this
+ * one room without severing the device network-wide. See `RoomRestrictions`
+ * for what each flag covers and `roomManager.setMemberRestrictions` for why
+ * this needs no wire message of its own: it rides the existing roster.
+ */
+handle(
+  'room:set-restrictions',
+  (_event, roomId: string, memberId: string, restrictions: RoomRestrictions): ActionResult => {
+    const offline = requireOnline();
+    if (offline) {
+      return offline;
+    }
+    if (!roomManager.isOwner(roomId, deviceId())) {
+      return fail('Only the room owner can restrict members.');
+    }
+
+    const room = roomManager.setMemberRestrictions(roomId, memberId, restrictions);
+    if (!room) {
+      return fail('That member could not be restricted.');
+    }
+
+    const member = room.members.find((candidate) => candidate.deviceId === memberId);
+    broadcastRoster(room);
+    sendStateToRenderer();
+
+    const restricted = member?.restricted;
+    if (!restricted) {
+      return ok(`${member?.deviceName ?? 'Device'} is no longer restricted in ${room.name}.`);
+    }
+    const what = [
+      restricted.chat && 'messages',
+      restricted.files && 'files',
+      restricted.calls && 'calls',
+      restricted.remote && 'screen sharing'
+    ].filter(Boolean);
+    return ok(`${member?.deviceName ?? 'Device'} is restricted from ${what.join(', ')} in ${room.name}.`);
+  }
+);
 
 /** Longest a room name may be. Enough to be descriptive, short enough to fit. */
 const MAX_ROOM_NAME = 48;
@@ -4596,6 +5042,38 @@ handle('history:toggle-pin', (_event, entryId: string): ActionResult => {
   return ok(pinned ? 'Pinned — it will not be cleared out.' : 'Unpinned.');
 });
 
+/**
+ * Bookmarks a chat message on this device.
+ *
+ * Nothing crosses the wire, deliberately: a pin is a note to yourself about
+ * where something useful is — the same thing pinning a clipboard entry means —
+ * not a claim about the conversation the whole room has to agree with. That is
+ * also why there is no ownership check: any message you can see, you can
+ * bookmark.
+ */
+handle('chat:toggle-pin', (_event, messageId: string): ActionResult => {
+  const message = historyManager.findChatMessage(messageId);
+  const pinned = historyManager.toggleChatPin(messageId);
+  if (pinned === undefined) {
+    return fail('That message is no longer in history.');
+  }
+
+  if (message) {
+    notifyChatChanged(message.roomId);
+  }
+  return ok(pinned ? 'Pinned — it will not be cleared out.' : 'Unpinned.');
+});
+
+handle('dm:toggle-pin', (_event, peerId: string, messageId: string): ActionResult => {
+  const updated = directMessages.togglePin(peerId, messageId);
+  if (!updated) {
+    return fail('That message is no longer in this thread.');
+  }
+
+  emit('dm:message', updated);
+  return ok(updated.pinned ? 'Pinned — it will not be cleared out.' : 'Unpinned.');
+});
+
 handle('history:clear-room', (_event, roomId: string) => {
   historyManager.clearRoom(roomId);
   notifyHistoryChanged(roomId);
@@ -4626,6 +5104,21 @@ function buildReplyTo(messageId: string | undefined, roomId: string): ChatReplyT
   };
 }
 
+/**
+ * Who a message names with `@`, resolved against a room's accepted roster.
+ *
+ * Never trusted from the wire. A sender's own list of ids would let a modified
+ * client light up anyone's mention badge at will, and would go stale the moment
+ * a member was renamed; re-resolving costs a string scan and cannot lie.
+ */
+function mentionsIn(content: string, room: RoomInfo): string[] | undefined {
+  if (!content.includes('@')) {
+    return undefined;
+  }
+  const ids = mentionedDeviceIds(content, roomManager.getMembers(room.roomId, 'accepted'));
+  return ids.length > 0 ? ids : undefined;
+}
+
 /** Shared by text messages and file sends. */
 function postChatMessage(
   room: RoomInfo,
@@ -4638,8 +5131,23 @@ function postChatMessage(
     replyTo?: ChatReplyTo;
   }
 ): ActionResult {
+  // An attachment that arrived already encoded — forwarded, or pasted — never
+  // passed the `stat` check `chat:send-file` does, so it is measured here.
+  if (input.dataUrl) {
+    const bytes = input.fileSize ?? dataUrlBytes(input.dataUrl);
+    const tooLarge = refuseIfTooLarge(bytes);
+    if (tooLarge) {
+      return tooLarge;
+    }
+    input = { ...input, fileSize: bytes };
+  }
+
   const chatMessage = historyManager.addChatMessage({
     ...input,
+    // Resolved here from the room's own roster rather than taken from the
+    // composer, so what is stored is what the text actually says about the
+    // people actually in the room.
+    mentions: mentionsIn(input.type === 'text' ? input.content : '', room),
     deviceId: deviceId(),
     deviceName: deviceName(),
     roomId: room.roomId
@@ -4680,7 +5188,44 @@ function requireWritableRoom(roomId: string): RoomInfo | ActionResult {
   if (roomManager.isLocked(roomId)) {
     return fail(`${room.name} is locked on this device — unlock it first.`);
   }
+  /*
+   * Checked here rather than only on the inbound side, so a restricted
+   * member is told clearly why nothing happened instead of typing into a
+   * composer that quietly does nothing — the same reasoning `isBlocked`'s
+   * single choke point follows, just for a narrower, per-room restriction.
+   */
+  if (roomManager.getRestrictions(roomId, deviceId())?.chat) {
+    return fail(`You've been restricted from sending messages in ${room.name}.`);
+  }
   return room;
+}
+
+/** The files-specific half of the same restriction — checked separately, since a member can be restricted from files without being restricted from text. */
+function requireUnrestrictedFiles(roomId: string, roomName: string): ActionResult | null {
+  if (roomManager.getRestrictions(roomId, deviceId())?.files) {
+    return fail(`You've been restricted from sending files in ${roomName}.`);
+  }
+  return null;
+}
+
+/** The calls-specific half of the same restriction. */
+function requireUnrestrictedCalls(roomId: string, roomName: string): ActionResult | null {
+  if (roomManager.getRestrictions(roomId, deviceId())?.calls) {
+    return fail(`You've been restricted from calls in ${roomName}.`);
+  }
+  return null;
+}
+
+/**
+ * The screen-sharing half. Separate from `calls` on purpose: watching and
+ * driving somebody's desktop is a strictly larger ask than talking to them,
+ * so a room owner needs to be able to withdraw it without also ending calls.
+ */
+function requireUnrestrictedRemote(roomId: string, roomName: string): ActionResult | null {
+  if (roomManager.getRestrictions(roomId, deviceId())?.remote) {
+    return fail(`You've been restricted from screen sharing in ${roomName}.`);
+  }
+  return null;
 }
 
 function isActionResult<T extends object>(value: T | ActionResult): value is ActionResult {
@@ -4701,6 +5246,12 @@ handle(
     const room = requireWritableRoom(roomId);
     if (isActionResult(room)) {
       return room;
+    }
+    if (type !== 'text') {
+      const restricted = requireUnrestrictedFiles(roomId, room.name);
+      if (restricted) {
+        return restricted;
+      }
     }
 
     return postChatMessage(room, {
@@ -4748,7 +5299,7 @@ handle('chat:edit', (_event, messageId: string, content: string): ActionResult =
   }
 
   const editedAt = Date.now();
-  if (!historyManager.editChatMessage(messageId, text, deviceId(), editedAt)) {
+  if (!historyManager.editChatMessage(messageId, text, deviceId(), editedAt, mentionsIn(text, found.room))) {
     return fail('That message cannot be edited.');
   }
 
@@ -4829,6 +5380,10 @@ handle('chat:send-file', async (_event, roomId: string): Promise<ActionResult> =
   if (isActionResult(room)) {
     return room;
   }
+  const restricted = requireUnrestrictedFiles(roomId, room.name);
+  if (restricted) {
+    return restricted;
+  }
   if (!mainWindow) {
     return fail('No window available.');
   }
@@ -4855,10 +5410,9 @@ handle('chat:send-file', async (_event, roomId: string): Promise<ActionResult> =
   if (!stats.isFile()) {
     return fail('That is not a file.');
   }
-  if (stats.size > MAX_FILE_BYTES) {
-    return fail(
-      `Files are limited to ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB — that one is ${(stats.size / 1024 / 1024).toFixed(1)} MB.`
-    );
+  const tooLarge = refuseIfTooLarge(stats.size);
+  if (tooLarge) {
+    return tooLarge;
   }
 
   let buffer: Buffer;
@@ -4915,6 +5469,86 @@ handle('chat:save-file', async (_event, messageId: string): Promise<ActionResult
   }
 
   return ok(`Saved as ${path.basename(picked.filePath)}.`);
+});
+
+/**
+ * Writes a conversation out as a text file.
+ *
+ * Deliberately not a backup: attachments are named, not written, and nothing
+ * here reads back into the app. What this is for is keeping a record — pasting
+ * a decision into a ticket, or holding on to what was agreed after leaving a
+ * room. Shared with the DM export below, which differs only in where it reads
+ * the messages from and what it calls the conversation.
+ */
+async function exportTranscript(title: string, entries: TranscriptEntry[]): Promise<ActionResult> {
+  if (!mainWindow) {
+    return fail('No window available.');
+  }
+  if (entries.length === 0) {
+    return fail('There is nothing to export yet.');
+  }
+
+  const exportedAt = Date.now();
+  const picked = await dialog.showSaveDialog(mainWindow, {
+    title: `Export ${title}`,
+    defaultPath: transcriptFileName(title, exportedAt),
+    filters: [{ name: 'Text file', extensions: ['txt'] }]
+  });
+
+  if (picked.canceled || !picked.filePath) {
+    return ok('Cancelled.');
+  }
+
+  try {
+    await fs.writeFile(picked.filePath, formatTranscript(entries, { title, exportedAt }), 'utf8');
+  } catch (error) {
+    return fail(`Could not save: ${(error as Error).message}`);
+  }
+
+  return ok(`Exported ${entries.length} messages to ${path.basename(picked.filePath)}.`);
+}
+
+handle('history:export', async (_event, roomId: string): Promise<ActionResult> => {
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return fail('Room not found.');
+  }
+  if (roomManager.isLocked(roomId)) {
+    return fail(`${room.name} is locked on this device — unlock it first.`);
+  }
+
+  return exportTranscript(
+    room.name,
+    historyManager.getChatHistory(roomId).map((message) => ({
+      timestamp: message.timestamp,
+      // The name stored on the message, not the roster's current one: a
+      // transcript should say who sent it, not who they are called today.
+      author: message.deviceId === deviceId() ? `${message.deviceName} (you)` : message.deviceName,
+      type: message.type,
+      content: message.content,
+      fileName: message.fileName,
+      deleted: message.deleted,
+      editedAt: message.editedAt
+    }))
+  );
+});
+
+handle('dm:export', async (_event, peerId: string): Promise<ActionResult> => {
+  const thread = directMessages.getThread(peerId);
+  const peerName = thread.find((message) => !message.fromSelf)?.peerName ?? peerId;
+
+  return exportTranscript(
+    peerName,
+    thread.map((message) => ({
+      timestamp: message.sentAt,
+      author: message.fromSelf ? `${deviceName()} (you)` : message.peerName,
+      type: message.type,
+      content: message.content,
+      fileName: message.fileName,
+      deleted: message.deleted,
+      editedAt: message.editedAt
+    }))
+  );
 });
 
 /** The chat for this room is on screen, so acknowledge everything in it. */
@@ -5250,7 +5884,9 @@ function snippetLabel(snippet: Snippet): string {
  */
 handle('search:all', (_event, query: string): SearchHit[] => {
   const roomNames = new Map(roomManager.getRooms().map((room) => [room.roomId, room.name]));
-  return historyManager.search(query, roomNames);
+  return [...historyManager.search(query, roomNames), ...directMessages.search(query, deviceName())].sort(
+    (a, b) => b.timestamp - a.timestamp
+  );
 });
 
 // --- remote desktop IPC ------------------------------------------------------
@@ -5260,6 +5896,11 @@ handle('remote:request', (_event, roomId: string, targetDeviceId: string): Actio
   const room = requireWritableRoom(roomId);
   if (isActionResult(room)) {
     return room;
+  }
+
+  const restricted = requireUnrestrictedRemote(roomId, room.name);
+  if (restricted) {
+    return restricted;
   }
 
   if (remoteSessions.busy) {
@@ -5502,6 +6143,16 @@ handle('remote:screens', async (): Promise<ScreenSource[]> => {
 handle('remote:capabilities', (): RemoteCapabilities => getRemoteCapabilities());
 
 /**
+ * Tucks the floating "you are being driven" reminder out of the way without
+ * ending the session — the host still has `RemoteHostBar` inside the main
+ * window for the same information and the same Stop button, so hiding this
+ * second, always-on-top copy of it loses nothing.
+ */
+handle('remote:hide-indicator', (): void => {
+  hostIndicator?.hide();
+});
+
+/**
  * Claims whatever link brought the app here, if any.
  *
  * Pulled by the renderer once it can act rather than pushed at it the moment it
@@ -5645,11 +6296,12 @@ handle('files:open-folder', (): void => {
 // --- direct message IPC -------------------------------------------------------
 
 /**
- * Sends a direct message. Same reach as file sharing: any device currently
- * visible on the network, no room in common required — the trust bar is the
- * one every inbound message already crosses (not blocked, signature verifies).
+ * Shared guard for anything that writes into a DM thread. Same reach as file
+ * sharing: any device currently visible on the network, no room in common
+ * required — the trust bar is the one every inbound message already crosses
+ * (not blocked, signature verifies).
  */
-handle('dm:send', (_event, peerId: string, peerName: string, content: string): ActionResult => {
+function requireReachablePeer(peerId: string, peerName: string): ActionResult | null {
   const offline = requireOnline();
   if (offline) {
     return offline;
@@ -5667,24 +6319,286 @@ handle('dm:send', (_event, peerId: string, peerName: string, content: string): A
   if (isBlocked(peerId)) {
     return fail(`${peerName} is blocked.`);
   }
-  const trimmed = content.trim();
-  if (!trimmed) {
-    return fail('There is nothing to send.');
-  }
   // Checked before storing, not after — a message nothing could be reached to
   // deliver should not sit in the thread looking sent.
   if (!getPeerHost(peerId)) {
     return fail(`${peerName} is not currently visible on the network.`);
   }
+  // Should not happen for anyone already visible in `state.peers` — every
+  // message carries a box key — but a clear error here beats a seal that
+  // silently fails partway through `postDirectMessage`.
+  if (!dmKeyFor(peerId)) {
+    return fail(`Still learning ${peerName}'s encryption key — try again in a moment.`);
+  }
+  return null;
+}
 
-  const stored = directMessages.send(peerId, peerName, trimmed);
-  sendDirectMessage(peerId, { kind: 'message', id: stored.id, content: trimmed, sentAt: stored.sentAt });
+/** A reply quote into a direct thread — same shape and reasoning as room chat's `buildReplyTo`. */
+function buildDmReplyTo(messageId: string | undefined, peerId: string): ChatReplyTo | undefined {
+  if (!messageId) {
+    return undefined;
+  }
+
+  const target = directMessages.findMessage(peerId, messageId);
+  if (!target || target.deleted) {
+    return undefined;
+  }
+
+  const preview = target.type === 'text' ? target.content : (target.fileName ?? 'Attachment');
+
+  return {
+    messageId: target.id,
+    deviceName: target.fromSelf ? deviceName() : target.peerName,
+    preview: truncateForNotice(preview)
+  };
+}
+
+/** Shared by text messages and file sends into a direct thread. */
+function postDirectMessage(
+  peerId: string,
+  peerName: string,
+  input: {
+    type: DirectMessage['type'];
+    content: string;
+    dataUrl?: string;
+    fileName?: string;
+    fileSize?: number;
+    replyTo?: ChatReplyTo;
+  }
+): ActionResult {
+  // Same reasoning as `postChatMessage` — an already-encoded attachment never
+  // passed the `stat` check that `dm:send-file` does.
+  if (input.dataUrl) {
+    const bytes = input.fileSize ?? dataUrlBytes(input.dataUrl);
+    const tooLarge = refuseIfTooLarge(bytes);
+    if (tooLarge) {
+      return tooLarge;
+    }
+    input = { ...input, fileSize: bytes };
+  }
+
+  const stored = directMessages.send(peerId, peerName, input);
+  sendDirectMessage(peerId, {
+    kind: 'message',
+    id: stored.id,
+    type: stored.type,
+    content: stored.content,
+    dataUrl: stored.dataUrl,
+    fileName: stored.fileName,
+    fileSize: stored.fileSize,
+    replyTo: stored.replyTo,
+    sentAt: stored.sentAt
+  });
   // Pushed back to this device's own window the same way a received message
   // is — the open thread, if this is the peer it belongs to, updates itself
   // rather than the renderer needing a separate local-echo path.
   emit('dm:message', stored);
   sendStateToRenderer();
-  return { ok: true, message: 'Sent.' };
+  return ok('Sent.');
+}
+
+handle(
+  'dm:send',
+  (
+    _event,
+    peerId: string,
+    peerName: string,
+    type: DirectMessage['type'],
+    content: string,
+    dataUrl?: string,
+    fileName?: string,
+    replyToId?: string
+  ): ActionResult => {
+    const blocked = requireReachablePeer(peerId, peerName);
+    if (blocked) {
+      return blocked;
+    }
+    const text = type === 'text' ? content.trim() : content;
+    if (type === 'text' && !text) {
+      return fail('There is nothing to send.');
+    }
+
+    return postDirectMessage(peerId, peerName, {
+      type,
+      content: text,
+      dataUrl,
+      fileName,
+      replyTo: buildDmReplyTo(replyToId, peerId)
+    });
+  }
+);
+
+/** Pick a file with the native dialog and send it into a direct thread. */
+handle('dm:send-file', async (_event, peerId: string, peerName: string): Promise<ActionResult> => {
+  const blocked = requireReachablePeer(peerId, peerName);
+  if (blocked) {
+    return blocked;
+  }
+  if (!mainWindow) {
+    return fail('No window available.');
+  }
+
+  const picked = await dialog.showOpenDialog(mainWindow, {
+    title: `Send a file to ${peerName}`,
+    buttonLabel: 'Send',
+    properties: ['openFile']
+  });
+
+  if (picked.canceled || picked.filePaths.length === 0) {
+    return ok('Cancelled.');
+  }
+
+  const filePath = picked.filePaths[0];
+
+  let stats;
+  try {
+    stats = await fs.stat(filePath);
+  } catch {
+    return fail('That file could not be read.');
+  }
+
+  if (!stats.isFile()) {
+    return fail('That is not a file.');
+  }
+  const tooLarge = refuseIfTooLarge(stats.size);
+  if (tooLarge) {
+    return tooLarge;
+  }
+
+  let buffer: Buffer;
+  try {
+    buffer = await fs.readFile(filePath);
+  } catch {
+    return fail('That file could not be read.');
+  }
+
+  const fileName = path.basename(filePath);
+  const mime = mimeForFile(fileName);
+  const dataUrl = `data:${mime};base64,${buffer.toString('base64')}`;
+
+  return postDirectMessage(peerId, peerName, {
+    // Images go as 'image' so the far side can preview them inline.
+    type: mime.startsWith('image/') ? 'image' : 'file',
+    content: fileName,
+    dataUrl,
+    fileName,
+    fileSize: stats.size
+  });
+});
+
+handle('dm:edit', (_event, peerId: string, messageId: string, content: string): ActionResult => {
+  const text = content.trim();
+  if (!text) {
+    return fail('An edited message cannot be empty — delete it instead.');
+  }
+
+  const existing = directMessages.findMessage(peerId, messageId);
+  if (!existing) {
+    return fail('That message is no longer in the thread.');
+  }
+  if (!existing.fromSelf) {
+    return fail('You can only edit your own messages.');
+  }
+
+  const editedAt = Date.now();
+  const updated = directMessages.editMessage(peerId, messageId, text, editedAt, true);
+  if (!updated) {
+    return fail('That message cannot be edited.');
+  }
+
+  sendDirectMessage(peerId, { kind: 'edit', id: messageId, content: text, editedAt });
+  emit('dm:message', updated);
+  sendStateToRenderer();
+  return ok('Message edited.');
+});
+
+/**
+ * Deleting for everyone withdraws the message from the thread; deleting
+ * without it only clears this device, which stays available even when the
+ * peer is offline, because it touches nothing but local history.
+ */
+handle('dm:delete', (_event, peerId: string, messageId: string, forEveryone: boolean): ActionResult => {
+  const existing = directMessages.findMessage(peerId, messageId);
+  if (!existing) {
+    return fail('That message is no longer in the thread.');
+  }
+
+  if (!forEveryone) {
+    directMessages.deleteMessageLocal(peerId, messageId);
+    sendStateToRenderer();
+    return ok('Deleted from this device.');
+  }
+
+  if (!existing.fromSelf) {
+    return fail('You can only delete your own messages for everyone.');
+  }
+
+  const updated = directMessages.markDeleted(peerId, messageId, true);
+  if (!updated) {
+    return fail('That message could not be withdrawn.');
+  }
+
+  sendDirectMessage(peerId, { kind: 'delete', id: messageId });
+  emit('dm:message', updated);
+  sendStateToRenderer();
+  return ok('Deleted for everyone.');
+});
+
+/** Toggles this device's reaction to a message in a direct thread. */
+handle('dm:react', (_event, peerId: string, messageId: string, emoji: string): ActionResult => {
+  const existing = directMessages.findMessage(peerId, messageId);
+  if (!existing) {
+    return fail('That message is no longer in the thread.');
+  }
+
+  const on = !existing.reactions?.[emoji]?.includes(deviceId());
+  if (!directMessages.setReaction(peerId, messageId, emoji, deviceId(), on)) {
+    return fail('That reaction could not be applied.');
+  }
+
+  sendDirectMessage(peerId, { kind: 'reaction', id: messageId, emoji, on });
+  const updated = directMessages.findMessage(peerId, messageId);
+  if (updated) {
+    emit('dm:message', updated);
+  }
+  sendStateToRenderer();
+  return ok(on ? 'Reacted.' : 'Reaction removed.');
+});
+
+/**
+ * Write a received DM attachment wherever the user chooses. Deliberately
+ * never opens it — running something that arrived over the network is the
+ * user's decision, the same rule `chat:save-file` follows.
+ */
+handle('dm:save-file', async (_event, peerId: string, messageId: string): Promise<ActionResult> => {
+  const message = directMessages.findMessage(peerId, messageId);
+  if (!message) {
+    return fail('That message is no longer in the thread.');
+  }
+  if (!message.dataUrl) {
+    return fail('That file was not kept after the app restarted. Ask for it again.');
+  }
+  if (!mainWindow) {
+    return fail('No window available.');
+  }
+
+  const picked = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save file',
+    defaultPath: message.fileName || 'shared-file'
+  });
+
+  if (picked.canceled || !picked.filePath) {
+    return ok('Cancelled.');
+  }
+
+  const base64 = message.dataUrl.slice(message.dataUrl.indexOf(',') + 1);
+  try {
+    await fs.writeFile(picked.filePath, Buffer.from(base64, 'base64'));
+  } catch (error) {
+    return fail(`Could not save: ${(error as Error).message}`);
+  }
+
+  return ok(`Saved as ${path.basename(picked.filePath)}.`);
 });
 
 handle('dm:get-thread', (_event, peerId: string): DirectMessage[] => {
@@ -5693,7 +6607,43 @@ handle('dm:get-thread', (_event, peerId: string): DirectMessage[] => {
 
 handle('dm:mark-read', (_event, peerId: string): void => {
   directMessages.markRead(peerId);
+  // Opening a thread is the DM equivalent of `chat:mark-seen` — the peer's
+  // messages are visibly on screen, so they are told so in the same breath
+  // the local unread badge clears, rather than needing a second call.
+  const theirs = directMessages.getThread(peerId).filter((message) => !message.fromSelf);
+  sendDmReceipt(peerId, theirs.map((message) => message.id), 'seen');
   sendStateToRenderer();
+});
+
+/** Tells a DM peer whether this device is currently composing a reply — never stored, and quietly dropped if there is nowhere to send it. */
+handle('dm:typing', (_event, peerId: string, typing: boolean): void => {
+  if (!getSettings().online || isBlocked(peerId)) {
+    return;
+  }
+  sendDmTyping(peerId, typing);
+});
+
+/** Collapses a thread into the "Archived" section of the Messages page — never a delete. */
+handle('dm:archive-thread', (_event, peerId: string, archived: boolean): void => {
+  directMessages.setArchived(peerId, archived);
+  sendStateToRenderer();
+});
+
+/** Removes a thread's history from this device alone — the same "for me" scope any local delete has here. */
+handle('dm:delete-thread', (_event, peerId: string): void => {
+  directMessages.deleteThread(peerId);
+  sendStateToRenderer();
+});
+
+/**
+ * Resolves (creating if needed) the hidden 1:1 room a call with this DM peer
+ * belongs in, and returns its id. Split out from actually placing the call so
+ * the renderer can open the ordinary call window with the ordinary
+ * `{kind: 'start', roomId, ...}` intent it already knows how to handle —
+ * nothing about how a call window starts a call needs to change for a DM one.
+ */
+handle('dm:ensure-call-room', (_event, peerId: string, peerName: string): string => {
+  return roomManager.ensureDirectRoom(deviceId(), deviceName(), peerId, peerName).roomId;
 });
 
 // --- blocking IPC ------------------------------------------------------------
@@ -5814,6 +6764,64 @@ handle('privacy:unblock', (_event, targetDeviceId: string): ActionResult => {
  * an approved member of.
  */
 
+/**
+ * The part of placing a call that is the same whether the room is an
+ * ordinary one or the hidden 1:1 room `ensureDirectRoom` maintains for a DM
+ * call — by the time this runs, `room` already exists either way, so nothing
+ * here needs to know which kind it is.
+ */
+function startCallInRoom(room: RoomInfo, mode: CallMode, targetDeviceId?: string): CallStartResult {
+  if (localCall) {
+    return fail('You are already on a call. Leave it before starting another.');
+  }
+
+  /*
+   * A call already live in this room is joined, not duplicated — otherwise
+   * the room ends up split across two independent calls, each unaware the
+   * other exists. The command palette already steers around this in the
+   * renderer; this is the same rule enforced at the one place a call can
+   * actually be minted, so nothing upstream of it has to get it right too.
+   * Applies just the same to a direct call — once placed it is an ordinary
+   * room call, so it is bound by the same one-call-per-room rule.
+   */
+  const roomCall = callManager.getRoomCall(room.roomId);
+  if (roomCall) {
+    return fail(`${room.name} already has a call going — join it instead of starting another.`);
+  }
+
+  if (targetDeviceId) {
+    if (targetDeviceId === deviceId()) {
+      return fail('That is this device.');
+    }
+    if (!roomManager.isAcceptedMember(room.roomId, targetDeviceId)) {
+      return fail('That device is not a member of this room.');
+    }
+  } else {
+    const others = roomManager.getMembers(room.roomId, 'accepted').filter((m) => m.deviceId !== deviceId());
+    if (others.length === 0) {
+      return fail(`Nobody else is in ${room.name} yet, so there is no one to call.`);
+    }
+  }
+
+  const callId = randomUUID();
+  localCall = { callId, roomId: room.roomId, mode };
+  localCallHadCompany = false;
+  callManager.join(callId, room.roomId, mode, deviceId(), deviceName());
+
+  const ringSignal: CallSignal = targetDeviceId
+    ? { kind: 'ring', callId, mode, to: targetDeviceId }
+    : { kind: 'ring', callId, mode };
+
+  if (!sendCallSignal(room.roomId, ringSignal)) {
+    localCall = null;
+    callManager.leave(callId, deviceId());
+    return fail('The call could not be placed — nothing on this network could be reached.');
+  }
+
+  sendStateToRenderer();
+  return { ok: true, message: `Calling ${room.name}…`, callId, roomId: room.roomId, mode };
+}
+
 handle(
   'call:start',
   (_event, roomId: string, mode: CallMode, targetDeviceId?: string): CallStartResult => {
@@ -5821,56 +6829,12 @@ handle(
     if (isActionResult(room)) {
       return room;
     }
-
-    if (localCall) {
-      return fail('You are already on a call. Leave it before starting another.');
+    const restricted = requireUnrestrictedCalls(roomId, room.name);
+    if (restricted) {
+      return restricted;
     }
 
-    /*
-     * A call already live in this room is joined, not duplicated — otherwise
-     * the room ends up split across two independent calls, each unaware the
-     * other exists. The command palette already steers around this in the
-     * renderer; this is the same rule enforced at the one place a call can
-     * actually be minted, so nothing upstream of it has to get it right too.
-     * Applies just the same to a direct call — once placed it is an ordinary
-     * room call, so it is bound by the same one-call-per-room rule.
-     */
-    const roomCall = callManager.getRoomCall(roomId);
-    if (roomCall) {
-      return fail(`${room.name} already has a call going — join it instead of starting another.`);
-    }
-
-    if (targetDeviceId) {
-      if (targetDeviceId === deviceId()) {
-        return fail('That is this device.');
-      }
-      if (!roomManager.isAcceptedMember(roomId, targetDeviceId)) {
-        return fail('That device is not a member of this room.');
-      }
-    } else {
-      const others = roomManager.getMembers(roomId, 'accepted').filter((m) => m.deviceId !== deviceId());
-      if (others.length === 0) {
-        return fail(`Nobody else is in ${room.name} yet, so there is no one to call.`);
-      }
-    }
-
-    const callId = randomUUID();
-    localCall = { callId, roomId, mode };
-    localCallHadCompany = false;
-    callManager.join(callId, roomId, mode, deviceId(), deviceName());
-
-    const ringSignal: CallSignal = targetDeviceId
-      ? { kind: 'ring', callId, mode, to: targetDeviceId }
-      : { kind: 'ring', callId, mode };
-
-    if (!sendCallSignal(roomId, ringSignal)) {
-      localCall = null;
-      callManager.leave(callId, deviceId());
-      return fail('The call could not be placed — nothing on this network could be reached.');
-    }
-
-    sendStateToRenderer();
-    return { ok: true, message: `Calling ${room.name}…`, callId, roomId, mode };
+    return startCallInRoom(room, mode, targetDeviceId);
   }
 );
 
@@ -5886,6 +6850,10 @@ handle('call:join', (_event, callId: string): CallStartResult => {
   const room = requireWritableRoom(roomId);
   if (isActionResult(room)) {
     return room;
+  }
+  const restricted = requireUnrestrictedCalls(roomId, room.name);
+  if (restricted) {
+    return restricted;
   }
 
   if (localCall?.callId === callId) {

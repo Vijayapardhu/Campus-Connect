@@ -7,7 +7,14 @@
  */
 export const PROTOCOL_VERSION = 7;
 
-export type RoomType = 'public' | 'private';
+/**
+ * `'direct'` is a hidden, synthetic 1:1 room used only to carry a call between
+ * two DM peers — see `roomManager.ensureDirectRoom`. It is never advertised,
+ * never listed in "your rooms," and its roster is always exactly the two
+ * participants, computed identically and independently on both devices
+ * rather than synced by the usual owner-authoritative roster broadcast.
+ */
+export type RoomType = 'public' | 'private' | 'direct';
 export type MemberStatus = 'pending' | 'accepted';
 export type MemberRole = 'owner' | 'member';
 
@@ -26,6 +33,26 @@ export type RoomMember = {
    * the upgrade path rather than the intended state.
    */
   publicKey?: string;
+  /**
+   * A lesser tier than a full block: the owner can restrict what this member
+   * may do *in this one room* without severing them from the network
+   * entirely. Absent or all-false means unrestricted. Lives on the roster
+   * rather than as a separate message, so it propagates and is enforced the
+   * same way every other membership fact already is — see `broadcastRoster`
+   * and `handleRoomRoster`.
+   */
+  restricted?: RoomRestrictions;
+};
+
+export type RoomRestrictions = {
+  /** May not send chat messages (text, edits, reactions) in this room. */
+  chat?: boolean;
+  /** May not send file/image attachments in this room. */
+  files?: boolean;
+  /** May not start or join a call in this room. */
+  calls?: boolean;
+  /** May not ask to view or control another member's screen through this room. */
+  remote?: boolean;
 };
 
 /**
@@ -127,11 +154,15 @@ export const MAX_SNIPPETS = 200;
  * make first.
  */
 export type SearchHit = {
-  kind: 'clipboard' | 'chat';
+  kind: 'clipboard' | 'chat' | 'dm';
   id: string;
-  roomId: string;
+  /** Set for `clipboard`/`chat` — where the hit lives. */
+  roomId?: string;
   /** Resolved for display, since a room id means nothing to a reader. */
-  roomName: string;
+  roomName?: string;
+  /** Set for `dm` — who the thread the hit lives in is with. */
+  peerId?: string;
+  peerName?: string;
   deviceName: string;
   timestamp: number;
   /** The line the match is on, trimmed around the match itself. */
@@ -188,6 +219,21 @@ export type ChatMessage = {
   deleted?: boolean;
   /** Emoji to the devices that reacted with it. */
   reactions?: Record<string, string[]>;
+  /**
+   * Bookmarked on **this device only**, exactly like a pinned clipboard entry —
+   * a note to yourself about where something useful is, not a claim about the
+   * conversation everyone else has to agree with. Never sent, and exempt from
+   * the per-room cap, since being evicted is what pinning prevents.
+   */
+  pinned?: boolean;
+  /**
+   * Device ids named with `@` in `content`. Always re-resolved against the room
+   * roster by whichever device stores the message — never taken from the
+   * sender — so a modified client cannot make this device believe it was
+   * mentioned, and so a mention still resolves after a member is renamed out
+   * from under it. See `shared/mentions.ts`.
+   */
+  mentions?: string[];
 };
 
 /** What the sender shows against its own message. */
@@ -461,6 +507,30 @@ export type PeerInfo = {
    * until one of the two is updated.
    */
   protocolVersion?: number;
+  /**
+   * This device's X25519 public key, SPKI as base64 — carried on every
+   * message it sends (`WireMessage.boxPubKey`) and recorded here the moment
+   * any of them arrives. What lets a direct message to this peer be sealed
+   * end to end the instant it appears on the network, with no key-exchange
+   * round trip of its own: see `dmAgreedKey` in main/crypto.ts.
+   */
+  boxPublicKey?: string;
+};
+
+/**
+ * A device reached once by typing its address in — remembered so the address
+ * only has to be typed once per device, not once per session. `peers` itself
+ * is not durable enough for this: it is a sighting list, pruned the moment a
+ * device stops announcing, which is exactly what a device on another subnet
+ * (the only reason to add one by IP in the first place) always looks like
+ * between launches.
+ */
+export type RememberedPeer = {
+  host: string;
+  port: number;
+  /** Last name it answered under — a label to show before it does again. */
+  name: string;
+  addedAt: number;
 };
 
 /**
@@ -607,6 +677,13 @@ export type WireMessage = {
    * main/deviceIdentity.ts for exactly what.
    */
   sig?: string;
+  /**
+   * The sender's X25519 public key, SPKI as base64 — attached to every
+   * outbound message the same way `pubKey` is, so any device that has ever
+   * received anything from a peer already has what it needs to seal a direct
+   * message to them. See `PeerInfo.boxPublicKey` and `dmAgreedKey`.
+   */
+  boxPubKey?: string;
 
   advert?: RoomAdvert;
   roomId?: string;
@@ -620,6 +697,14 @@ export type WireMessage = {
   payload?: ClipboardPayload;
   chatMessage?: ChatMessage;
   sealed?: Envelope;
+  /**
+   * On `direct-message`: the body, sealed under the pairwise key `dmAgreedKey`
+   * derives for the sender and `targetDeviceId`. A DM has no room and so no
+   * password to derive a key from the way `sealed` does — this is what makes
+   * it end-to-end encrypted anyway, unconditionally, the same way `sealed`
+   * makes an encrypted room's traffic unreadable to anyone without its key.
+   */
+  dmSealed?: Envelope;
 
   /*
    * Chunking. A message too large for one datagram is serialised and split;
@@ -901,6 +986,8 @@ export type AppState = {
   listenPort: number;
   localAddress: string;
   peers: PeerInfo[];
+  /** Devices added by IP at some point — reconnected to automatically on every launch. */
+  rememberedPeers: RememberedPeer[];
   currentRoomId?: string;
   rooms: RoomInfo[];
   discovered: DiscoveredRoom[];
@@ -1023,23 +1110,67 @@ export type FileShareState = {
  * Direct 1:1 messages. Device-to-device, the same as file sharing — reachable
  * by anyone currently visible on the network, with no room in common
  * required. Unlike a file transfer there is nothing to consent to before a
- * message arrives, so there is only the one signal kind.
+ * message arrives.
+ *
+ * Amendments (`edit`/`delete`/`reaction`/`receipt`/`typing`) mirror the ones
+ * room chat already carries on `WireMessage` (`chatEdit`/`chatDelete`/
+ * `chatReaction`/`chat-receipt`/`chat-typing`) — same shape, same reasoning,
+ * just addressed peer-to-peer instead of sealed into a room. Every kind here
+ * travels sealed under `WireMessage.dmSealed` — see `dmAgreedKey` — so a DM
+ * is end-to-end encrypted regardless of which of these it is.
  */
-export type DirectMessageSignal = { kind: 'message'; id: string; content: string; sentAt: number };
+export type DirectMessageSignal =
+  | {
+      kind: 'message';
+      id: string;
+      type: 'text' | 'file' | 'image';
+      content: string;
+      dataUrl?: string;
+      fileName?: string;
+      fileSize?: number;
+      replyTo?: ChatReplyTo;
+      sentAt: number;
+    }
+  | { kind: 'edit'; id: string; content: string; editedAt: number }
+  | { kind: 'delete'; id: string }
+  | { kind: 'reaction'; id: string; emoji: string; on: boolean }
+  | { kind: 'receipt'; messageIds: string[]; receipt: 'delivered' | 'seen' }
+  | { kind: 'typing'; typing: boolean };
 
 /**
  * One message in a direct thread. `peerId`/`peerName` always name "the other
  * device," whichever way the message went — simpler for the renderer than
  * tracking from/to separately for a conversation that only ever has two
  * sides.
+ *
+ * The same shape room chat's `ChatMessage` carries for type/attachment/
+ * edit/delete/reaction/receipts — deliberately, so the renderer's message-row
+ * UI can be shared between the two rather than forked. `deleted` follows the
+ * same tombstone convention: the row stays (so a reply into it still
+ * resolves) with its content scrubbed, rather than disappearing outright.
+ * `deliveredTo`/`seenBy` follow the same array-of-device-ids shape room chat
+ * uses too, even though a DM thread only ever has one other party to put in
+ * them — what lets both reuse the exact same `statusOf`/`Receipt` rendering.
  */
 export type DirectMessage = {
   id: string;
   peerId: string;
   peerName: string;
   fromSelf: boolean;
+  type: 'text' | 'file' | 'image';
   content: string;
+  dataUrl?: string;
+  fileName?: string;
+  fileSize?: number;
   sentAt: number;
+  replyTo?: ChatReplyTo;
+  editedAt?: number;
+  deleted?: boolean;
+  reactions?: Record<string, string[]>;
+  deliveredTo?: string[];
+  seenBy?: string[];
+  /** Bookmarked on this device only — see `ChatMessage.pinned`. */
+  pinned?: boolean;
 };
 
 /** One thread's summary, for the list of who you have messaged. */
@@ -1049,6 +1180,8 @@ export type DmThreadSummary = {
   lastMessage: string;
   lastAt: number;
   unread: number;
+  /** Collapsed into a separate section in the Messages page, not deleted. */
+  archived: boolean;
 };
 
 /** Shown in Settings → About. Single source of truth for credit and links. */

@@ -450,6 +450,7 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
       return await localState();
     },
     connectPeer: (host, port, name) => rpc('app:connect-peer', host, port, name),
+    forgetPeer: (host, port) => rpc('app:forget-peer', host, port),
     openExternal: (url) => rpc('app:open-external', url),
     openLink: (url) => rpc('app:open-link', url),
 
@@ -470,6 +471,8 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
     roomApproveMember: (roomId, memberId) => rpc('room:approve-member', roomId, memberId),
     roomRejectMember: (roomId, memberId) => rpc('room:reject-member', roomId, memberId),
     roomRemoveMember: (roomId, memberId) => rpc('room:remove-member', roomId, memberId),
+    roomSetRestrictions: (roomId, memberId, restrictions) =>
+      rpc('room:set-restrictions', roomId, memberId, restrictions),
     roomQrCode: (roomId) => rpc('room:qr-code', roomId),
     roomInvite: (roomId, targetDeviceId) => rpc('room:invite', roomId, targetDeviceId),
     roomRespondInvite: (roomId, accept) => rpc('room:respond-invite', roomId, accept),
@@ -479,6 +482,11 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
     historyDeleteEntry: (entryId) => rpc('history:delete-entry', entryId),
     historyTogglePin: (entryId) => rpc('history:toggle-pin', entryId),
     historyClearRoom: (roomId) => rpc('history:clear-room', roomId),
+    // The save dialog, and the file it writes, belong to the desktop.
+    historyExport: () => refuse(),
+    // A pin is per-device state, and the desktop is the device that holds it.
+    chatTogglePin: (messageId) => rpc('chat:toggle-pin', messageId),
+    dmTogglePin: () => refuse(),
 
     chatSend: (type, content, roomId, dataUrl, fileName, replyToId) =>
       rpc('chat:send', type, content, roomId, dataUrl, fileName, replyToId),
@@ -520,6 +528,9 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
     remoteInput: () => Promise.resolve(false),
     remoteScreens: () => Promise.resolve([]),
     remoteCapabilities: () => Promise.resolve({ canControl: false, reason: UNAVAILABLE }),
+    // A phone has no floating indicator window to hide — remote desktop is
+    // refused outright there already.
+    remoteHideIndicator: () => Promise.resolve(),
 
     // A phone reaches the app through its own paired URL, not a desktop scheme.
     takeDeepLink: () => Promise.resolve(null),
@@ -542,8 +553,20 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
     // Native-only, the same as file sharing and remote desktop — a phone has
     // no place of its own to keep a message thread outside of a room's chat.
     dmSend: () => refuse(),
+    dmSendFile: () => refuse(),
+    dmEdit: () => refuse(),
+    dmDelete: () => refuse(),
+    dmReact: () => refuse(),
+    dmSaveFile: () => refuse(),
     dmGetThread: () => Promise.resolve([]),
     dmMarkRead: () => Promise.resolve(),
+    dmArchiveThread: () => Promise.resolve(),
+    dmDeleteThread: () => Promise.resolve(),
+    dmExport: () => refuse(),
+    // A phone never reaches this — DMs are refused outright above, so there is
+    // never a thread to place a call from — but the type needs a body.
+    dmEnsureCallRoom: () => Promise.reject(new Error(UNAVAILABLE)),
+    dmTyping: () => Promise.resolve(),
 
     quickPasteItems: () => Promise.resolve({ clips: [], snippets: [], roomNames: {} }),
     quickPastePick: () => refuse(),
@@ -611,6 +634,7 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
     onRemoteGrantChanged: none(),
     onRemoteEnded: none(),
     onDmMessage: none(),
+    onDmTyping: none(),
     onQuickPasteOpened: none(),
     onUpdateStatus: (handler) => subscribe('update:status', handler),
     onJoinRequest: (handler) => subscribe('room:join-request', handler),
