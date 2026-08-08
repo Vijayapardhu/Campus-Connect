@@ -24,11 +24,11 @@ export interface Stat {
 }
 
 export const STATS: Stat[] = [
-  { value: '43', label: 'commits', note: 'one author, no co-authors' },
-  { value: '19', label: 'tagged releases', note: 'v0.1.0 through v0.5.0' },
-  { value: '6', label: 'days with commits', note: 'inside a ten-day span' },
-  { value: '24k', label: 'lines of TypeScript', note: 'across 56 source files' },
-  { value: '260', label: 'tests', note: 'run on every build' },
+  { value: '74', label: 'commits', note: 'one author, no co-authors' },
+  { value: '22', label: 'tagged releases', note: 'v0.1.0 through v0.8.0' },
+  { value: '9', label: 'days with commits', note: 'inside a thirteen-day span' },
+  { value: '30k', label: 'lines of TypeScript', note: 'across 56 source files' },
+  { value: '361', label: 'tests', note: 'run on every build' },
   { value: '6', label: 'wire protocol revisions', note: 'checked on every packet' }
 ];
 
