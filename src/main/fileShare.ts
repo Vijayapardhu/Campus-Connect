@@ -113,6 +113,20 @@ export class FileShareManager {
   /** When each transfer last actually moved bytes, for the stall sweep. */
   private lastMoved = new Map<string, number>();
   /**
+   * Transfer ids currently inside `sendFiles`. `transfer.status !== 'active'`
+   * alone does not prevent a second call — status is set to `'active'` and
+   * stays there for the whole duration `sendFiles` itself is running, so it
+   * cannot also be what tells a second call the first one is still in
+   * progress. Without this, two concurrent calls for the same transfer (the
+   * IPC handler has no lock of its own, and a native file-picker dialog can
+   * be re-entered) both pass the status check, and the second one's
+   * `transfer.files = files.map(...)` reassignment (`sendFiles` below) pulls
+   * the array out from under the first call's in-progress loop mid-stream —
+   * corrupting which bytes get tagged with which file's id, name and size,
+   * or dereferencing an index that no longer exists.
+   */
+  private sendingIds = new Set<string>();
+  /**
    * Everything the receiver does, in arrival order and one at a time.
    *
    * Signals arrive as independent events, so without this the handlers
@@ -184,66 +198,78 @@ export class FileShareManager {
     if (files.length === 0) {
       return { ok: false, message: 'Nothing was picked.' };
     }
-
-    for (const file of files) {
-      if (file.size > MAX_FILE_SHARE_BYTES) {
-        return {
-          ok: false,
-          message: `${file.name} is over the ${Math.round(MAX_FILE_SHARE_BYTES / 1024 / 1024)} MB limit.`
-        };
-      }
+    // See `sendingIds`'s own comment — `transfer.status` alone cannot tell a
+    // second concurrent call that a first one is still running.
+    if (this.sendingIds.has(transferId)) {
+      return { ok: false, message: 'Already sending files for this transfer.' };
     }
+    this.sendingIds.add(transferId);
 
-    transfer.files = files.map((file) => ({
-      fileId: randomTransferId(),
-      name: file.name,
-      size: file.size,
-      moved: 0,
-      status: 'queued' as const
-    }));
-    transfer.bytesTotal = files.reduce((total, file) => total + file.size, 0);
-    this.emit(true);
+    try {
+      for (const file of files) {
+        if (file.size > MAX_FILE_SHARE_BYTES) {
+          return {
+            ok: false,
+            message: `${file.name} is over the ${Math.round(MAX_FILE_SHARE_BYTES / 1024 / 1024)} MB limit.`
+          };
+        }
+      }
 
-    for (const [index, streamed] of files.entries()) {
-      const file = transfer.files[index];
-      file.status = 'active';
-      this.emit(true);
-      this.options.send(transfer.peerId, {
-        kind: 'offer',
-        transferId,
-        fileId: file.fileId,
+      transfer.files = files.map((file) => ({
+        fileId: randomTransferId(),
         name: file.name,
-        size: file.size
-      });
+        size: file.size,
+        moved: 0,
+        status: 'queued' as const
+      }));
+      transfer.bytesTotal = files.reduce((total, file) => total + file.size, 0);
+      this.emit(true);
 
-      try {
-        await this.stream(transfer, streamed, file);
-        /*
-         * The next file waits until this one is confirmed whole. Pushing the
-         * last slice is not the same event as the receiver having the file on
-         * disk, and starting the next offer before that confirmation is what
-         * used to abandon every transfer after its first file.
-         */
-        await this.waitForFile(transfer, file);
-      } catch (error) {
-        return this.fail(transfer, (error as Error).message);
+      for (const [index, streamed] of files.entries()) {
+        const file = transfer.files[index];
+        file.status = 'active';
+        this.emit(true);
+        this.options.send(transfer.peerId, {
+          kind: 'offer',
+          transferId,
+          fileId: file.fileId,
+          name: file.name,
+          size: file.size,
+          batchBytes: transfer.bytesTotal,
+          batchCount: files.length
+        });
+
+        try {
+          await this.stream(transfer, streamed, file);
+          /*
+           * The next file waits until this one is confirmed whole. Pushing the
+           * last slice is not the same event as the receiver having the file on
+           * disk, and starting the next offer before that confirmation is what
+           * used to abandon every transfer after its first file.
+           */
+          await this.waitForFile(transfer, file);
+        } catch (error) {
+          return this.fail(transfer, (error as Error).message);
+        }
+
+        if (this.lookup(transferId)?.status !== 'active') {
+          return { ok: false, message: 'The transfer was stopped before it finished.' };
+        }
       }
 
-      if (this.lookup(transferId)?.status !== 'active') {
-        return { ok: false, message: 'The transfer was stopped before it finished.' };
+      if (this.lookup(transferId)?.status === 'active') {
+        this.options.send(transfer.peerId, { kind: 'finish', transferId, ok: true });
+        // The sender ends its own half here. The receiver ends on the `finish`
+        // it was just sent, so neither side is left holding an open transfer.
+        this.endTransfer(transfer, 'done');
       }
+      return {
+        ok: true,
+        message: files.length === 1 ? `Sent ${files[0].name}.` : `Sent ${files.length} files.`
+      };
+    } finally {
+      this.sendingIds.delete(transferId);
     }
-
-    if (this.lookup(transferId)?.status === 'active') {
-      this.options.send(transfer.peerId, { kind: 'finish', transferId, ok: true });
-      // The sender ends its own half here. The receiver ends on the `finish`
-      // it was just sent, so neither side is left holding an open transfer.
-      this.endTransfer(transfer, 'done');
-    }
-    return {
-      ok: true,
-      message: files.length === 1 ? `Sent ${files[0].name}.` : `Sent ${files.length} files.`
-    };
   }
 
   /**
@@ -574,7 +600,13 @@ export class FileShareManager {
     transfer: FileShareTransfer,
     signal: FileXferSignal & { kind: 'offer' }
   ): Promise<void> {
-    if (signal.size > MAX_FILE_SHARE_BYTES) {
+    // `Number.isInteger` also catches NaN and non-numeric input, not just
+    // the negative case — `signal.size > MAX_FILE_SHARE_BYTES` alone is
+    // false for either, so a malformed offer could otherwise slip past the
+    // size ceiling entirely and poison `bytesTotal`/`bytesDone` with NaN, or
+    // (negative) leave `file.moved >= file.size` never true, stalling the
+    // file until the sweep gives up on it.
+    if (!Number.isInteger(signal.size) || signal.size < 0 || signal.size > MAX_FILE_SHARE_BYTES) {
       this.endTransfer(transfer, 'error', `${signal.name} is over the size limit.`);
       return;
     }
@@ -587,7 +619,22 @@ export class FileShareManager {
       status: 'active'
     };
     transfer.files.push(file);
-    transfer.bytesTotal += signal.size;
+    /*
+     * The whole batch's declared total, not accumulated file by file. The
+     * sender already knows every file's size before offering the first one
+     * (`sendFiles` totals them up front) and repeats that same total on
+     * every offer — using it directly means the receiver's overall progress
+     * reflects the real batch from the very first file, instead of only
+     * "everything offered so far," which used to hit 100% between every
+     * file and then visibly drop back down as the next offer's size was
+     * folded in. Falls back to the old accumulation only for a malformed
+     * value (an older peer, or a corrupted packet) — worse, but never
+     * wrong in the way trusting a bad value outright would be.
+     */
+    transfer.bytesTotal =
+      Number.isInteger(signal.batchBytes) && signal.batchBytes >= signal.size
+        ? signal.batchBytes
+        : transfer.bytesTotal + signal.size;
     transfer.bytesDone = transfer.files.reduce((total, candidate) => total + candidate.moved, 0);
 
     const folder = this.options.downloadFolder();
@@ -700,10 +747,22 @@ export class FileShareManager {
 
     const folder = this.options.downloadFolder();
     const finalPath = await uniquePath(path.join(folder, file.name));
+    const partial = path.join(folder, '.partials', `${file.fileId}.part`);
     try {
-      await fs.rename(path.join(folder, '.partials', `${file.fileId}.part`), finalPath);
+      // A rename removes the source as part of the move, on the (by far)
+      // common case of the download folder sharing a volume with `.partials`.
+      await fs.rename(partial, finalPath);
     } catch {
-      await fs.copyFile(path.join(folder, '.partials', `${file.fileId}.part`), finalPath);
+      // Cross-volume renames fail outright, and on Windows a transient
+      // EPERM/EBUSY right after `handle.close()` (antivirus, indexing) can
+      // too — `copyFile` duplicates the bytes but, unlike a rename, never
+      // touches the source. Without the explicit removal below, that left a
+      // full copy of the file sitting in `.partials` for the rest of the
+      // app's run — the transfer still reports 'done', so `endTransfer`'s
+      // own cleanup (which only removes `.partials` entries for a file that
+      // *isn't* done) never reaches it either.
+      await fs.copyFile(partial, finalPath);
+      await fs.rm(partial, { force: true }).catch(() => {});
     }
 
     file.status = 'done';

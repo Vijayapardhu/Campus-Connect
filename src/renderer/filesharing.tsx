@@ -276,8 +276,12 @@ function Transfer({
               : transfer.status === 'cancelled'
                 ? 'Stopped'
                 : // A request nobody has answered is not a transfer in progress.
-                  // It said "Sending" while nothing had been picked, let alone sent.
-                  transfer.status === 'requested'
+                  // It said "Sending" while nothing had been picked, let alone
+                  // sent — the same is true one step later, accepted but
+                  // still at the native picker, which `statusLine` above
+                  // already renders as "Choose what to send…" and this used
+                  // to contradict outright with "Sending".
+                  transfer.status === 'requested' || (transfer.role === 'sender' && transfer.files.length === 0)
                   ? 'Waiting'
                   : transfer.role === 'sender'
                     ? 'Sending'

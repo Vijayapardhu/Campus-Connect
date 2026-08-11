@@ -1055,7 +1055,27 @@ export type FileXferSignal =
   | { kind: 'request'; transferId: string }
   | { kind: 'accept'; transferId: string }
   | { kind: 'decline'; transferId: string; reason: string }
-  | { kind: 'offer'; transferId: string; fileId: string; name: string; size: number }
+  | {
+      kind: 'offer';
+      transferId: string;
+      fileId: string;
+      name: string;
+      size: number;
+      /**
+       * The whole batch's total bytes and file count — identical on every
+       * offer in a transfer, not just this one file's own numbers. The
+       * receiver has no other way to know the full size of a multi-file
+       * transfer up front: it only learns about each file as its own offer
+       * arrives, one at a time, well after the sender already knows the
+       * whole batch (`sendFiles` totals it before sending the first offer).
+       * Without this, the receiver's own running total only ever covered
+       * files offered *so far* — its overall progress bar hit 100% between
+       * every file, then dropped back down the moment the next offer added
+       * more to the total.
+       */
+      batchBytes: number;
+      batchCount: number;
+    }
   | { kind: 'data'; transferId: string; fileId: string; index: number; total: number; data: string }
   | {
       kind: 'file-done';
