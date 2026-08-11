@@ -371,6 +371,17 @@ export class FileShareManager {
       return { ok: true, message: 'Declined.' };
     }
 
+    // Checked before this device commits to being busy, the same way
+    // `request()` does — an accept that never reached the sender left the
+    // receiver permanently `busy()` with a transfer that was never coming:
+    // `sweep()`'s stall check only runs once a transfer has files, and this
+    // one, stuck waiting for a sender who never learned it was accepted,
+    // never gets any.
+    if (!this.options.send(pending.fromDeviceId, { kind: 'accept', transferId })) {
+      this.emit(true);
+      return { ok: false, message: `${pending.fromDeviceName} could not be reached.` };
+    }
+
     const transfer: FileShareTransfer = {
       transferId,
       role: 'receiver',
@@ -384,7 +395,6 @@ export class FileShareManager {
     };
     this.transfers.unshift(transfer);
     this.activeId = transferId;
-    this.options.send(pending.fromDeviceId, { kind: 'accept', transferId });
     this.emit(true);
     return { ok: true, message: `Receiving files from ${pending.fromDeviceName}…` };
   }
@@ -455,7 +465,27 @@ export class FileShareManager {
     if (transfer.status === 'active' && transfer.files.length > 0) {
       const since = this.lastMoved.get(transfer.transferId) ?? transfer.startedAt;
       const finished = transfer.files.every((file) => file.status === 'done');
-      if (!finished && since < this.now() - STALL_TIMEOUT_MS) {
+
+      if (finished) {
+        /*
+         * Every file offered is confirmed on disk — what the whole-transfer
+         * `finish` signal exists to announce is already true. That signal
+         * travels over the same lossy transport as everything else here,
+         * and unlike a file slice it is sent once and never resent or
+         * acknowledged. A single dropped datagram used to leave the receiver
+         * `active` — and therefore `busy()` — forever: this was the one
+         * case the stall check explicitly excluded, on the reasoning that a
+         * finished transfer is not a stalled one. It is, once the signal
+         * that was supposed to close it has had this long to arrive and has
+         * not. There is nothing left to wait for at that point.
+         */
+        if (since < this.now() - STALL_TIMEOUT_MS) {
+          this.endTransfer(transfer, 'done');
+        }
+        return;
+      }
+
+      if (since < this.now() - STALL_TIMEOUT_MS) {
         this.endTransfer(
           transfer,
           'error',

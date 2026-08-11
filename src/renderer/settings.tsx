@@ -104,6 +104,20 @@ export function SettingsPage({
 }) {
   const [section, setSection] = React.useState<SectionId>('device');
   const [name, setName] = React.useState(state.deviceName);
+  const [nameFieldFocused, setNameFieldFocused] = React.useState(false);
+
+  // A paired phone can rename this device too (settings are part of what it
+  // shares). Without this, that rename never reaches the box below — it
+  // stays seeded from whatever `state.deviceName` was on mount — so leaving
+  // this page open, then blurring or pressing Enter in the box, silently
+  // reverted the phone's rename back to the old name. Skipped while the
+  // field is focused, so an external rename cannot overwrite something being
+  // typed right now.
+  React.useEffect(() => {
+    if (!nameFieldFocused) {
+      setName(state.deviceName);
+    }
+  }, [state.deviceName, nameFieldFocused]);
   const [peerHost, setPeerHost] = React.useState('');
   const [testHost, setTestHost] = React.useState('');
   const [testing, setTesting] = React.useState(false);
@@ -230,7 +244,11 @@ export function SettingsPage({
                   className="input"
                   value={name}
                   onChange={(event) => setName(event.target.value)}
-                  onBlur={() => name.trim() && name !== state.deviceName && onRename(name.trim())}
+                  onFocus={() => setNameFieldFocused(true)}
+                  onBlur={() => {
+                    setNameFieldFocused(false);
+                    name.trim() && name !== state.deviceName && onRename(name.trim());
+                  }}
                   onKeyDown={(event) => event.key === 'Enter' && name.trim() && onRename(name.trim())}
                   maxLength={32}
                 />

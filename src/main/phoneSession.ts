@@ -151,6 +151,27 @@ export class PhoneSessions {
     return token;
   }
 
+  /** Shared by `verify` and `identify` — the token's pairing, or null if it does not currently admit anyone. */
+  private findValid(token: string): PhonePairing | null {
+    if (!token || !this.isOpen) {
+      return null;
+    }
+
+    const digest = hash(token);
+    const pairing = this.pairings.find((candidate) => candidate.tokenHash === digest);
+    if (!pairing) {
+      return null;
+    }
+
+    if (this.now() - pairing.lastSeenAt > PAIRING_TTL_MS) {
+      this.pairings = this.pairings.filter((candidate) => candidate !== pairing);
+      this.persist();
+      return null;
+    }
+
+    return pairing;
+  }
+
   /**
    * Checks a token. True when the phone holding it is paired and access is on.
    *
@@ -158,24 +179,24 @@ export class PhoneSessions {
    * settings file must not hand anybody a working token.
    */
   verify(token: string): boolean {
-    if (!token || !this.isOpen) {
-      return false;
-    }
-
-    const digest = hash(token);
-    const pairing = this.pairings.find((candidate) => candidate.tokenHash === digest);
+    const pairing = this.findValid(token);
     if (!pairing) {
-      return false;
-    }
-
-    if (this.now() - pairing.lastSeenAt > PAIRING_TTL_MS) {
-      this.pairings = this.pairings.filter((candidate) => candidate !== pairing);
-      this.persist();
       return false;
     }
 
     pairing.lastSeenAt = this.now();
     return true;
+  }
+
+  /**
+   * Which pairing a token belongs to, identified by `pairedAt` — without
+   * touching `lastSeenAt` the way `verify` does. Exists so a long-lived
+   * connection opened with this token (the event stream) can be tied back to
+   * the pairing that authorized it, and closed the moment that pairing is
+   * revoked rather than only refusing the *next* request.
+   */
+  identify(token: string): number | null {
+    return this.findValid(token)?.pairedAt ?? null;
   }
 
   /** Forgets one phone. It has to type the PIN again to come back. */

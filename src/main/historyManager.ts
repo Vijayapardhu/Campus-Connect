@@ -230,12 +230,23 @@ export class HistoryManager {
   /**
    * Records a receipt against one of our own messages. Returns true when
    * something actually changed, so the caller can avoid a needless redraw.
+   *
+   * Scoped to `roomId` as well as the message ids, not just the ids alone —
+   * the caller only ever checks that `fromDeviceId` is an accepted member of
+   * `roomId`, which says nothing about whether the ids it also sent actually
+   * belong to that room. Without this, a device that is a member of one room
+   * and merely holds local history for another (from having been a member of
+   * it before, or simply because this device is in both) could claim a
+   * receipt against messages entirely outside the room its membership was
+   * actually checked against, forging delivery/seen state other members
+   * later see attached to their own messages in a room the sender never
+   * proved anything about.
    */
-  recordReceipt(messageIds: string[], fromDeviceId: string, receipt: 'delivered' | 'seen'): boolean {
+  recordReceipt(messageIds: string[], fromDeviceId: string, receipt: 'delivered' | 'seen', roomId: string): boolean {
     let changed = false;
 
     for (const message of this.chat) {
-      if (!messageIds.includes(message.id)) {
+      if (message.roomId !== roomId || !messageIds.includes(message.id)) {
         continue;
       }
 
@@ -400,8 +411,14 @@ export class HistoryManager {
           break;
         }
         item.dataUrl = undefined;
-        if ('mediaCleared' in item) {
-          (item as ChatMessage).mediaCleared = true;
+        // `mediaCleared` is optional and, for a chat message reaching this
+        // branch, has by definition never been set yet — `'mediaCleared' in
+        // item` was therefore always false here, for both a clipboard entry
+        // (which has no such field at all) and a chat message (which does,
+        // but only after being assigned once). Discriminated on `content`
+        // instead, the field only `ChatMessage` actually carries.
+        if ('content' in item) {
+          item.mediaCleared = true;
         }
         cleared += 1;
       }

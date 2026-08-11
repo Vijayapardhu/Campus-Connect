@@ -55,18 +55,54 @@ export function migrateUserData(options: {
       continue;
     }
 
+    /*
+     * Copied into a staging directory next to `userData` first, not into
+     * `userData` itself. `cpSync` walks the tree file by file and is not
+     * atomic — a process killed partway (not merely a caught exception, an
+     * actual crash or forced quit) used to leave `userData` holding whatever
+     * had copied so far. If that happened to include the marker file this
+     * function gates on, the *next* launch saw `config.json` already there,
+     * read that as "nothing to do", and never revisited the directory —
+     * whatever else had not finished copying (a phone certificate, anything
+     * that sorts after the marker) was then permanently missing, with
+     * nothing anywhere recording that the migration was ever incomplete.
+     * Staging first means the only thing that can be interrupted is a copy
+     * nothing has adopted yet; `userData` itself is only ever touched by the
+     * one step below meant to be as close to instantaneous as the
+     * filesystem allows.
+     */
+    const staging = `${userData}.migrating-${process.pid}`;
     try {
-      fs.mkdirSync(userData, { recursive: true });
-      /*
-       * The old directory is left alone rather than moved. If this build turns
-       * out to be a mistake, the previous one still starts and still has
-       * everything it had — which matters more than the disk space.
-       */
-      fs.cpSync(legacy, userData, { recursive: true, force: false, errorOnExist: false });
-      return { migrated: true, from: legacy };
+      fs.rmSync(staging, { recursive: true, force: true });
+      fs.mkdirSync(staging, { recursive: true });
+      fs.cpSync(legacy, staging, { recursive: true, force: false, errorOnExist: false });
     } catch (error) {
+      fs.rmSync(staging, { recursive: true, force: true });
       return { migrated: false, from: legacy, error: (error as Error).message };
     }
+
+    try {
+      /*
+       * A rename is atomic on a single volume, which staging is deliberately
+       * on (a sibling of `userData`, not a system temp directory that could
+       * sit on a different one). It fails outright if `userData` already
+       * exists — Electron itself may have created it before this ever runs,
+       * for its own crash-reporter/cache directories that have nothing to
+       * do with this app's data — which the fallback below handles.
+       */
+      fs.renameSync(staging, userData);
+    } catch {
+      try {
+        fs.mkdirSync(userData, { recursive: true });
+        fs.cpSync(staging, userData, { recursive: true });
+      } catch (error) {
+        return { migrated: false, from: legacy, error: (error as Error).message };
+      } finally {
+        fs.rmSync(staging, { recursive: true, force: true });
+      }
+    }
+
+    return { migrated: true, from: legacy };
   }
 
   return { migrated: false };

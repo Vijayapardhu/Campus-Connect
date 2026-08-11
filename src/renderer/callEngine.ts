@@ -118,6 +118,21 @@ type DesktopMediaConstraints = {
 
 export class CallEngine {
   private peers = new Map<string, Peer>();
+  /**
+   * `'device'` state that arrived for a peer this device has not created yet.
+   *
+   * Signalling travels over UDP broadcast/unicast, which does not guarantee
+   * order — a peer's own `publishLocalState()` broadcast and the `'here'`/
+   * `'sdp'` traffic that causes this device to `ensurePeer()` them are two
+   * separate packets, and the state one can arrive first. It used to be
+   * discarded outright when that happened (a plain `Map.get`, never
+   * `ensurePeer`), so if that peer never touched a mic/camera/share toggle
+   * for the rest of the call, its tile stayed on `ensurePeer`'s hardcoded
+   * defaults — indefinitely. Buffered here and applied the moment the peer
+   * is actually created, the same way `pendingCandidates` holds ICE
+   * candidates that arrive before there is a description to attach them to.
+   */
+  private pendingDeviceState = new Map<string, { micOn: boolean; cameraOn: boolean; sharing: boolean }>();
   private micTrack: MediaStreamTrack | null = null;
   private cameraTrack: MediaStreamTrack | null = null;
   private screenTrack: MediaStreamTrack | null = null;
@@ -384,12 +399,21 @@ export class CallEngine {
         return this.handleCandidate(event.fromDeviceId, event.fromDeviceName, signal.candidate);
 
       case 'device': {
+        const state = {
+          micOn: Boolean(signal.state?.micOn),
+          cameraOn: Boolean(signal.state?.cameraOn),
+          sharing: Boolean(signal.state?.sharing)
+        };
         const peer = this.peers.get(event.fromDeviceId);
         if (peer) {
-          peer.micOn = Boolean(signal.state?.micOn);
-          peer.cameraOn = Boolean(signal.state?.cameraOn);
-          peer.sharing = Boolean(signal.state?.sharing);
+          peer.micOn = state.micOn;
+          peer.cameraOn = state.cameraOn;
+          peer.sharing = state.sharing;
           this.publishPeers();
+        } else {
+          // Not created yet — buffered rather than dropped. See
+          // `pendingDeviceState`'s own comment for why this happens.
+          this.pendingDeviceState.set(event.fromDeviceId, state);
         }
         return;
       }
@@ -564,6 +588,16 @@ export class CallEngine {
       }
       this.publishPeers();
     };
+
+    // Any `'device'` state that arrived before this peer existed is applied
+    // right away, rather than waiting for that peer to next toggle something.
+    const buffered = this.pendingDeviceState.get(deviceId);
+    if (buffered) {
+      this.pendingDeviceState.delete(deviceId);
+      peer.micOn = buffered.micOn;
+      peer.cameraOn = buffered.cameraOn;
+      peer.sharing = buffered.sharing;
+    }
 
     this.peers.set(deviceId, peer);
     this.publishPeers();

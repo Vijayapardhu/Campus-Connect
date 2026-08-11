@@ -237,7 +237,12 @@ export type ChatMessage = {
 };
 
 /** What the sender shows against its own message. */
-export type MessageStatus = 'sent' | 'delivered' | 'seen' | 'undelivered';
+/**
+ * 'partial' only ever arises in a room with 3+ members: some, but not every,
+ * other accepted member has the message. A DM thread has exactly one other
+ * party, so it only ever sees 'delivered' (that one has it) or not.
+ */
+export type MessageStatus = 'sent' | 'delivered' | 'partial' | 'seen' | 'undelivered';
 
 // --- calls -------------------------------------------------------------------
 

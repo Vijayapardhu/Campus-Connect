@@ -47,8 +47,12 @@ export type Judgement =
    *  device was reinstalled — either way it is not the device we knew. */
   | 'mismatch';
 
+/** How long an ordinary `lastSeen` bump waits before it is written to disk. */
+const LAST_SEEN_FLUSH_MS = 30000;
+
 export class DeviceRegistry {
   private records: Record<string, DeviceKeyRecord>;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly storage: RegistryStorage,
@@ -89,6 +93,15 @@ export class DeviceRegistry {
     }
 
     known.lastSeen = this.now();
+    // Debounced rather than immediate — this runs on every authenticated
+    // packet from every already-known device, which on a busy room is
+    // thousands a minute, and a write on each one would be needless disk
+    // I/O for a timestamp nothing currently reads. Debounced still beats
+    // never: left off entirely, `lastSeen` only ever reflected the moment a
+    // device was first seen or last bound/adopted, silently going stale on
+    // disk the instant the process restarted, however recently that device
+    // had actually been talking to it.
+    this.scheduleFlush();
     return 'known';
   }
 
@@ -166,6 +179,21 @@ export class DeviceRegistry {
   }
 
   private persist(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
     this.storage.write(this.records);
+  }
+
+  private scheduleFlush(): void {
+    if (this.flushTimer) {
+      return;
+    }
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.persist();
+    }, LAST_SEEN_FLUSH_MS);
+    this.flushTimer.unref?.();
   }
 }

@@ -119,6 +119,12 @@ export default function App() {
   const [tab, setTab] = React.useState<Tab>('clipboard');
   const [view, setView] = React.useState<View>('room');
   const [modal, setModal] = React.useState<ModalState>(null);
+  // Read by the deep-link handler below, which needs to know whether a modal
+  // is *currently* open at the moment a link arrives — a value only `modal`
+  // itself (not this ref) could go stale on, since that handler is not
+  // re-created on every change to `modal`.
+  const modalRef = React.useRef(modal);
+  modalRef.current = modal;
   const [typing, setTyping] = React.useState<Record<string, { name: string; at: number }>>({});
   const [screenPicker, setScreenPicker] = React.useState(false);
   const [palette, setPalette] = React.useState<PaletteMode | null>(null);
@@ -287,19 +293,24 @@ export default function App() {
       // silently throw that input away. The link itself has nowhere to wait,
       // so it is dropped rather than queued; the toast only fires when it
       // actually got to open something.
-      let opened = false;
-      setModal((current) => {
-        if (current) {
-          return current;
-        }
-        opened = true;
-        return { kind: 'join', target: null, code: link.code, roomName: link.roomName };
-      });
-
-      if (opened && link.roomName) {
-        push(`Opening an invitation to ${link.roomName}.`, 'info');
-      } else if (!opened) {
+      //
+      // Decided from `modalRef`, not by inspecting a `setModal` updater's own
+      // side effect — `setView`/`setShowRooms` just above may themselves
+      // already have a re-render pending by the time `setModal` runs, and
+      // React only guarantees a functional updater runs synchronously when
+      // nothing is already scheduled on the same fiber. Whenever it was not
+      // run inline, `opened` stayed `false` regardless of what actually
+      // happened, so the "opening an invitation" toast silently became
+      // unreachable in exactly the cases — a link arriving while some other
+      // screen was showing — this whole check exists for.
+      if (modalRef.current) {
         push('A room invitation arrived — finish what you have open, then use the link again.', 'info');
+        return;
+      }
+
+      setModal({ kind: 'join', target: null, code: link.code, roomName: link.roomName });
+      if (link.roomName) {
+        push(`Opening an invitation to ${link.roomName}.`, 'info');
       }
     };
 
@@ -455,6 +466,15 @@ export default function App() {
         return;
       }
 
+      // Everything past this point is meant to be suppressed while the caret
+      // is in a field, per the comment above this effect — Ctrl+F used to
+      // switch tabs regardless, which unmounted `ChatPanel` mid-sentence and
+      // took its uncommitted draft with it, since `draft` lives in local
+      // state there rather than being lifted to this component.
+      if (typing) {
+        return;
+      }
+
       // Ctrl+Shift+F searches every room; plain Ctrl+F filters the room you are
       // looking at, which is the older and narrower behaviour.
       if (event.key.toLowerCase() === 'f' && event.shiftKey) {
@@ -468,10 +488,6 @@ export default function App() {
         setTab('clipboard');
         // Wait for the panel to mount if the tab just changed.
         requestAnimationFrame(() => searchRef.current?.focus());
-        return;
-      }
-
-      if (typing) {
         return;
       }
 

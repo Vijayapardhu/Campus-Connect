@@ -257,9 +257,26 @@ export class TcpTransport {
        * keeps A's inbound, and they agree on one connection without talking
        * about it.
        */
-      const established =
-        !existing.socket.destroyed && !existing.socket.connecting && existing.socket.writable;
-      if (existing.outbound && established && self && self < host) {
+      /*
+       * Deliberately not gated on the existing socket already having
+       * finished its handshake. Two devices dialling each other over the
+       * same discovery event arrive here within milliseconds of one
+       * another, and at that point each side's own outbound dial is very
+       * likely still `connecting` — the actual race this comment is talking
+       * about, not a rarer edge case of it. Requiring `established` meant
+       * the address comparison below almost never got to run during the
+       * real race: both sides would see their own outbound as not-yet-
+       * established, both would fall through and adopt the other's inbound
+       * socket instead of keeping their own outbound, and each side then
+       * tore down a connection the other side was still holding — exactly
+       * the thrashing this whole block exists to prevent. A socket that has
+       * not merely died (`destroyed`) is a live contender for "the"
+       * connection regardless of whether it has completed its handshake
+       * yet; only that much liveness is needed for the address comparison
+       * to mean anything.
+       */
+      const alive = !existing.socket.destroyed;
+      if (existing.outbound && alive && self && self < host) {
         socket.destroy();
         return;
       }

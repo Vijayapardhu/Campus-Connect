@@ -81,6 +81,10 @@ export function useDirectMessage({
   // a different thread was opened.
   const activePeerIdRef = React.useRef(activePeerId);
   activePeerIdRef.current = activePeerId;
+  // Bumped on every call to `openThread`, including a repeat for the same
+  // peer — a stale in-flight fetch checks this, not just the peer id, before
+  // applying its result.
+  const fetchTokenRef = React.useRef(0);
 
   const openThread = React.useCallback((peerId: string, peerName: string) => {
     setActivePeerId(peerId);
@@ -93,9 +97,14 @@ export function useDirectMessage({
     //
     // Checked again on arrival, not just before asking — opening a second
     // thread before this fetch resolves must not let the first thread's
-    // slower response land under the second thread's header.
+    // slower response land under the second thread's header. The token check
+    // covers the same race for two calls naming the *same* peer — a double
+    // click issues two `dmGetThread` requests, and without it whichever
+    // round trip happened to resolve last would win even if it was issued
+    // first and answered before a message that arrived in between.
+    const token = ++fetchTokenRef.current;
     void api.dmGetThread(peerId).then((messages) => {
-      if (activePeerIdRef.current === peerId) {
+      if (activePeerIdRef.current === peerId && fetchTokenRef.current === token) {
         setThread([...messages].reverse());
       }
     });

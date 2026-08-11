@@ -202,8 +202,17 @@ export class Updater {
          * 'update-downloaded' event has already fired by then. Retrying at that
          * point fetches an installer that is sitting on disk, which is most of
          * how one update came to be downloaded three and four times over.
+         *
+         * Matched against `availableVersion`, not just checked for existence —
+         * `downloadedVersion` survives across separate downloads (it is only
+         * ever overwritten, never cleared), so a *second*, later update whose
+         * own transfer genuinely fails would otherwise find the *first*
+         * update's leftover `downloadedVersion` still sitting there, report
+         * itself "ready", and skip its own retries and error entirely — every
+         * install-now from that point on would silently install the old
+         * version instead of the one the user just tried to download.
          */
-        if (this.downloadedVersion) {
+        if (this.downloadedVersion && this.downloadedVersion === this.status.availableVersion) {
           log.info(`Download reported "${lastError}" after ${this.downloadedVersion} had already been written; it is ready.`);
           this.set({ state: 'ready', availableVersion: this.downloadedVersion, error: undefined });
           return this.status;

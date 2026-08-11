@@ -99,6 +99,22 @@ export function useRemote({
         onConnectionState: (next) => {
           setConnection(next);
           setInputReady(engineRef.current?.inputReady ?? false);
+          if (next === 'failed') {
+            /*
+             * Unlike 'interrupted', a failed connection never recovers on
+             * its own — and until now, nothing acted on that. The engine
+             * kept running (screen capture, the input injector, the host
+             * indicator), and `remoteSessions.current` on the main process
+             * stayed non-null indefinitely, since nothing ever told it the
+             * session was over. `RemoteSessionManager.busy` staying true
+             * then refused every future remote-desktop request on this
+             * device, in either role, until a human happened to notice and
+             * manually disconnect. `onError` already told them why; this is
+             * what actually ends it.
+             */
+            void api.remoteEnd();
+            teardownRef.current();
+          }
         },
         onInput: (event) => {
           /*
@@ -608,6 +624,13 @@ export function RemoteViewer({
   }, [fullscreen.active]);
 
   /*
+   * What the auto-hide-header effect below calls to bring the header back.
+   * Read by the keyboard-capture effect too — see its own comment for why a
+   * ref is what bridges them, rather than the stage's own `keydown` listener.
+   */
+  const revealHeaderRef = React.useRef<() => void>(() => {});
+
+  /*
    * Keyboard capture lives on the window rather than on the element, because
    * the moment a click is forwarded to the remote machine this surface may not
    * hold focus in any meaningful sense. It is only attached while control is
@@ -624,6 +647,14 @@ export function RemoteViewer({
       if (event.key === 'Escape' && document.fullscreenElement) {
         return;
       }
+      // Called directly rather than left to the stage's own `keydown`
+      // listener below: this handler runs in the capture phase and calls
+      // `stopPropagation()` on every key it forwards, which stops that
+      // bubble-phase listener from ever seeing the event at all. Without
+      // this, the header could only be brought back by moving the mouse —
+      // someone controlling the remote machine purely by typing had no way
+      // to reach Disconnect once the header auto-hid.
+      revealHeaderRef.current();
       event.preventDefault();
       event.stopPropagation();
       capture.key(event, true);
@@ -708,17 +739,19 @@ export function RemoteViewer({
   React.useEffect(() => {
     if (!fullscreen.active) {
       setShowHeader(true);
+      revealHeaderRef.current = () => {};
       return;
     }
-    
+
     let hideTimer: ReturnType<typeof setTimeout>;
     const show = () => {
       setShowHeader(true);
       clearTimeout(hideTimer);
       hideTimer = setTimeout(() => setShowHeader(false), 3000);
     };
-    
+
     show();
+    revealHeaderRef.current = show;
     const stage = stageRef.current;
     if (stage) {
       stage.addEventListener('mousemove', show);
@@ -730,6 +763,7 @@ export function RemoteViewer({
         stage.removeEventListener('keydown', show);
       }
       clearTimeout(hideTimer);
+      revealHeaderRef.current = () => {};
     };
   }, [fullscreen.active]);
 

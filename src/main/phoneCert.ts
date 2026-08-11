@@ -48,7 +48,13 @@ const FILE = 'phone-certificate.json';
 function read(dir: string): StoredCertificate | null {
   try {
     const parsed = JSON.parse(fs.readFileSync(path.join(dir, FILE), 'utf8')) as StoredCertificate;
-    if (!parsed?.key || !parsed?.cert || !Array.isArray(parsed.hosts)) {
+    // `expiresAt` in particular: `usable()` below computes
+    // `stored.expiresAt - RENEW_WITHIN_MS < now`, and a missing or
+    // non-numeric value there is `NaN`, which is never `< now` — the
+    // renewal check would have silently never triggered for a hand-edited
+    // or otherwise malformed record, treating an unknown expiry as a
+    // permanently valid one instead of the unusable record it is.
+    if (!parsed?.key || !parsed?.cert || !Array.isArray(parsed.hosts) || !Number.isFinite(parsed.expiresAt)) {
       return null;
     }
     return parsed;

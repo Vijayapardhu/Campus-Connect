@@ -524,7 +524,13 @@ function statusOf(message: ChatMessage, room: RoomInfo): MessageStatus {
 
   if (others.every((id) => seen.includes(id))) return 'seen';
   if (others.every((id) => delivered.includes(id))) return 'delivered';
-  if (delivered.length > 0) return 'delivered';
+  // `delivered.length > 0` alone used to return here too — harmless for a
+  // DM, where `others.length` is always 1 and the line above already covers
+  // it, but wrong for a room: it reported "Delivered" the moment even one
+  // of several accepted members had it, contradicting the invariant this
+  // function's own comment states. A genuinely partial delivery now falls
+  // through to 'partial' below instead of being reported as complete.
+  if (delivered.length > 0) return 'partial';
   return Date.now() - message.timestamp > UNDELIVERED_AFTER_MS ? 'undelivered' : 'sent';
 }
 
@@ -547,6 +553,13 @@ function Receipt({ status }: { status: MessageStatus }) {
     return (
       <span className="receipt" title="Delivered">
         <CheckAllIcon size={14} />
+      </span>
+    );
+  }
+  if (status === 'partial') {
+    return (
+      <span className="receipt is-partial" title="Delivered to some, not everyone yet">
+        <CheckIcon size={13} />
       </span>
     );
   }
@@ -1175,6 +1188,15 @@ export function ChatPanel({
   }
 
   function beginReply(message: ChatMessage) {
+    // Leaving edit mode, not just entering reply mode: the box was showing
+    // the message being edited, not a new message being composed. Carrying
+    // that text over used to mean submit() — seeing `editing` already
+    // cleared — sent it as a brand-new reply instead of the edit it looked
+    // like on screen, silently discarding the intended edit and posting an
+    // unrelated message in its place.
+    if (editing) {
+      setDraft('');
+    }
     setEditing(null);
     setReplyTo(message);
     requestAnimationFrame(() => composerRef.current?.focus());
@@ -1442,7 +1464,19 @@ export function ChatPanel({
             onChange={(event) => noteTyping(event.target.value, event.target.selectionStart)}
             onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
             onPaste={handlePaste}
-            onBlur={stopTyping}
+            onBlur={() => {
+              stopTyping();
+              // The mention menu had no dismiss-on-blur at all — clicking
+              // anywhere else in the still-mounted panel (reacting to a
+              // message, opening search) left it rendered and visually
+              // live with nothing left pointing at it, since only Escape or
+              // a further draft/caret change ever closed it. A click on the
+              // menu itself never reaches here — its own `onMouseDown`
+              // already prevents the blur that would otherwise cause.
+              if (mentioning) {
+                setMentionDismissed(fragment?.start ?? -1);
+              }
+            }}
             onKeyDown={(event) => {
               // The mention menu owns these keys while it is open, so Enter
               // picks a name rather than sending a half-typed one.
@@ -1549,10 +1583,15 @@ export function MembersPanel({
   const [showQr, setShowQr] = React.useState(false);
 
   React.useEffect(() => {
-    // Re-render whenever the room changes; the code is baked into the image.
+    // Invalidated on the room's join code too, not just the room itself — a
+    // regenerated code left the cached image encoding the old, now-rejected
+    // one while the text next to it (read straight from `room.joinCode`)
+    // correctly showed the new one. `toggleQr`'s `if (!qr)` guard means
+    // hiding and reshowing the panel was not enough to pick up a fresh
+    // fetch on its own; only a real invalidation forces one.
     setShowQr(false);
     setQr(null);
-  }, [room.roomId]);
+  }, [room.roomId, room.joinCode]);
 
   async function toggleQr() {
     if (showQr) {
@@ -1683,7 +1722,7 @@ export function MembersPanel({
               </div>
               <div className="member__meta">Joined {relativeTime(member.joinedAt)}</div>
             </div>
-            {member.deviceId !== deviceId && (canCall || canRemote) && (
+            {member.deviceId !== deviceId && (
               <div className="member__actions">
                 {/* Rings this one member directly rather than the whole room —
                     otherwise identical to a room call once it is answered.

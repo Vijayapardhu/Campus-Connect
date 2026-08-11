@@ -308,6 +308,18 @@ export class RemoteEngine {
           this.hooks.onConnectionState('interrupted');
           break;
         case 'failed':
+        case 'closed':
+          /*
+           * Neither recovers on its own the way 'disconnected' sometimes
+           * does. 'closed' reaching this handler at all means the far end's
+           * connection went away without this side's own `stop()` causing
+           * it — `stop()` always clears `onconnectionstatechange` before
+           * calling `pc.close()`, so a normal, expected teardown never
+           * reaches here. Reported the same way as 'failed': a session that
+           * has ended for any reason this side didn't initiate is exactly as
+           * over as one that never connected at all, and every consumer of
+           * `onConnectionState` already knows how to end a 'failed' one.
+           */
           this.hooks.onConnectionState('failed');
           this.hooks.onError(
             'The direct connection failed. This network may be blocking traffic between devices, which stops remote desktop even though messages still work.'
@@ -355,6 +367,13 @@ export class RemoteEngine {
       this.sendDescription();
     } catch (error) {
       this.hooks.onError(`The remote session could not be set up: ${asMessage(error)}`);
+      // Reported as a failed connection, not left silent — without this,
+      // the caller (`startAsHost`/`startAsController`) resolved normally
+      // regardless, so nothing downstream ever learned the session never
+      // actually came up. Screen capture kept running, the input injector
+      // stayed armed, and the session stayed "live" in the main process
+      // indefinitely — the same stuck state a genuine ICE failure produces.
+      this.hooks.onConnectionState('failed');
     }
   }
 
@@ -388,6 +407,10 @@ export class RemoteEngine {
       }
     } catch (error) {
       this.hooks.onError(`The remote session could not be agreed: ${asMessage(error)}`);
+      // Same reasoning as `offer()`'s own catch — a failed negotiation is
+      // reported as a failed connection so something actually ends the
+      // session, rather than leaving it "live" with nothing transmitting.
+      this.hooks.onConnectionState('failed');
     }
   }
 

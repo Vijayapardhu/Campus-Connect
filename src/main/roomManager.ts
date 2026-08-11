@@ -230,16 +230,19 @@ export class RoomManager {
 
     const existing = room.members.find((member) => member.deviceId === deviceId);
     if (existing) {
-      existing.deviceName = deviceName;
       /*
        * The key is only recorded while a request is still pending. Letting a
        * re-request rewrite an accepted member's key would hand anybody who
        * learned the password a way to take over an existing membership,
-       * which is the whole thing the key is here to prevent.
+       * which is the whole thing the key is here to prevent. Checked before
+       * touching anything else, including the name — this is meant to be a
+       * complete no-op for an accepted member, and a message merely claiming
+       * their device id is not proof it is actually them renaming themselves.
        */
       if (existing.status === 'accepted') {
         return undefined;
       }
+      existing.deviceName = deviceName;
       existing.publicKey = publicKey;
       this.persist();
       return room;

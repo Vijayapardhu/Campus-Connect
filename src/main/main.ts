@@ -103,6 +103,7 @@ import {
   type JoinRequest,
   type PeerInfo,
   type RememberedPeer,
+  type RoomAdvert,
   type RoomInfo,
   type RoomInvite,
   type RemoteCapabilities,
@@ -1111,6 +1112,18 @@ type OutboundTransfer = {
   parts: string[];
   targets: string[];
   createdAt: number;
+  /**
+   * Bumped on every NACK-driven retransmission, so the sweep below judges a
+   * transfer by whether it is still making progress rather than by how long
+   * ago it started. The receiver's own `ChunkAssembler` already works this
+   * way (`lastChunkAt`, in `transfer.ts`) — pinned to `createdAt` alone, a
+   * transfer needing several retry rounds under real packet loss could
+   * exceed `OUTBOUND_TRANSFER_TTL_MS` from the *original* send while still
+   * genuinely progressing, at which point the sender silently stopped
+   * answering further NACKs while the receiver, still getting occasional
+   * chunks, kept waiting and asking for more into the void.
+   */
+  lastActivityAt: number;
 };
 
 const outboundTransfers = new Map<string, OutboundTransfer>();
@@ -1189,7 +1202,7 @@ function startChunkedSend(json: string, targets: string[]): void {
   const transferId = randomUUID();
   const parts = splitIntoChunks(json, CHUNK_CHARS);
 
-  outboundTransfers.set(transferId, { parts, targets, createdAt: Date.now() });
+  outboundTransfers.set(transferId, { parts, targets, createdAt: Date.now(), lastActivityAt: Date.now() });
   log.info(`Sending ${Math.round(json.length / 1024)} KB as ${parts.length} chunks (${transferId})`);
 
   sendChunks(transferId, parts.map((_, index) => index));
@@ -1275,6 +1288,7 @@ function handleChunkNack(message: WireMessage): void {
     .slice(0, MAX_NACK_INDICES);
 
   if (indices.length > 0) {
+    transfer.lastActivityAt = Date.now();
     sendChunks(message.transferId, indices);
   }
 }
@@ -1288,7 +1302,7 @@ function sweepTransfers(): void {
   const now = Date.now();
 
   for (const [transferId, transfer] of outboundTransfers) {
-    if (now - transfer.createdAt > OUTBOUND_TRANSFER_TTL_MS) {
+    if (now - transfer.lastActivityAt > OUTBOUND_TRANSFER_TTL_MS) {
       outboundTransfers.delete(transferId);
     }
   }
@@ -1554,6 +1568,52 @@ function advertiseOwnedRooms() {
   }
 }
 
+/**
+ * An advert arriving off the wire — recorded for discovery, and also the
+ * only signal a member offline during a password change ever gets.
+ *
+ * `handleRoomRekey`'s notice is sent once, to whoever is reachable at that
+ * exact moment, and never resent. A device that was offline then simply
+ * never receives it, and — with nothing else to tell it otherwise — goes on
+ * sealing everything it sends with a key nobody else in the room can open
+ * anymore, with no error surfaced to it and no indication anything is
+ * wrong. An advert is different: `advertiseOwnedRooms` broadcasts one for
+ * every owned room on every announce interval, to everyone on the network
+ * regardless of membership, so it reaches this device the moment it is
+ * back online rather than only at the instant of the change — and a
+ * password change always mints a fresh `keySalt` (see `room:update`'s
+ * password-change path), which is enough on its own to notice the key this
+ * device is holding is now stale.
+ *
+ * Gated on `fromDeviceId === room.ownerId` — the *authenticated* sender,
+ * already verified by `authenticate()` before this was ever reached — not
+ * `advert.ownerId`, which is just a field inside the payload and no more
+ * trustworthy than anything else self-reported there. Checking the payload
+ * field instead would let any device on the network drop this one's
+ * perfectly good key by broadcasting a fabricated advert for a room id it
+ * merely knows about, naming the real owner but a bogus salt.
+ */
+function handleRoomAdvert(advert: RoomAdvert, fromDeviceId: string, host: string): void {
+  const room = roomManager.getRoom(advert.roomId);
+
+  if (
+    room &&
+    room.encrypted &&
+    advert.encrypted &&
+    fromDeviceId === room.ownerId &&
+    room.ownerId !== deviceId() &&
+    advert.keySalt !== room.keySalt &&
+    roomManager.getKey(room.roomId)
+  ) {
+    roomManager.saveRoom({ ...room, keySalt: advert.keySalt });
+    roomManager.dropKey(room.roomId);
+    sendStatus(`${room.name}'s password changed while this device was away — enter it to carry on.`, 'warning');
+  }
+
+  roomManager.recordAdvert(advert, host);
+  sendStateToRenderer();
+}
+
 /** The owner is authoritative for the roster; members only ever receive it. */
 function broadcastRoster(room: RoomInfo) {
   const message = baseMessage('room-roster');
@@ -1781,6 +1841,28 @@ function handleRoomAccept(message: WireMessage) {
     return;
   }
 
+  /*
+   * The sender's claimed device id has to match who this device already
+   * believes owns the room — a room it is already in (its own recorded
+   * `ownerId`), or one it has merely discovered (the `ownerId` on its own
+   * signed advert). `authenticate()` only proves the packet came from
+   * whoever it claims to be; it proves nothing about whether that device
+   * has any right to admit anyone to this particular room. Without this,
+   * any device on the network — having seen this room's id in a broadcast
+   * advert, or simply guessed at one it is already a member of — could
+   * send a `room-accept` naming itself as the sender and have this device
+   * unconditionally `saveRoom()` a fabricated roster, including for a room
+   * it already belongs to: the fallback to the plaintext `message.room`
+   * below fires whenever the sealed roster fails to open for *any* reason,
+   * which an attacker without the real key guarantees just by omitting
+   * `message.sealed` altogether.
+   */
+  const expectedOwnerId =
+    roomManager.getRoom(message.roomId)?.ownerId ?? roomManager.getAdvert(message.roomId)?.ownerId;
+  if (!expectedOwnerId || message.deviceId !== expectedOwnerId) {
+    return;
+  }
+
   // Prefer the sealed roster, but fall back to the plaintext one: a device
   // admitted on the join code alone holds no key yet and cannot open it.
   const key = roomManager.getKey(message.roomId);
@@ -1815,6 +1897,19 @@ function handleRoomAccept(message: WireMessage) {
 
 function handleRoomReject(message: WireMessage) {
   if (message.targetDeviceId !== deviceId() || !message.roomId) {
+    return;
+  }
+
+  // Same reasoning as `handleRoomAccept`: only the device this one already
+  // believes owns the room may reject a request for it. Without this, any
+  // device that knew a victim's id and a room id it belongs to — both
+  // broadcast in the clear — could force a spoofed rejection: deleting an
+  // in-progress join, or dropping the cached key of a room already joined,
+  // re-locking it and demanding the password again. A pure denial of
+  // service that needed nothing more than public information to trigger.
+  const expectedOwnerId =
+    roomManager.getRoom(message.roomId)?.ownerId ?? roomManager.getAdvert(message.roomId)?.ownerId;
+  if (!expectedOwnerId || message.deviceId !== expectedOwnerId) {
     return;
   }
 
@@ -1869,6 +1964,14 @@ function handleRoomRoster(message: WireMessage) {
   );
 
   if (!stillAMember) {
+    // Same reasoning `room:leave` already follows for a voluntary departure:
+    // a remote session or call tied to this room loses its justification the
+    // moment membership does, whichever end triggered it. Passive removal —
+    // learned only through a roster the owner broadcasts, not through
+    // anything this device itself asked for — used to skip this entirely,
+    // leaving a session with anyone in the room fully intact on this device
+    // even though the room it belonged to was just taken away.
+    endCallsForRoom(room.roomId);
     roomManager.deleteRoom(room.roomId);
     if (read('currentRoomId') === room.roomId) {
       write('currentRoomId', undefined);
@@ -1881,6 +1984,27 @@ function handleRoomRoster(message: WireMessage) {
      * to observe first, and two members could disagree about who a third is.
      */
     deviceRegistry.adopt(nextRoom.members);
+
+    /*
+     * A remote session's membership is checked once, at the moment it
+     * starts, and never again by default — already closed for
+     * room:remove-member/privacy:block/room:set-restrictions, but each of
+     * those only ever checks the *acting* device's own session. Two
+     * ordinary, non-owner members can hold a session with each other with
+     * nobody else's teardown code ever touching it — this is what catches
+     * that case, on every device that adopts the roster, including the
+     * session's own two participants when someone *else* did the removing.
+     */
+    const session = remoteSessions.current;
+    if (session?.roomId === room.roomId) {
+      const stillAccepted = nextRoom.members.some(
+        (member) => member.deviceId === session.peerId && member.status === 'accepted'
+      );
+      if (!stillAccepted) {
+        endRemoteSession(`${session.peerName} is no longer in ${nextRoom.name}, so the remote session ended.`, true);
+      }
+    }
+
     roomManager.saveRoom({ ...nextRoom, joinCode: nextRoom.joinCode ?? room.joinCode });
   }
 
@@ -2150,8 +2274,19 @@ function handleChatMessage(message: WireMessage) {
   const stored = historyManager.addChatMessage({
     type: chat.type,
     content: chat.content,
-    deviceId: chat.deviceId,
-    deviceName: chat.deviceName,
+    // From the authenticated envelope, not the decrypted payload. A room key
+    // is shared by every member, not per-sender, so `chat.deviceId`/
+    // `chat.deviceName` are only ever what the sender chose to write in a
+    // packet it alone sealed — nothing here proved they wrote their own id.
+    // `message.deviceId` already passed `handleRoomPayload`'s membership and
+    // signature checks upstream, which is what makes it trustworthy; the
+    // matching edit/delete/reaction handlers already key off it for the same
+    // reason. Trusting the payload's copy instead let any accepted member
+    // forge a message that stored, rendered, and behaved as if a different
+    // member had sent it — including that member's own device silently
+    // recording a "delivered" receipt against words it never sent.
+    deviceId: message.deviceId,
+    deviceName: message.deviceName,
     roomId: message.roomId!,
     dataUrl: chat.dataUrl,
     fileName: chat.fileName,
@@ -2163,7 +2298,7 @@ function handleChatMessage(message: WireMessage) {
     mentions: room && chat.type === 'text' ? mentionsIn(chat.content, room) : undefined
   });
   emit('chat:message', stored);
-  sendReceipt(chat.deviceId, message.roomId!, [stored.id], 'delivered');
+  sendReceipt(message.deviceId, message.roomId!, [stored.id], 'delivered');
 
   // Being named is a direct address, not ambient room chatter, so it gets the
   // same urgency as a request that expires — see the remote-access notify.
@@ -2370,7 +2505,7 @@ function handleChatReceipt(message: WireMessage) {
     return;
   }
 
-  if (historyManager.recordReceipt(message.messageIds, message.deviceId, message.receipt)) {
+  if (historyManager.recordReceipt(message.messageIds, message.deviceId, message.receipt, message.roomId)) {
     emit('chat:receipts', message.roomId);
   }
 }
@@ -3341,8 +3476,7 @@ function handleWireMessage(message: WireMessage, host: string) {
       return;
     case 'room-advert':
       if (message.advert) {
-        roomManager.recordAdvert(message.advert, host);
-        sendStateToRenderer();
+        handleRoomAdvert(message.advert, message.deviceId, host);
       }
       return;
     case 'room-request':
@@ -4845,6 +4979,42 @@ handle(
     }
 
     const member = room.members.find((candidate) => candidate.deviceId === memberId);
+
+    /*
+     * A restriction is only ever consulted for traffic that arrives after it
+     * is set — nothing about it, by itself, reaches back into a session
+     * already under way. `room:remove-member` and `privacy:block` both learned
+     * this the same way: removing or blocking someone driving this screen has
+     * to stop them driving it, or the membership check that gated the start
+     * of the session (checked once, never again) leaves them in control
+     * indefinitely. `remote:input` in particular has no restriction check on
+     * its own path at all — only `remoteSessions.mayInject`'s session/peer/
+     * grant match — so without this, restricting `remote` mid-session did
+     * nothing to a session already granted.
+     */
+    if (restrictions.remote) {
+      const session = remoteSessions.current;
+      if (session?.peerId === memberId && session.roomId === roomId) {
+        endRemoteSession(
+          `${member?.deviceName ?? 'That device'} was restricted from screen sharing in ${room.name}, so the remote session ended.`,
+          true
+        );
+      }
+      remoteSessions.clearDevice(memberId);
+    }
+
+    // A live call is less permanently stuck — every member's own device
+    // already drops this one's heartbeats once the restriction reaches it,
+    // via the same gate `handleRoomPayload` applies to chat and files — but
+    // there is no reason to make everyone wait out the participant sweep for
+    // a restriction to visibly take effect when this device already knows.
+    if (restrictions.calls) {
+      const call = callManager.getRoomCall(roomId);
+      if (call) {
+        callManager.leave(call.callId, memberId);
+      }
+    }
+
     broadcastRoster(room);
     sendStateToRenderer();
 
@@ -4994,10 +5164,21 @@ handle('room:leave', (_event, roomId: string): ActionResult => {
    * the room key — see handleRoomLeave. Without this the departure is ignored
    * and the roster keeps a member who has gone.
    */
+  let provable = true;
   if (!isOwner && room.encrypted) {
     const key = roomManager.getKey(roomId);
     if (key) {
       message.proof = createProof(key, roomId);
+    } else {
+      // A device admitted on the join code alone, that never entered or
+      // verified the password, holds no key at all — nothing this device
+      // can attach makes `handleRoomLeave`'s `mayLeave` check pass for it.
+      // This device still forgets the room below (the same as any other
+      // "delete for me" in this app), but reporting it back as an ordinary
+      // successful leave would be a lie: the owner's roster still lists this
+      // device as an accepted member, indefinitely, with no further signal
+      // that anything was ever asked.
+      provable = false;
     }
   }
 
@@ -5011,7 +5192,13 @@ handle('room:leave', (_event, roomId: string): ActionResult => {
   }
 
   sendStateToRenderer();
-  return ok(isOwner ? `${room.name} was closed.` : `You left ${room.name}.`);
+  return ok(
+    isOwner
+      ? `${room.name} was closed.`
+      : provable
+        ? `You left ${room.name}.`
+        : `Removed ${room.name} from this device. This device never unlocked it, so it could not prove that to the owner — if you are still listed as a member there, ask the owner to remove you.`
+  );
 });
 
 handle('history:get-clipboard', (_event, roomId?: string) =>
@@ -5741,6 +5928,12 @@ handle('phone:revoke', (_event, pairedAt: number): ActionResult => {
     return fail('That phone is not paired.');
   }
 
+  // Unpairing alone only stops *new* requests — a phone's event stream, once
+  // open, was never re-checked and kept receiving every clipboard entry,
+  // chat message and call ring after being "unpaired" until it happened to
+  // disconnect on its own. Closing it here is what makes revoke immediate.
+  phoneServer.closeStreamsFor(pairedAt);
+
   sendStateToRenderer();
   return ok('That phone is unpaired. It has to enter the PIN again to come back.');
 });
@@ -6378,7 +6571,7 @@ function postDirectMessage(
   }
 
   const stored = directMessages.send(peerId, peerName, input);
-  sendDirectMessage(peerId, {
+  const delivered = sendDirectMessage(peerId, {
     kind: 'message',
     id: stored.id,
     type: stored.type,
@@ -6391,10 +6584,24 @@ function postDirectMessage(
   });
   // Pushed back to this device's own window the same way a received message
   // is — the open thread, if this is the peer it belongs to, updates itself
-  // rather than the renderer needing a separate local-echo path.
+  // rather than the renderer needing a separate local-echo path. Done
+  // regardless of `delivered`: the message is real and stored either way,
+  // and the thread's own "undelivered" clock icon (see `statusOf` in
+  // panels.tsx) is what shows its fate over time, not whether it appears here.
   emit('dm:message', stored);
   sendStateToRenderer();
-  return ok('Sent.');
+  // `sendDirectMessage` failing here means the packet was never even handed
+  // to the network — the peer's box key was not learned yet, or it dropped
+  // off `state.peers` between `requireReachablePeer`'s check and this call.
+  // That used to be reported as `ok('Sent.')` regardless, same as a message
+  // that actually reached the wire: the one case a sender could have found
+  // out about immediately looked identical to one that simply had not been
+  // acknowledged yet. It is still saved and still shown — only the toast
+  // changes, so a real, avoidable failure gets a message right away instead
+  // of a 25-second wait for the clock icon to say the same thing.
+  return delivered
+    ? ok('Sent.')
+    : fail(`Could not reach ${peerName} just now. The message is saved and will show as undelivered until it goes through.`);
 }
 
 handle(

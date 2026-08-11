@@ -1539,6 +1539,10 @@ kbd {
   color: #fca5a5;
 }
 
+.receipt.is-partial {
+  color: var(--warning);
+}
+
 /* Clipboard cards are click-to-copy */
 
 .clip.is-clickable {

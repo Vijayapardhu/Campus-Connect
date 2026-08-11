@@ -149,15 +149,25 @@ const HEARTBEAT_MS = 20000;
 export class PhoneServer {
   private server: https.Server | null = null;
   /**
-   * Streams currently open to paired phones.
+   * Streams currently open to paired phones, each tagged with the `pairedAt`
+   * of the pairing that authorized it.
    *
    * The desktop pushes; HTTP does not, which is why the phone used to poll
    * every 1.5 seconds and still felt a beat behind — and why anything that
    * expires on its own, like a ring or a transfer request, could not reach it
    * at all. One long-lived response per phone turns every event the window
    * receives into one the phone receives too.
+   *
+   * Tagged rather than a plain `Set`, so revoking one phone (`closeStreamsFor`)
+   * can close *that* phone's stream without touching anyone else's. A stream
+   * is only ever authenticated once, at the moment it opens — `broadcast()`
+   * pushes to every entry with no per-message re-check — so without this an
+   * unpaired phone's already-open stream kept receiving every clipboard
+   * entry, chat message, and call ring indefinitely, forever, until it
+   * happened to disconnect on its own. `phone:stop` already closes every
+   * stream via `closeStreams()`; this is the same idea, narrowed to one.
    */
-  private streams = new Set<http.ServerResponse>();
+  private streams = new Map<http.ServerResponse, number>();
   private heartbeat: NodeJS.Timeout | null = null;
   readonly sessions: PhoneSessions;
 
@@ -242,7 +252,7 @@ export class PhoneServer {
       return; // Not serialisable, so not something a phone can be told about.
     }
 
-    for (const stream of Array.from(this.streams)) {
+    for (const stream of this.streams.keys()) {
       try {
         stream.write(frame);
       } catch {
@@ -264,7 +274,9 @@ export class PhoneServer {
    * the network to anybody watching.
    */
   private events(request: http.IncomingMessage, response: http.ServerResponse): void {
-    if (!this.sessions.verify(bearer(request))) {
+    const token = bearer(request);
+    const pairedAt = this.sessions.identify(token);
+    if (pairedAt === null || !this.sessions.verify(token)) {
       json(response, 401, { ok: false, message: 'This phone is not paired.' });
       return;
     }
@@ -279,7 +291,7 @@ export class PhoneServer {
     });
     response.write('retry: 2000\n\n');
 
-    this.streams.add(response);
+    this.streams.set(response, pairedAt);
     request.on('close', () => this.dropStream(response));
     response.on('error', () => this.dropStream(response));
 
@@ -290,7 +302,7 @@ export class PhoneServer {
        * ends believing in a stream that is no longer there.
        */
       this.heartbeat = setInterval(() => {
-        for (const stream of Array.from(this.streams)) {
+        for (const stream of this.streams.keys()) {
           try {
             stream.write(': ping\n\n');
           } catch {
@@ -321,8 +333,17 @@ export class PhoneServer {
   }
 
   private closeStreams(): void {
-    for (const stream of Array.from(this.streams)) {
+    for (const stream of Array.from(this.streams.keys())) {
       this.dropStream(stream);
+    }
+  }
+
+  /** Closes just the stream(s) opened under one pairing — what makes `phone:revoke` immediate rather than waiting for the phone to notice its next API call fail. */
+  closeStreamsFor(pairedAt: number): void {
+    for (const [stream, owner] of Array.from(this.streams)) {
+      if (owner === pairedAt) {
+        this.dropStream(stream);
+      }
     }
   }
 
