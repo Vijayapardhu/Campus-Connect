@@ -1,19 +1,19 @@
 {
   "_comment": "Written by scripts/sync-site-version.js during a release. Edit the script, not this file — a hand-edited value here is overwritten by the next publish.",
-  "tag": "v0.8.0",
-  "version": "0.8.0",
+  "tag": "v0.9.0",
+  "version": "0.9.0",
   "downloadBase": "https://github.com/Vijayapardhu/Campus-Connect/releases/download",
   "assets": {
     "win": {
-      "file": "CampusConnect-0.8.0-win-x64.exe",
+      "file": "CampusConnect-0.9.0-win-x64.exe",
       "size": "76 MB"
     },
     "mac": {
-      "file": "CampusConnect-0.8.0-mac-universal.dmg",
+      "file": "CampusConnect-0.9.0-mac-universal.dmg",
       "size": "168 MB"
     },
     "linux": {
-      "file": "CampusConnect-0.8.0-linux-x86_64.AppImage",
+      "file": "CampusConnect-0.9.0-linux-x86_64.AppImage",
       "size": "77 MB"
     }
   }
