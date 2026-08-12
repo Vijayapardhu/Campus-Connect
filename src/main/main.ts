@@ -771,8 +771,14 @@ const fileShares = new FileShareManager({
      * so refusing here costs nothing and turns silent corruption into a clear
      * "no direct connection" the moment it matters.
      */
+    /*
+     * Signed even though this bypasses `deliver` — especially because it
+     * bypasses `deliver`. The receiver authenticates every slice like anything
+     * else, so an unsigned one is dropped on arrival: the sender streams the
+     * whole file, reports 100%, and the far side never sees a byte.
+     */
     if (signal.kind === 'data') {
-      return Boolean(tcp?.isConnected(host)) && tcp!.send(host, JSON.stringify(message));
+      return Boolean(tcp?.isConnected(host)) && tcp!.send(host, signedJson(message));
     }
     return sendUdpMessage(message, host);
   },
@@ -1247,14 +1253,31 @@ function signMessage(message: WireMessage): void {
   message.sig = signPayload(getIdentity().privateKey, signableOf(message));
 }
 
+/**
+ * Sign a message and serialise it, in that order and never the other.
+ *
+ * Anything that reaches a socket has to be signed first, and this has now been
+ * got wrong three times in three different ways — the chunk envelopes a large
+ * payload is split into, the retransmit requests asking for the ones that went
+ * missing, and every `data` slice of a shared file. Each was written as a
+ * `JSON.stringify` next to a `send`, which is the natural thing to write and
+ * silently produces a message the far end throws away.
+ *
+ * So serialising is only available with the signature attached. A call site
+ * that wants bytes to put on a socket gets them from here, and cannot express
+ * the unsigned version without deliberately going around it.
+ */
+function signedJson(message: WireMessage): string {
+  signMessage(message);
+  return JSON.stringify(message);
+}
+
 function deliver(message: WireMessage, targets: string[]): boolean {
   if (!udpSocket || targets.length === 0) {
     return false;
   }
 
-  signMessage(message);
-
-  const json = JSON.stringify(message);
+  const json = signedJson(message);
   const bytes = Buffer.byteLength(json);
 
   /*
