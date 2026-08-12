@@ -62,6 +62,7 @@ const { findMentions, mentionedDeviceIds, splitOnMentions } = require(
   path.join(__dirname, '..', 'dist', 'shared', 'mentions.js')
 );
 const { dataUrlBytes } = require(path.join(__dirname, '..', 'dist', 'shared', 'dataUrl.js'));
+const { routeCallSignal } = require(path.join(__dirname, '..', 'dist', 'shared', 'callRouting.js'));
 const { formatTranscript, transcriptFileName } = require(
   path.join(__dirname, '..', 'dist', 'shared', 'transcript.js')
 );
@@ -704,6 +705,51 @@ test('a file message keeps its name and size', () => {
   });
   assert.strictEqual(m.fileName, 'report.pdf');
   assert.strictEqual(m.fileSize, 2048);
+});
+
+console.log('\n-- answering a call --');
+
+/*
+ * The window between tapping answer and having a call to put signals into.
+ * Every one of these was reachable in ordinary use; the first is what made two
+ * people watch each other sit in a call that never carried any sound.
+ */
+
+test('an offer arriving before the session exists is kept', () => {
+  // Answering is an IPC round trip and then opening the microphone. The caller
+  // replies to the `join` sent at the start of that with an offer, which lands
+  // here while the session id is still empty. Treating empty as "not my call"
+  // discarded it, and an offer is sent once.
+  assert.strictEqual(
+    routeCallSignal({ sessionId: '', signalCallId: 'call-1', ready: false }),
+    'queue'
+  );
+});
+
+test('a signal for the call being joined is kept until the engine is ready', () => {
+  assert.strictEqual(
+    routeCallSignal({ sessionId: 'call-1', signalCallId: 'call-1', ready: false }),
+    'queue'
+  );
+});
+
+test('a signal for the call in progress goes straight to the engine', () => {
+  assert.strictEqual(
+    routeCallSignal({ sessionId: 'call-1', signalCallId: 'call-1', ready: true }),
+    'handle'
+  );
+});
+
+test('a signal for somebody else’s call is still ignored', () => {
+  // The reason the comparison existed. Widening it must not lose this.
+  assert.strictEqual(
+    routeCallSignal({ sessionId: 'call-1', signalCallId: 'call-2', ready: true }),
+    'ignore'
+  );
+  assert.strictEqual(
+    routeCallSignal({ sessionId: 'call-1', signalCallId: 'call-2', ready: false }),
+    'ignore'
+  );
 });
 
 console.log('\n-- pinned items --');

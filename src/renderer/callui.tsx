@@ -8,6 +8,7 @@ import type {
 } from '../shared/types';
 import type { CallSignalEvent, ScreenSource, StatusTone } from '../shared/bridge';
 import { CallEngine, describeMediaError, type CallPeer } from './callEngine';
+import { routeCallSignal } from '../shared/callRouting';
 import { Button, Modal } from './ui';
 import { initials } from './format';
 import {
@@ -26,6 +27,17 @@ import {
 
 import { api } from './api';
 import { hasNativeFeatures } from './httpApi';
+/**
+ * How many signals may be held while a call is still being answered.
+ *
+ * An offer and the ICE candidates behind it, several times over, and no more:
+ * the queue also collects signals arriving before there is any session to
+ * match them against, so without a ceiling a ring left unanswered in the
+ * corner of the screen would accumulate the other end's candidates for as long
+ * as it kept sending them.
+ */
+const MAX_PENDING_SIGNALS = 256;
+
 /** What the window knows about the call this device is in. */
 export type CallSession = {
   callId: string;
@@ -135,7 +147,9 @@ export function useCall({
 
       engineRef.current = engine;
       readyRef.current = false;
-      pendingRef.current = [];
+      // Deliberately not cleared: anything that arrived while this call was
+      // being answered is queued here already, and is drained below once the
+      // engine is ready. Emptying it now is what used to lose the offer.
       sessionIdRef.current = callId;
       setSession({
         callId,
@@ -166,7 +180,10 @@ export function useCall({
       setSession((current) => (current?.callId === callId ? { ...current, connecting: false } : current));
 
       readyRef.current = true;
-      const queued = pendingRef.current;
+      // Filtered by call, because the queue now also collects what arrives
+      // before there is a session to compare against — including signals for a
+      // ring that was declined, or for a call this one replaced.
+      const queued = pendingRef.current.filter((event) => event.signal.callId === callId);
       pendingRef.current = [];
       for (const event of queued) {
         void engine.handleSignal(event);
@@ -200,18 +217,24 @@ export function useCall({
         setRinging((current) => (current?.callId === callId ? null : current));
       }),
       api.onCallSignal((event) => {
-        if (sessionIdRef.current !== event.signal.callId) {
-          return; // A call this device is not in. The main process filters most
-          // of these already; this is the belt to that pair of braces.
-        }
+        const route = routeCallSignal({
+          sessionId: sessionIdRef.current,
+          signalCallId: event.signal.callId,
+          ready: readyRef.current && Boolean(engineRef.current)
+        });
 
-        // Still opening the microphone: hold it rather than lose it.
-        if (!readyRef.current || !engineRef.current) {
-          pendingRef.current.push(event);
+        if (route === 'ignore') {
           return;
         }
 
-        void engineRef.current.handleSignal(event);
+        if (route === 'queue') {
+          if (pendingRef.current.length < MAX_PENDING_SIGNALS) {
+            pendingRef.current.push(event);
+          }
+          return;
+        }
+
+        void engineRef.current!.handleSignal(event);
       }),
       api.onCallEnded((callId) => {
         if (sessionIdRef.current === callId) {
