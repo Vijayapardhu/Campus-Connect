@@ -34,6 +34,17 @@ import { FindUserModal } from './modals';
 /** Silence for this long ends a typing indicator on its own — the DM equivalent of App.tsx's room `TYPING_EXPIRY_MS`. */
 const DM_TYPING_EXPIRY_MS = 6000;
 
+/**
+ * How many devices from "Devices on this network" actually get rendered.
+ *
+ * Fine at the handful-of-devices scale this page was built for; a campus
+ * deployment with hundreds of devices visible at once is a different
+ * problem, and search — already the box right above this list — is the
+ * actual way to find one at that scale, not scrolling past hundreds of
+ * rows. This cap is what keeps that true rather than aspirational.
+ */
+const MAX_VISIBLE_PEERS = 40;
+
 export type DirectMessageController = {
   threads: DmThreadSummary[];
   /** Empty when no thread is open — the panel then shows the peer list instead. */
@@ -506,9 +517,9 @@ export function DmPanel({
   // digging it out of a collapsed section — the query already did the work
   // of finding it.
   const archivedExpanded = showArchived || Boolean(needle);
-  const visiblePeers = needle
-    ? reachable.filter((peer) => peer.name.toLowerCase().includes(needle))
-    : reachable;
+  const matchingPeers = needle ? reachable.filter((peer) => peer.name.toLowerCase().includes(needle)) : reachable;
+  const visiblePeers = matchingPeers.slice(0, MAX_VISIBLE_PEERS);
+  const hiddenPeerCount = matchingPeers.length - visiblePeers.length;
 
   function openRow(summary: DmThreadSummary) {
     setMenuFor('');
@@ -643,7 +654,7 @@ export function DmPanel({
               end-to-end encrypted the moment it appears on the network.
             </p>
           </div>
-          <Badge>{visiblePeers.length}</Badge>
+          <Badge>{matchingPeers.length}</Badge>
         </div>
 
         {visiblePeers.length === 0 ? (
@@ -672,6 +683,9 @@ export function DmPanel({
               </div>
             </div>
           ))
+        )}
+        {hiddenPeerCount > 0 && (
+          <p className="field__hint">{hiddenPeerCount} more — keep typing to narrow it down.</p>
         )}
       </section>
 

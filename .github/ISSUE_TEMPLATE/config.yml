@@ -1,11 +1,11 @@
 blank_issues_enabled: true
 contact_links:
   - name: Questions and ideas
-    url: https://github.com/Vijayapardhu/Clipboard/discussions
+    url: https://github.com/Vijayapardhu/Campus-Connect/discussions
     about: Ask how something works, or float an idea before opening an issue.
   - name: Security vulnerability
-    url: https://github.com/Vijayapardhu/Clipboard/security/advisories/new
+    url: https://github.com/Vijayapardhu/Campus-Connect/security/advisories/new
     about: Report a security problem privately. Please do not open a public issue.
   - name: New here?
-    url: https://github.com/Vijayapardhu/Clipboard/blob/main/CONTRIBUTING.md
+    url: https://github.com/Vijayapardhu/Campus-Connect/blob/main/CONTRIBUTING.md
     about: How to set up the project and pick a first task.

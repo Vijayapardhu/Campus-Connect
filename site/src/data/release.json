@@ -2,7 +2,7 @@
   "_comment": "Written by scripts/sync-site-version.js during a release. Edit the script, not this file — a hand-edited value here is overwritten by the next publish.",
   "tag": "v0.8.0",
   "version": "0.8.0",
-  "downloadBase": "https://github.com/Vijayapardhu/Clipboard/releases/download",
+  "downloadBase": "https://github.com/Vijayapardhu/Campus-Connect/releases/download",
   "assets": {
     "win": {
       "file": "CampusConnect-0.8.0-win-x64.exe",

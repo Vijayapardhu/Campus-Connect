@@ -714,6 +714,10 @@ export function ForwardMessageModal({
  * among already-visible peers, or a direct-by-IP connect, gets you to the
  * same place: a device you can open a thread with.
  */
+
+/** How many name/id matches actually render — see the constant's use for why. */
+const FIND_USER_MAX_RESULTS = 20;
+
 export function FindUserModal({
   peers,
   selfDeviceId,
@@ -740,11 +744,17 @@ export function FindUserModal({
   const reachable = peers.filter((peer) => peer.id !== selfDeviceId && !blockedIds.has(peer.id));
 
   const needle = query.trim().toLowerCase();
-  const matches = needle
+  const allMatches = needle
     ? reachable.filter(
         (peer) => peer.name.toLowerCase().includes(needle) || peer.id.toLowerCase().includes(needle)
       )
     : [];
+  // Rendered rows only, not the whole match set — a broad query on a
+  // network with hundreds of devices visible should not mean hundreds of
+  // rows in a modal meant to help narrow down to one. The hint below tells
+  // the person to keep typing, which is the actual way to get there at
+  // that scale.
+  const matches = allMatches.slice(0, FIND_USER_MAX_RESULTS);
 
   // Once a device answers at the address just connected to, it is offered
   // directly — `peers` is the live, ever-updating list from `AppState`, so
@@ -799,6 +809,11 @@ export function FindUserModal({
                 <ChatIcon size={14} />
               </button>
             ))}
+            {allMatches.length > matches.length && (
+              <p className="field__hint">
+                {allMatches.length - matches.length} more — keep typing to narrow it down.
+              </p>
+            )}
           </div>
         ) : (
           <p className="field__hint">No one visible right now matches “{query.trim()}”.</p>

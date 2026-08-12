@@ -2237,8 +2237,17 @@ function handleClipboardMessage(message: WireMessage) {
   historyManager.addClipboardEntry(
     payload.kind,
     payload.text,
-    payload.sourceId,
-    payload.sourceName,
+    // From the authenticated envelope, not the decrypted payload — the same
+    // fix, and the same reasoning, as handleChatMessage's own deviceId/
+    // deviceName below it. A room key is shared by every member, not
+    // per-sender, so `payload.sourceId`/`sourceName` are only ever what the
+    // sender chose to write into a packet it alone sealed; nothing here
+    // proved they wrote their own id. `shareClipboard` (this device's own
+    // outbound share) always sets them to its own identity, so there was
+    // never a legitimate reason for them to differ from `message.deviceId`
+    // — only an illegitimate one.
+    message.deviceId,
+    message.deviceName,
     message.roomId!,
     payload.dataUrl
   );

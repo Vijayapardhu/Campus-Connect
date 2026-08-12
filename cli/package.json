@@ -10,11 +10,11 @@
     "remote-desktop",
     "installer"
   ],
-  "homepage": "https://vijayaapardhu.dev/Clipboard/",
-  "bugs": "https://github.com/Vijayapardhu/Clipboard/issues",
+  "homepage": "https://cc.vijayaapardhu.dev",
+  "bugs": "https://github.com/Vijayapardhu/Campus-Connect/issues",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Vijayapardhu/Clipboard.git",
+    "url": "git+https://github.com/Vijayapardhu/Campus-Connect.git",
     "directory": "cli"
   },
   "license": "MIT",

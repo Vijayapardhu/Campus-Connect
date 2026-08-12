@@ -9,7 +9,7 @@ Two paths: **using** the app, and **developing** it. Pick whichever you came for
 ### 1. Install
 
 Download the build for your platform from the
-[Releases page](https://github.com/Vijayapardhu/Clipboard/releases), or build it
+[Releases page](https://github.com/Vijayapardhu/Campus-Connect/releases), or build it
 from source (see below).
 
 Do this on **both** machines you want to sync.
@@ -110,7 +110,7 @@ and re-copy something from an hour ago.
 ### Set up
 
 ```bash
-git clone https://github.com/Vijayapardhu/Clipboard.git
+git clone https://github.com/Vijayapardhu/Campus-Connect.git
 cd Clipboard
 npm install
 npm run dev

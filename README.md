@@ -8,7 +8,7 @@ Encrypted rooms for clipboard sync, chat, file transfer, calls and remote
 desktop between devices on the same WiFi.
 No cloud, no account, no data leaving your network.
 
-[![CI](https://github.com/Vijayapardhu/Clipboard/actions/workflows/ci.yml/badge.svg)](https://github.com/Vijayapardhu/Clipboard/actions/workflows/ci.yml)
+[![CI](https://github.com/Vijayapardhu/Campus-Connect/actions/workflows/ci.yml/badge.svg)](https://github.com/Vijayapardhu/Campus-Connect/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#installing)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -174,7 +174,7 @@ the app itself stays in GitHub releases where it belongs.
 ### From an installer
 
 Grab the latest build for your platform from the
-[Releases page](https://github.com/Vijayapardhu/Clipboard/releases).
+[Releases page](https://github.com/Vijayapardhu/Campus-Connect/releases).
 
 | Platform | File |
 |----------|------|
@@ -215,7 +215,7 @@ a certificate is in place.
 Requires [Node.js 20+](https://nodejs.org).
 
 ```bash
-git clone https://github.com/Vijayapardhu/Clipboard.git
+git clone https://github.com/Vijayapardhu/Campus-Connect.git
 cd Clipboard
 npm install
 npm run dev            # run it
@@ -648,7 +648,7 @@ docs/                The GitHub Pages site
 ```bash
 npm run dev          # TypeScript watch + Vite + Electron
 npm run typecheck    # Both projects
-npm test             # 29 assertions over crypto, rooms and history
+npm test             # 361 assertions over crypto, rooms, chat and file sharing
 npm run build        # Compile to dist/
 npm run build:exe    # Windows installer into release/
 ```
@@ -673,7 +673,7 @@ $ npm test
   PASS  a removed member loses access
   ...
 
-358 passed, 0 failed
+361 passed, 0 failed
 ```
 
 ---
@@ -692,12 +692,12 @@ Shipped:
 - [x] **`@mentions`** in room chat, with an autocomplete and a stronger notification
 - [x] **Message forwarding** to any room or thread, and **paste an image** into the composer
 - [x] **Export a conversation** to a plain-text file
+- [x] **TCP fallback** for networks that block UDP broadcast, preferred automatically for large payloads
 
 Open, and every one of these is yours if you want it:
 
-- [ ] **Translations** — [#7](https://github.com/Vijayapardhu/Clipboard/issues/7)
-- [ ] **A mobile companion** — the protocol is documented and simple enough — [#8](https://github.com/Vijayapardhu/Clipboard/issues/8)
-- [ ] **TCP fallback** for networks that block UDP broadcast — [#9](https://github.com/Vijayapardhu/Clipboard/issues/9)
+- [ ] **Translations** — [#7](https://github.com/Vijayapardhu/Campus-Connect/issues/7)
+- [ ] **A mobile companion** — the protocol is documented and simple enough — [#8](https://github.com/Vijayapardhu/Campus-Connect/issues/8)
 
 ---
 
@@ -711,9 +711,9 @@ just want to fix a wording mistake, there is something here for you.
 
 - [**CONTRIBUTING.md**](CONTRIBUTING.md) — setup, project rules, and a list
   of good first tasks with difficulty ratings
-- [**Open an issue**](https://github.com/Vijayapardhu/Clipboard/issues/new/choose)
+- [**Open an issue**](https://github.com/Vijayapardhu/Campus-Connect/issues/new/choose)
   — bugs and ideas both welcome
-- [**Discussions**](https://github.com/Vijayapardhu/Clipboard/discussions) —
+- [**Discussions**](https://github.com/Vijayapardhu/Campus-Connect/discussions) —
   ask anything, including "how does this bit work?"
 - **Star the repo** if you would use this. It genuinely helps other people
   find it.
@@ -799,7 +799,7 @@ background utility should be asking for.
 
 Lifting this much higher means streaming the file from disk and encrypting it
 chunk by chunk, rather than holding the whole thing in memory. That is
-[a tracked issue](https://github.com/Vijayapardhu/Clipboard/issues), not a
+[a tracked issue](https://github.com/Vijayapardhu/Campus-Connect/issues), not a
 setting.
 </details>
 
@@ -828,7 +828,7 @@ interface and the documentation.
 
 [![GitHub](https://img.shields.io/badge/GitHub-Vijayapardhu-181717?logo=github)](https://github.com/Vijayapardhu)
 
-**[Star this repo](https://github.com/Vijayapardhu/Clipboard)** ·
+**[Star this repo](https://github.com/Vijayapardhu/Campus-Connect)** ·
 **[Contribute](CONTRIBUTING.md)** ·
 **[Website](https://vijayaapardhu.dev/Clipboard/)**
 

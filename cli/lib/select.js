@@ -46,7 +46,7 @@ function target(platform, arch) {
   throw new Error(
     `There is no Campus Connect build for ${platform}-${arch}.\n` +
       `Builds exist for: ${supported}.\n` +
-      'You can still run it from source: https://github.com/Vijayapardhu/Clipboard#from-source'
+      'You can still run it from source: https://github.com/Vijayapardhu/Campus-Connect#from-source'
   );
 }
 

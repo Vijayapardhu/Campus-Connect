@@ -1,6 +1,6 @@
 # campus-connect
 
-Installs [Campus Connect](https://github.com/Vijayapardhu/Clipboard) on your machine.
+Installs [Campus Connect](https://github.com/Vijayapardhu/Campus-Connect) on your machine.
 
 ```bash
 npx campus-connect
@@ -63,7 +63,7 @@ It works on a network with the internet unplugged.
 
 Windows on ARM has no build. Rather than hand it the x64 one and let it fail
 later, this says so and points you at [running from
-source](https://github.com/Vijayapardhu/Clipboard#from-source).
+source](https://github.com/Vijayapardhu/Campus-Connect#from-source).
 
 ## A note on the warning you will see
 

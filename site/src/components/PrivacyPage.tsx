@@ -128,7 +128,7 @@ export default function PrivacyPage() {
           <h2>Contact</h2>
           <p>
             Questions belong in{' '}
-            <a href="https://github.com/Vijayapardhu/Clipboard/issues">the issue tracker</a>, in the
+            <a href="https://github.com/Vijayapardhu/Campus-Connect/issues">the issue tracker</a>, in the
             open, where the answer is useful to the next person who wonders the same thing.
           </p>
         </div>

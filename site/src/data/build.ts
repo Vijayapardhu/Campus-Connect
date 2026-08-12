@@ -24,10 +24,10 @@ export interface Stat {
 }
 
 export const STATS: Stat[] = [
-  { value: '74', label: 'commits', note: 'one author, no co-authors' },
+  { value: '80', label: 'commits', note: 'one author, no co-authors' },
   { value: '22', label: 'tagged releases', note: 'v0.1.0 through v0.8.0' },
-  { value: '9', label: 'days with commits', note: 'inside a thirteen-day span' },
-  { value: '30k', label: 'lines of TypeScript', note: 'across 56 source files' },
+  { value: '11', label: 'days with commits', note: 'inside a sixteen-day span' },
+  { value: '31k', label: 'lines of TypeScript', note: 'across 68 source files' },
   { value: '361', label: 'tests', note: 'run on every build' },
   { value: '6', label: 'wire protocol revisions', note: 'checked on every packet' }
 ];
@@ -106,6 +106,60 @@ export const TIMELINE: Day[] = [
       'over TLS, and an application shell drawn by the app rather than the platform. The rest of ' +
       'the day went on the website, and on an updater that had been downloading the same release ' +
       'three and four times over.'
+  },
+  {
+    date: '6 August',
+    commits: 6,
+    releases: ['v0.6.0', 'v0.6.1'],
+    title: 'A claim becomes a proof',
+    body:
+      'Every message is now signed, so a device id has to be proved rather than claimed — the ' +
+      'security work everything after it builds on. A settings modal that kept dragging focus back ' +
+      'to its first field mid-sentence was fixed the same day, and the release right behind it ' +
+      'stopped shipping 52MB of another platform’s native binaries that no installed copy could ever ' +
+      'have loaded.'
+  },
+  {
+    date: '7 August',
+    commits: 16,
+    releases: ['v0.7.0'],
+    title: 'Its own window, its own address',
+    body:
+      'Calls and remote desktop got their own OS windows, direct 1:1 calling and messaging arrived ' +
+      'alongside them, and a phone-bridge gap that let a blocked device reach both through a paired ' +
+      'phone even though the desktop app itself refused them was closed. The rest of the day went to ' +
+      'the site: clean URLs instead of trailing .html, an Open Graph banner, a macOS build that had ' +
+      'been pruning the Intel and Apple Silicon halves it still needed to merge, and a custom domain ' +
+      'that kept vanishing on every rebuild until it was finally given a real source file to build ' +
+      'from instead of being hand-edited into the output.'
+  },
+  {
+    date: '8 August',
+    commits: 6,
+    releases: ['v0.8.0'],
+    title: 'Direct messages catch up',
+    body:
+      'Direct messages reached full parity with room chat in one release — end-to-end encryption of ' +
+      'their own, delivered/seen receipts, a typing indicator, search that finally reaches a DM ' +
+      'thread, @mentions, forwarding, pinning, pasting an image straight into the composer, exporting ' +
+      'a conversation to a file — alongside a long list of correctness fixes in the same push: a ' +
+      'wrong room password no longer gets cached as if it had worked, an incoming call’s ring can no ' +
+      'longer close itself before anyone gets a chance to answer, and the remote-desktop pointer ' +
+      'stopped drifting on any display that was not running at 100% scaling.'
+  },
+  {
+    date: '9–11 August',
+    commits: 5,
+    releases: [],
+    title: 'A full pass over everything, twice',
+    body:
+      'A systematic audit of every module for real bugs, rather than waiting on the next report: a ' +
+      'room-hijack spoofing gap, a chat- and clipboard-identity forgery closed the same way, a ' +
+      'remote session able to outlive the room membership it depended on, and a file transfer that ' +
+      'could get stuck busy forever on a single dropped acknowledgement, among a long list of smaller ' +
+      'ones. A second, narrower pass went back over file sharing specifically and found three more. ' +
+      'The custom domain needed one more correction in between — dropping a leading www. that never ' +
+      'actually resolved.'
   }
 ];
 
@@ -124,19 +178,22 @@ export interface Module {
 export const MODULES: Module[] = [
   {
     name: 'crypto.ts',
-    lines: 142,
+    lines: 256,
     role: 'Key derivation and sealing',
     detail:
       "A room's password goes through scrypt with a per-room salt and becomes a 32-byte key. " +
       'Everything in the room is sealed with AES-256-GCM, and `open` returns null on any failure ' +
       'rather than throwing — a tampered packet is simply not a message. Password knowledge is ' +
       'proved against the room id, so the password itself is never sent, not even to prove you ' +
-      'have it. Pure functions with no Electron imports, which is what makes it testable.',
-    uses: ['node:crypto', 'scrypt', 'AES-256-GCM']
+      "have it. Direct messages use a different key entirely: X25519 agreement between the two " +
+      "device's own keypairs, domain-separated by their sorted ids, so both sides derive the same " +
+      "key from nothing sent over the wire at all. Pure functions with no Electron imports, which " +
+      'is what makes it testable.',
+    uses: ['node:crypto', 'scrypt', 'AES-256-GCM', 'X25519']
   },
   {
     name: 'types.ts',
-    lines: 971,
+    lines: 1220,
     role: 'The wire protocol',
     detail:
       'Every message that crosses the network is described here, and `PROTOCOL_VERSION` is checked ' +
@@ -157,7 +214,7 @@ export const MODULES: Module[] = [
   },
   {
     name: 'tcp.ts + framing.ts',
-    lines: 416,
+    lines: 455,
     role: 'The second transport',
     detail:
       'A datagram is the wrong shape for anything large, so a direct TCP connection is dialled to ' +
@@ -181,18 +238,19 @@ export const MODULES: Module[] = [
   },
   {
     name: 'roomManager.ts',
-    lines: 351,
+    lines: 473,
     role: 'Rooms, keys and members',
     detail:
       'Persists through an interface rather than reaching for electron-store directly, which is the ' +
       'reason it can be tested at all. The invariants are the interesting part: the owner cannot be ' +
       'removed, and a re-request from an accepted member can never quietly downgrade them back to ' +
-      'pending.',
+      'pending — checked before anything about that member is touched, including their name, not ' +
+      'just their key.',
     uses: ['electron-store', 'injected persistence']
   },
   {
     name: 'historyManager.ts',
-    lines: 499,
+    lines: 555,
     role: 'What is kept, and for how long',
     detail:
       'Caps are enforced per room — 100 clipboard entries, 500 messages — so a busy room cannot ' +
@@ -203,18 +261,20 @@ export const MODULES: Module[] = [
   },
   {
     name: 'fileShare.ts',
-    lines: 818,
+    lines: 907,
     role: 'Direct file transfer',
     detail:
       'A state machine with no persistence behind it: request, accept, stream, finish. Files land ' +
       'in a partials directory and are renamed atomically on completion, so an interrupted transfer ' +
       'never leaves a half-file wearing the right name. One session at a time in either direction, ' +
-      'and a 512MB ceiling checked before anything is read.',
+      'and a 512MB ceiling checked before anything is read. A guard now stops two overlapping sends ' +
+      'from the same transfer corrupting each other, and a fully-received transfer no longer stays ' +
+      'stuck open forever if the single packet announcing it is done gets lost.',
     uses: ['node:fs', 'TCP preferred, UDP fallback']
   },
   {
     name: 'phoneSession.ts',
-    lines: 251,
+    lines: 272,
     role: 'The phone security boundary',
     detail:
       'PIN generation, constant-time comparison, brute-force lockout, token issue and expiry. The ' +
@@ -225,14 +285,17 @@ export const MODULES: Module[] = [
   },
   {
     name: 'phoneServer.ts',
-    lines: 499,
+    lines: 541,
     role: 'The phone client, served locally',
     detail:
       'A small HTTPS server on port 37778, off unless switched on, serving one self-contained page ' +
       'and four JSON endpoints. The token travels in an Authorization header rather than a cookie, ' +
       'so there is no CSRF surface at all. It is also the one place the app hands out plaintext — a ' +
       'browser cannot hold the room key, so the desktop decrypts and serves. That is documented in ' +
-      'the interface rather than hidden.',
+      'the interface rather than hidden. Unpairing a phone now closes its live event stream too, not ' +
+      'just future API calls — that stream is what pushes every clipboard entry, chat message and ' +
+      'call ring in real time, and it used to keep receiving all of it for as long as the connection ' +
+      'happened to stay open after the phone was supposedly cut off.',
     uses: ['node:https', 'self-signed TLS', 'bearer tokens']
   },
   {
@@ -248,7 +311,7 @@ export const MODULES: Module[] = [
   },
   {
     name: 'remoteControl.ts + remoteInput.ts',
-    lines: 484,
+    lines: 520,
     role: 'Injecting the input',
     detail:
       'The injector is built by dependency injection, so the whole path can be tested against a ' +
@@ -260,13 +323,16 @@ export const MODULES: Module[] = [
   },
   {
     name: 'callEngine.ts',
-    lines: 706,
+    lines: 740,
     role: 'Voice, video and screens',
     detail:
       'WebRTC peer connections with no signalling server anywhere — the offers and answers travel ' +
       'over the same encrypted room the rest of the app uses. Media is encrypted by DTLS-SRTP, ' +
       'which is WebRTC doing its own job rather than anything added on top. Calls cap at six, ' +
-      'because every participant holds a connection to every other one.',
+      "because every participant holds a connection to every other one. A peer's mic/camera/share " +
+      'state can arrive before this device has even created a connection for them — signalling has ' +
+      'no ordering guarantee — so that update is buffered now instead of silently dropped, and ' +
+      'applied the moment the connection actually exists.',
     uses: ['WebRTC', 'DTLS-SRTP']
   },
   {
@@ -281,47 +347,52 @@ export const MODULES: Module[] = [
   },
   {
     name: 'updater.ts + updatePolicy.ts',
-    lines: 317,
+    lines: 326,
     role: 'Getting the next version',
     detail:
       'The only part of the application that ever touches the internet, and the source of more ' +
       'fixes than anything else here: a build that packaged its predecessor inside itself, a ' +
-      'download that could not resume, an unsigned build that could not install its own update, and ' +
-      'a policy that fetched the same release three and four times over.',
+      'download that could not resume, an unsigned build that could not install its own update, a ' +
+      'policy that fetched the same release three and four times over, and — the newest one — a ' +
+      "second update's own genuine failure getting reported as success because a stale record of " +
+      "the *first* update's success was still lying around.",
     uses: ['electron-updater', 'GitHub releases']
   },
   {
     name: 'migrate.ts',
-    lines: 73,
+    lines: 109,
     role: 'Surviving the rename',
     detail:
       'Electron names the per-user data directory after the application, so renaming it to Campus ' +
       'Connect moved everything. This copies the old directory across on first run — identity, ' +
       'rooms, keys, history — so a rename does not read as a fresh install. It only runs when the ' +
       'new directory has no settings of its own, leaves the old one in place, and logs a failure ' +
-      'rather than dying on it.',
+      'rather than dying on it. The copy itself now lands in a staging directory next to the real ' +
+      'one and is only made visible by a single atomic rename — a process killed mid-copy used to ' +
+      'be able to leave the marker file present with the rest of the copy incomplete, which the next ' +
+      'launch read as "already done" and never revisited.',
     uses: ['node:fs']
   }
 ];
 
-/* Everything, by area — the numbers behind the 24k. */
+/* Everything, by area — the numbers behind the 31k. */
 export const AREAS: Array<{ area: string; files: number; lines: number; what: string }> = [
   {
     area: 'src/main',
-    files: 26,
-    lines: 11445,
+    files: 31,
+    lines: 14828,
     what: 'The Node side: networking, crypto, storage, the phone server, remote input, updates.'
   },
   {
     area: 'src/renderer',
-    files: 26,
-    lines: 11415,
+    files: 30,
+    lines: 14129,
     what: 'The interface: panels, settings, call and remote UI, the WebRTC engine, the phone client.'
   },
   {
     area: 'src/shared',
-    files: 4,
-    lines: 1555,
+    files: 7,
+    lines: 2163,
     what: 'The wire protocol, the IPC contract, content typing and deep links — used by both sides.'
   }
 ];
@@ -335,10 +406,14 @@ export interface Misstep {
 }
 
 /*
- * Real commit subjects, in the words they were committed in. Fifteen of the
- * forty-three commits are shaped like this — a little over a third of the
- * history is the project correcting itself, which is worth showing rather
- * than quietly leaving out.
+ * Real commit subjects, in the words they were committed in. Seventeen of
+ * the eighty commits are shaped like this — counted by grepping commit
+ * subjects for fix/stop/never/resume/close/correct, which almost certainly
+ * undercounts it (a commit titled "Sign every message, so a device id has
+ * to be proved rather than claimed" is fixing a weakness without using any
+ * of those words) but is a number anyone can rerun rather than one taken on
+ * faith. A build log that lists only what went right is a marketing page
+ * wearing a lab coat.
  */
 export const MISSTEPS: Misstep[] = [
   {
@@ -411,5 +486,43 @@ export const MISSTEPS: Misstep[] = [
     lesson:
       'Nothing was tracking whether a check was already in flight, so overlapping triggers each ' +
       'started their own download of the same file.'
+  },
+  {
+    commit: 'Stop the modal dragging focus back to its first field mid-word',
+    date: '6 August',
+    lesson:
+      'A settings dialog kept re-stealing focus to its first input on every render, which is only ' +
+      'noticeable the moment you are actually typing into a later one — exactly when it is worst.'
+  },
+  {
+    commit: 'Stop shipping 52 MB that no installed copy can ever read',
+    date: '6 August',
+    lesson:
+      'Windows builds were carrying macOS and Linux prebuilds, and vice versa — every installer was ' +
+      'roughly a third larger than the platform it actually ran on needed.'
+  },
+  {
+    commit: 'Stop the macOS universal build from pruning the halves it still needs to merge',
+    date: '7 August',
+    lesson:
+      'A cleanup step meant to slim the final artifact was running before the Intel and Apple ' +
+      'Silicon builds it was supposed to combine had actually been combined.'
+  },
+  {
+    commit: 'Fix a wide batch of real bugs found across a full-codebase audit',
+    date: '11 August',
+    lesson:
+      'The one worth naming: any accepted member of a room could forge a chat message or clipboard ' +
+      'share under a different member’s name, because the handler trusted a self-reported field ' +
+      'inside the encrypted payload instead of the sender identity the signature had already proved. ' +
+      'A separate handler had the identical gap for who owns a room, closed the same way.'
+  },
+  {
+    commit: 'Fix real bugs found in a focused file-sharing audit',
+    date: '11 August',
+    lesson:
+      'A single lost "the transfer is finished" packet — sent once, never acknowledged, unlike every ' +
+      'file slice before it — left a fully-received file stuck open forever on the receiving end, ' +
+      'with the app itself refusing every future transfer because it still believed one was running.'
   }
 ];

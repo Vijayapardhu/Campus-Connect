@@ -25,7 +25,7 @@ const { spawn } = require('child_process');
 
 const { target, pickAsset, pickManifest, sha512For } = require('../lib/select');
 
-const REPO = 'Vijayapardhu/Clipboard';
+const REPO = 'Vijayapardhu/Campus-Connect';
 const UA = 'campus-connect-cli';
 
 /* ------------------------------------------------------------------ output */

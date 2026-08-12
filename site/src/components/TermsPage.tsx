@@ -33,7 +33,7 @@ export default function TermsPage() {
           <h2>Your licence</h2>
           <p>
             The software is provided under the{' '}
-            <a href="https://github.com/Vijayapardhu/Clipboard/blob/main/LICENSE">MIT License</a>. In
+            <a href="https://github.com/Vijayapardhu/Campus-Connect/blob/main/LICENSE">MIT License</a>. In
             plain terms that lets you use, copy, modify, merge, publish, distribute, sublicense and
             sell copies, provided the copyright notice and licence text travel with it.
           </p>
@@ -84,7 +84,7 @@ export default function TermsPage() {
             The encryption is documented and the source is public precisely so the claims can be
             checked rather than believed. No software is free of flaws. If you find one, report it as
             described in{' '}
-            <a href="https://github.com/Vijayapardhu/Clipboard/blob/main/SECURITY.md">
+            <a href="https://github.com/Vijayapardhu/Campus-Connect/blob/main/SECURITY.md">
               SECURITY.md
             </a>{' '}
             rather than posting it publicly first.
@@ -95,7 +95,7 @@ export default function TermsPage() {
             Builds are not code-signed, so Windows and macOS warn that the publisher cannot be
             verified. That warning is accurate: the operating system genuinely cannot confirm who
             produced the file. Download only from{' '}
-            <a href="https://github.com/Vijayapardhu/Clipboard/releases">
+            <a href="https://github.com/Vijayapardhu/Campus-Connect/releases">
               the official releases page
             </a>
             , or build from source.

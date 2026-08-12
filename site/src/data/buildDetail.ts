@@ -80,8 +80,8 @@ export const NOT_PROTECTED: Array<{ what: string; why: string }> = [
     why: 'By definition. The interface says so rather than implying otherwise.'
   },
   {
-    what: 'A device is not yet cryptographically identified',
-    why: 'A device id is asserted rather than proved, so within a room a member holding the key can still send a message under another member’s id. Leaving a room now requires proof of the key, but the general fix is per-device signing keys, which is a wire-format change and not done yet.'
+    what: 'Device identities are self-issued',
+    why: 'Anyone who can prove a room’s password or join code can mint a fresh device id and keypair and join looking like a new member — nothing checks that against a real, distinct machine. What every message’s signature does rule out is impersonating an existing member: a device id is bound to the signing key recorded for it the first time it was seen (or proved at approval), so a member can no longer forge a message under a name that already belongs to someone else.'
   },
   {
     what: 'Removal does not invalidate the password',

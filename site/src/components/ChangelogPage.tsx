@@ -32,8 +32,91 @@ export default function ChangelogPage() {
 
           <div className="release">
             <div className="release__head">
-              <h2>0.8.0</h2>
+              <h2>0.9.0</h2>
               <span className="release__now">Latest</span>
+              <span className="release__date">12 August 2026</span>
+            </div>
+
+            <p className="intro">
+              No new surface area this time — a systematic audit of every module, twice, for real
+              bugs rather than waiting on the next report. Several of them were security-relevant.
+            </p>
+
+            <h3>New</h3>
+            <ul>
+              <li><strong>Search reaches the room list, too.</strong> "On this network" in the
+              sidebar had no way to filter a long list of discovered rooms — it does now, and the
+              Messages page's device list and the find-someone modal both stop rendering unbounded
+              results once there are more than a screenful.</li>
+            </ul>
+
+            <h3>Fixed — security</h3>
+            <ul>
+              <li><strong>Any accepted member of a room could forge a chat message or clipboard
+              share under a different member's name.</strong> Both handlers trusted a self-reported
+              identity field inside the encrypted payload instead of the sender identity the
+              message's own signature had already proved. Fixed by using the authenticated sender
+              everywhere an identity is recorded.</li>
+              <li><strong>A device could spoof a room-accept and hand a victim a fabricated
+              roster</strong> — including quietly downgrading an already-encrypted room to
+              plaintext — because the handler never checked that the sender was actually the
+              room's owner.</li>
+              <li><strong>A device's delivery receipt could be forged against messages in a room it
+              was never checked against</strong>, if it happened to also hold local history for that
+              room from being a member of it before.</li>
+              <li><strong>Unpairing a phone didn't stop it hearing anything.</strong> Revoking access
+              only blocked new requests — the live push channel that delivers every clipboard entry,
+              chat message and call ring in real time stayed open and kept receiving until it
+              happened to disconnect on its own.</li>
+            </ul>
+
+            <h3>Fixed — reliability</h3>
+            <ul>
+              <li>A remote-desktop session that failed to connect, or whose connection later dropped
+              for good, never actually ended — screen capture and the input injector kept running,
+              and the device was locked out of remote desktop entirely, in either role, until someone
+              noticed and manually disconnected.</li>
+              <li>A file transfer could get stuck "busy" forever: either the receiver's accept never
+              reaching the sender, or a single lost "the transfer is finished" packet (sent once,
+              never acknowledged) leaving a fully-received file stuck open with nothing to close it.</li>
+              <li>A member removed from a room — by the owner, or simply by a roster update — kept an
+              active remote session or call with a fellow member fully intact, since the existing
+              fix for this only ever checked the acting device's own session.</li>
+              <li>Leaving a room you had never actually unlocked reported success even though the
+              owner's side silently rejected it, since it had no key to prove the departure with —
+              you were told you'd left a room you were, in fact, still a member of.</li>
+              <li>A member offline while a room's password changed kept a silently dead key forever,
+              with everything they sent unreadable to everyone else and no error ever shown to them.
+              Now detected from the room's own periodic advert the moment they're back online.</li>
+              <li>A crash partway through the one-time data migration (from the app's old name) could
+              leave a permanently half-migrated profile with no indication anything had gone wrong.
+              The copy is staged and committed atomically now.</li>
+              <li>Two devices discovering each other at the same moment could end up tearing down a
+              connection the other side was still holding, needing the next announce cycle to
+              recover.</li>
+            </ul>
+
+            <h3>Fixed — smaller</h3>
+            <ul>
+              <li>A room's delivery status could read "Delivered" the instant any one of several
+              members had a message, not once every member did, contradicting the receipt's own rule.</li>
+              <li>Starting to reply to a message while mid-edit of another one sent the edit's
+              leftover text as a new, unrelated message and silently discarded the intended edit.</li>
+              <li>A second update's own genuine download failure could be reported as success, because
+              a stale record from an earlier, unrelated update was still lying around.</li>
+              <li>A room's QR code kept showing an already-rotated join code after regenerating it,
+              without switching rooms to refresh it.</li>
+              <li>Global search shortcuts fired even with the caret in the chat composer, discarding
+              an unsent draft.</li>
+              <li>Member-moderation controls — Block, Restrict, Remove — were hidden behind a check
+              meant only for the Call/Message/Screen buttons, on any client without native media
+              access.</li>
+            </ul>
+          </div>
+
+          <div className="release">
+            <div className="release__head">
+              <h2>0.8.0</h2>
               <span className="release__date">8 August 2026</span>
             </div>
 
@@ -238,9 +321,9 @@ export default function ChangelogPage() {
           <h2>Full history</h2>
           <p>
             Every release, with its installers and complete notes, is on{' '}
-            <a href="https://github.com/Vijayapardhu/Clipboard/releases">the releases page</a>. The
+            <a href="https://github.com/Vijayapardhu/Campus-Connect/releases">the releases page</a>. The
             commits behind each of them are in{' '}
-            <a href="https://github.com/Vijayapardhu/Clipboard">the repository</a>.
+            <a href="https://github.com/Vijayapardhu/Campus-Connect">the repository</a>.
           </p>
         </div>
       </main>

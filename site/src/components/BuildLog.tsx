@@ -37,7 +37,7 @@ const ROOT = '../';
  * the page is that a reader can go and check any of it, which only works if
  * nothing on it was estimated.
  *
- * It includes the mistakes. Fifteen of forty-three commits are the project
+ * It includes the mistakes. Seventeen of eighty commits are the project
  * correcting itself, and a build log that lists only what went right is a
  * marketing page wearing a lab coat.
  */
@@ -57,7 +57,7 @@ export default function BuildLog() {
           <div className="wrap">
             <motion.p className="eyebrow" {...reveal()}>The build log</motion.p>
             <h1>
-              <Words delay={0.1}>Forty-three commits,</Words>{' '}
+              <Words delay={0.1}>Eighty commits,</Words>{' '}
               <em><Words delay={0.35}>and what each one cost.</Words></em>
             </h1>
             <motion.p className="lede" {...reveal(0.5)}>
@@ -84,11 +84,11 @@ export default function BuildLog() {
           <div className="wrap">
             <motion.p className="eyebrow" {...reveal()}>How it went</motion.p>
             <h2 className="statement">
-              <Words inView>Six days with commits in them,</Words>{' '}
-              <em><Words inView delay={0.28}>inside a ten-day span.</Words></em>
+              <Words inView>Eleven days with commits in them,</Words>{' '}
+              <em><Words inView delay={0.28}>inside a sixteen-day span.</Words></em>
             </h2>
             <motion.p className="lede" {...reveal(0.12)}>
-              Nineteen tagged releases, most of them on the day the work landed. A version number
+              Twenty-two tagged releases, most of them on the day the work landed. A version number
               here is closer to a save point than an announcement.
             </motion.p>
 
@@ -119,7 +119,7 @@ export default function BuildLog() {
           <div className="wrap">
             <motion.p className="eyebrow" {...reveal()}>The modules</motion.p>
             <h2 className="statement">
-              <Words inView>Fifty-six files.</Words>{' '}
+              <Words inView>Sixty-eight files.</Words>{' '}
               <em><Words inView delay={0.2}>These are the ones that matter.</Words></em>
             </h2>
 
@@ -348,7 +348,7 @@ export default function BuildLog() {
           <div className="wrap">
             <motion.p className="eyebrow" {...reveal()}>Testing</motion.p>
             <h2 className="statement">
-              <Words inView>260 assertions,</Words>{' '}
+              <Words inView>361 assertions,</Words>{' '}
               <em><Words inView delay={0.2}>and no test framework.</Words></em>
             </h2>
             <motion.p className="lede" {...reveal(0.12)}>
@@ -373,7 +373,7 @@ export default function BuildLog() {
           <div className="wrap">
             <motion.p className="eyebrow" {...reveal()}>What broke</motion.p>
             <h2 className="statement">
-              <Words inView>Fifteen of the forty-three commits</Words>{' '}
+              <Words inView>Seventeen of the eighty commits</Words>{' '}
               <em><Words inView delay={0.3}>are the project correcting itself.</Words></em>
             </h2>
             <motion.p className="lede" {...reveal(0.12)}>
@@ -410,7 +410,7 @@ export default function BuildLog() {
             </motion.p>
             <motion.div className="hero-actions" {...reveal(0.16)}>
               <Magnetic>
-                <a className="btn btn--go" href="https://github.com/Vijayapardhu/Clipboard">
+                <a className="btn btn--go" href="https://github.com/Vijayapardhu/Campus-Connect">
                   Read the source <ArrowIcon />
                 </a>
               </Magnetic>

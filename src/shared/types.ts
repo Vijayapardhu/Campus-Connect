@@ -1214,7 +1214,7 @@ export const APP_INFO = {
   name: 'Campus Connect',
   author: 'Vijaya Pardhu',
   authorUrl: 'https://github.com/Vijayapardhu',
-  repositoryUrl: 'https://github.com/Vijayapardhu/Clipboard',
-  websiteUrl: 'https://vijayaapardhu.dev/Clipboard/',
+  repositoryUrl: 'https://github.com/Vijayapardhu/Campus-Connect',
+  websiteUrl: 'https://cc.vijayaapardhu.dev',
   license: 'MIT'
 } as const;

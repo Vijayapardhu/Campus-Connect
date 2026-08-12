@@ -41,9 +41,9 @@ const COLUMNS: Column[] = [
     heading: 'Project',
     links: [
       { label: 'How it is built', page: 'build/' },
-      { label: 'Source', to: 'https://github.com/Vijayapardhu/Clipboard' },
-      { label: 'Issues', to: 'https://github.com/Vijayapardhu/Clipboard/issues' },
-      { label: 'Releases', to: 'https://github.com/Vijayapardhu/Clipboard/releases' },
+      { label: 'Source', to: 'https://github.com/Vijayapardhu/Campus-Connect' },
+      { label: 'Issues', to: 'https://github.com/Vijayapardhu/Campus-Connect/issues' },
+      { label: 'Releases', to: 'https://github.com/Vijayapardhu/Campus-Connect/releases' },
       { label: 'Changelog', page: 'changelog/' }
     ]
   },
@@ -52,7 +52,7 @@ const COLUMNS: Column[] = [
     links: [
       { label: 'Privacy policy', page: 'privacy/' },
       { label: 'Terms', page: 'terms/' },
-      { label: 'MIT licence', to: 'https://github.com/Vijayapardhu/Clipboard/blob/main/LICENSE' }
+      { label: 'MIT licence', to: 'https://github.com/Vijayapardhu/Campus-Connect/blob/main/LICENSE' }
     ]
   }
 ];

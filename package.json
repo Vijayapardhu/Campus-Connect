@@ -6,13 +6,13 @@
   "main": "dist/main/main.js",
   "license": "MIT",
   "author": "Vijaya Pardhu",
-  "homepage": "https://vijayaapardhu.dev/Clipboard/",
+  "homepage": "https://cc.vijayaapardhu.dev",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Vijayapardhu/Clipboard.git"
+    "url": "https://github.com/Vijayapardhu/Campus-Connect.git"
   },
   "bugs": {
-    "url": "https://github.com/Vijayapardhu/Clipboard/issues"
+    "url": "https://github.com/Vijayapardhu/Campus-Connect/issues"
   },
   "keywords": [
     "clipboard",
@@ -136,7 +136,7 @@
       {
         "provider": "github",
         "owner": "Vijayapardhu",
-        "repo": "Clipboard"
+        "repo": "Campus-Connect"
       }
     ]
   }

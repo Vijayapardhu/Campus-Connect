@@ -5,7 +5,7 @@
 **Please do not open a public issue for a security problem.**
 
 Report it privately through
-[GitHub Security Advisories](https://github.com/Vijayapardhu/Clipboard/security/advisories/new).
+[GitHub Security Advisories](https://github.com/Vijayapardhu/Campus-Connect/security/advisories/new).
 That gives us a private thread to work in and lets you be credited when it is
 fixed.
 

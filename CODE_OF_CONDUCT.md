@@ -33,7 +33,7 @@ anywhere someone is representing the project publicly.
 
 If you see or experience behaviour that breaks these rules, report it privately
 by opening a
-[security advisory](https://github.com/Vijayapardhu/Clipboard/security/advisories/new)
+[security advisory](https://github.com/Vijayapardhu/Campus-Connect/security/advisories/new)
 — it is the private channel this repository has available — or by contacting the
 maintainer directly through their GitHub profile.
 

@@ -15,7 +15,7 @@ request so nobody duplicates your work.
 You need [Node.js 20 or newer](https://nodejs.org) and Git.
 
 ```bash
-git clone https://github.com/Vijayapardhu/Clipboard.git
+git clone https://github.com/Vijayapardhu/Campus-Connect.git
 cd Clipboard
 npm install
 npm run dev
@@ -134,7 +134,7 @@ genuinely useful, and each touches a different part of the codebase:
 | A real QR code for join codes (the `qrcode` dependency is already installed) | `src/renderer/panels.tsx` | Medium |
 | Translations, starting with the strings in `panels.tsx` and `modals.tsx` | renderer | Medium |
 
-Issues labelled [`good first issue`](https://github.com/Vijayapardhu/Clipboard/labels/good%20first%20issue)
+Issues labelled [`good first issue`](https://github.com/Vijayapardhu/Campus-Connect/labels/good%20first%20issue)
 are kept scoped small on purpose.
 
 ---

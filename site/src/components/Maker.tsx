@@ -10,14 +10,14 @@ import { useTilt, CountUp, Words } from '../lib/effects';
  *   tests     npm test
  *   protocol  PROTOCOL_VERSION in src/shared/types.ts
  *
- * The previous set said 37 / 29k / 242 and had drifted from all three. This
+ * The previous set said 43 / 24k / 260 and had drifted from all three. This
  * is the section that asks to be checked, so a figure nobody can reproduce
  * is worse here than no figure at all — recount them when they next matter.
  */
 const STATS: Array<{ value: string; label: string; note: string }> = [
-  { value: '43', label: 'commits', note: 'all by one person' },
-  { value: '24k', label: 'lines of TypeScript', note: 'main, renderer and shared' },
-  { value: '260', label: 'tests', note: 'green on every build' },
+  { value: '80', label: 'commits', note: 'all by one person' },
+  { value: '31k', label: 'lines of TypeScript', note: 'main, renderer and shared' },
+  { value: '361', label: 'tests', note: 'green on every build' },
   { value: '6', label: 'wire protocol revisions', note: 'versioned, and checked on every packet' }
 ];
 
@@ -72,7 +72,7 @@ function Lead() {
 
       <div className="links">
         <a className="btn btn--go btn--sm" href="./build/">How it is built</a>
-        <a className="btn btn--ghost btn--sm" href="https://github.com/Vijayapardhu/Clipboard">Read the source</a>
+        <a className="btn btn--ghost btn--sm" href="https://github.com/Vijayapardhu/Campus-Connect">Read the source</a>
         <a className="btn btn--ghost btn--sm" href="https://github.com/Vijayapardhu">GitHub profile</a>
       </div>
     </motion.article>
@@ -104,7 +104,7 @@ function Proof() {
           <code className="term__dim">PASS  a tampered packet is rejected by the auth tag</code>
           <code className="term__dim">PASS  the password never leaves the device</code>
           <code className="term__dim">PASS  a file past the ceiling is refused before anything is read</code>
-          <code className="term__ok">260 passed, 0 failed</code>
+          <code className="term__ok">361 passed, 0 failed</code>
         </div>
       </div>
     </motion.article>

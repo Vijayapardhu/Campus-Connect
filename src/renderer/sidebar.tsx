@@ -12,6 +12,7 @@ import {
   MailIcon,
   PaperclipIcon,
   PlusIcon,
+  SearchIcon,
   SettingsIcon
 } from './icons';
 
@@ -23,6 +24,19 @@ function roomMeta(room: RoomInfo, locked: boolean): string {
   const accepted = room.members.filter((member) => member.status === 'accepted').length;
   return `${accepted} ${accepted === 1 ? 'device' : 'devices'}`;
 }
+
+/**
+ * How many discovered rooms actually get rendered at once.
+ *
+ * A handful of rooms on a home or dorm network is the common case, and this
+ * never mattered there. A campus-wide deployment is a different scale
+ * entirely — hundreds of rooms broadcasting into the same list would mean
+ * hundreds of DOM rows and no way to tell whether the one you want is
+ * already off the bottom. Search is the actual answer to "find it at that
+ * scale," not scrolling; this cap is what makes typing something the only
+ * reasonable way to find a room once there are more than a screenful.
+ */
+const MAX_VISIBLE_DISCOVERED = 30;
 
 export function Sidebar({
   header,
@@ -80,6 +94,18 @@ export function Sidebar({
       peer.protocolVersion !== undefined &&
       peer.protocolVersion !== state.diagnostics.protocolVersion
   );
+
+  const [discoveredQuery, setDiscoveredQuery] = React.useState('');
+  const discoveredNeedle = discoveredQuery.trim().toLowerCase();
+  const matchingDiscovered = discoveredNeedle
+    ? state.discovered.filter(
+        (room) =>
+          room.name.toLowerCase().includes(discoveredNeedle) ||
+          room.ownerName.toLowerCase().includes(discoveredNeedle)
+      )
+    : state.discovered;
+  const visibleDiscovered = matchingDiscovered.slice(0, MAX_VISIBLE_DISCOVERED);
+  const hiddenDiscoveredCount = matchingDiscovered.length - visibleDiscovered.length;
 
   return (
     <aside className="sidebar">
@@ -180,25 +206,54 @@ export function Sidebar({
               <span>{state.discovered.length}</span>
             </div>
 
-            {state.discovered.map((room) => (
-              <button
-                key={room.roomId}
-                className="room-item"
-                onClick={() => onJoinDiscovered(room)}
-                title={`Join ${room.name}`}
-              >
-                <span className="room-item__icon">
-                  {room.type === 'private' ? <LockIcon size={13} /> : <GlobeIcon size={13} />}
-                </span>
-                <span className="room-item__body">
-                  <span className="room-item__name">{room.name}</span>
-                  <span className="room-item__meta">
-                    {room.ownerName}
-                    {room.encrypted ? ' · encrypted' : ''}
+            {/* Only worth the extra field once there's enough here that
+                scrolling to find one stops being reasonable — a home or
+                dorm network rarely has more than a handful. */}
+            {state.discovered.length > 8 && (
+              <div className="search">
+                <SearchIcon size={14} />
+                <input
+                  className="search__input"
+                  value={discoveredQuery}
+                  onChange={(event) => setDiscoveredQuery(event.target.value)}
+                  placeholder="Search rooms on this network"
+                  aria-label="Search discovered rooms"
+                  spellCheck={false}
+                />
+              </div>
+            )}
+
+            {visibleDiscovered.length === 0 ? (
+              <p className="sidebar__empty">
+                Nothing on this network matches “{discoveredQuery.trim()}”.
+              </p>
+            ) : (
+              visibleDiscovered.map((room) => (
+                <button
+                  key={room.roomId}
+                  className="room-item"
+                  onClick={() => onJoinDiscovered(room)}
+                  title={`Join ${room.name}`}
+                >
+                  <span className="room-item__icon">
+                    {room.type === 'private' ? <LockIcon size={13} /> : <GlobeIcon size={13} />}
                   </span>
-                </span>
-              </button>
-            ))}
+                  <span className="room-item__body">
+                    <span className="room-item__name">{room.name}</span>
+                    <span className="room-item__meta">
+                      {room.ownerName}
+                      {room.encrypted ? ' · encrypted' : ''}
+                    </span>
+                  </span>
+                </button>
+              ))
+            )}
+
+            {hiddenDiscoveredCount > 0 && (
+              <p className="sidebar__empty">
+                {hiddenDiscoveredCount} more — type a name to narrow it down.
+              </p>
+            )}
           </section>
         )}
 
