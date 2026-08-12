@@ -5,7 +5,8 @@ import type {
   RemoteRequest,
   RemoteSessionState
 } from '../shared/types';
-import type { ScreenSource, StatusTone } from '../shared/bridge';
+import type { RemoteSignalEvent, ScreenSource, StatusTone } from '../shared/bridge';
+import { MAX_PENDING_SIGNALS, routeSessionSignal } from '../shared/signalRouting';
 import { RemoteEngine, createInputCapture, type RemoteConnectionState } from './remoteEngine';
 import { Button, Modal } from './ui';
 import { useFullscreen } from './callui';
@@ -70,6 +71,19 @@ export function useRemote({
   const engineRef = React.useRef<RemoteEngine | null>(null);
   const sessionIdRef = React.useRef('');
   const peerIdRef = React.useRef('');
+  /**
+   * Signals that arrived before there was an engine to take them. Capturing a
+   * screen takes long enough for the controller's offer to beat it, and a
+   * dropped offer is a session that connects to a black rectangle.
+   */
+  const pendingRef = React.useRef<RemoteSignalEvent[]>([]);
+  /**
+   * Whether the engine can actually answer. Distinct from the engine merely
+   * existing: the host builds its engine and only then captures a screen, and a
+   * signal answered in between negotiates a session with no tracks in it — a
+   * connection that reports itself as up and shows a black rectangle forever.
+   */
+  const readyRef = React.useRef(false);
   const pushRef = React.useRef(push);
   pushRef.current = push;
 
@@ -78,6 +92,8 @@ export function useRemote({
     engineRef.current = null;
     sessionIdRef.current = '';
     peerIdRef.current = '';
+    pendingRef.current = [];
+    readyRef.current = false;
     setSession(null);
     setStream(null);
     setConnection('connecting');
@@ -88,6 +104,22 @@ export function useRemote({
   // current teardown without being rebuilt.
   const teardownRef = React.useRef(teardown);
   teardownRef.current = teardown;
+
+  /**
+   * Hands the engine whatever arrived before it existed.
+   *
+   * Filtered by session, because the queue also collects what turns up before
+   * there is a session id to compare against — a request that was declined, or
+   * one this session replaced, should not have its candidates replayed into an
+   * unrelated connection.
+   */
+  const drainPending = React.useCallback((sessionId: string, engine: RemoteEngine) => {
+    const queued = pendingRef.current.filter((event) => event.signal.sessionId === sessionId);
+    pendingRef.current = [];
+    for (const event of queued) {
+      void engine.handleSignal(event);
+    }
+  }, []);
 
   const buildEngine = React.useCallback(
     (state: RemoteSessionState) =>
@@ -156,9 +188,12 @@ export function useRemote({
       setConnection('connecting');
       const engine = buildEngine(started);
       engineRef.current = engine;
+      readyRef.current = false;
       engine.startAsController(started.sessionId);
+      readyRef.current = true;
+      drainPending(started.sessionId, engine);
     },
-    [buildEngine]
+    [buildEngine, drainPending]
   );
 
   React.useEffect(() => {
@@ -193,9 +228,32 @@ export function useRemote({
       }),
 
       api.onRemoteSignal((event) => {
-        if (sessionIdRef.current === event.signal.sessionId) {
-          void engineRef.current?.handleSignal(event);
+        const route = routeSessionSignal({
+          sessionId: sessionIdRef.current,
+          signalSessionId: event.signal.sessionId,
+          ready: readyRef.current && Boolean(engineRef.current)
+        });
+
+        if (route === 'ignore') {
+          return;
         }
+
+        /*
+         * Held rather than dropped on the floor. Accepting a request answers
+         * the controller over IPC, and the controller replies with its offer
+         * immediately — while this side is still inside that await, and then
+         * inside capturing a screen, with no engine built yet. The old
+         * `engineRef.current?.` swallowed exactly that, silently, every time it
+         * happened: no error, no connection, a viewer that never painted.
+         */
+        if (route === 'queue') {
+          if (pendingRef.current.length < MAX_PENDING_SIGNALS) {
+            pendingRef.current.push(event);
+          }
+          return;
+        }
+
+        void engineRef.current!.handleSignal(event);
       }),
 
       api.onRemoteGrantChanged((grant) => {
@@ -327,9 +385,15 @@ export function useRemote({
 
       const engine = buildEngine(state);
       engineRef.current = engine;
+      readyRef.current = false;
 
       try {
         await engine.startAsHost(state.sessionId, screen.id);
+        readyRef.current = true;
+        // Only once the screen is actually captured: the controller's offer is
+        // answered with these tracks, and answering before they exist
+        // negotiates a session that carries no picture.
+        drainPending(state.sessionId, engine);
       } catch (error) {
         pushRef.current(
           `That screen could not be captured: ${error instanceof Error ? error.message : String(error)}`,
@@ -339,7 +403,7 @@ export function useRemote({
         teardown();
       }
     },
-    [request, buildEngine, teardown]
+    [request, buildEngine, teardown, drainPending]
   );
 
   const dismissRequest = React.useCallback(() => {

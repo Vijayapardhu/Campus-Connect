@@ -62,7 +62,7 @@ const { findMentions, mentionedDeviceIds, splitOnMentions } = require(
   path.join(__dirname, '..', 'dist', 'shared', 'mentions.js')
 );
 const { dataUrlBytes } = require(path.join(__dirname, '..', 'dist', 'shared', 'dataUrl.js'));
-const { routeCallSignal } = require(path.join(__dirname, '..', 'dist', 'shared', 'callRouting.js'));
+const { routeSessionSignal } = require(path.join(__dirname, '..', 'dist', 'shared', 'signalRouting.js'));
 const { formatTranscript, transcriptFileName } = require(
   path.join(__dirname, '..', 'dist', 'shared', 'transcript.js')
 );
@@ -721,21 +721,21 @@ test('an offer arriving before the session exists is kept', () => {
   // here while the session id is still empty. Treating empty as "not my call"
   // discarded it, and an offer is sent once.
   assert.strictEqual(
-    routeCallSignal({ sessionId: '', signalCallId: 'call-1', ready: false }),
+    routeSessionSignal({ sessionId: '', signalSessionId: 'call-1', ready: false }),
     'queue'
   );
 });
 
 test('a signal for the call being joined is kept until the engine is ready', () => {
   assert.strictEqual(
-    routeCallSignal({ sessionId: 'call-1', signalCallId: 'call-1', ready: false }),
+    routeSessionSignal({ sessionId: 'call-1', signalSessionId: 'call-1', ready: false }),
     'queue'
   );
 });
 
 test('a signal for the call in progress goes straight to the engine', () => {
   assert.strictEqual(
-    routeCallSignal({ sessionId: 'call-1', signalCallId: 'call-1', ready: true }),
+    routeSessionSignal({ sessionId: 'call-1', signalSessionId: 'call-1', ready: true }),
     'handle'
   );
 });
@@ -743,12 +743,34 @@ test('a signal for the call in progress goes straight to the engine', () => {
 test('a signal for somebody else’s call is still ignored', () => {
   // The reason the comparison existed. Widening it must not lose this.
   assert.strictEqual(
-    routeCallSignal({ sessionId: 'call-1', signalCallId: 'call-2', ready: true }),
+    routeSessionSignal({ sessionId: 'call-1', signalSessionId: 'call-2', ready: true }),
     'ignore'
   );
   assert.strictEqual(
-    routeCallSignal({ sessionId: 'call-1', signalCallId: 'call-2', ready: false }),
+    routeSessionSignal({ sessionId: 'call-1', signalSessionId: 'call-2', ready: false }),
     'ignore'
+  );
+});
+
+test('a host with an engine but no screen yet still holds the offer', () => {
+  // The remote-desktop shape of the same fault, and the harder half of it: the
+  // host builds its engine and *then* captures a screen, so the engine exists
+  // while there is still nothing to answer with. Answering there negotiates a
+  // session carrying no video — a connection that reports itself up and shows
+  // a black rectangle for as long as anybody is willing to look at it.
+  assert.strictEqual(
+    routeSessionSignal({ sessionId: 'session-1', signalSessionId: 'session-1', ready: false }),
+    'queue'
+  );
+});
+
+test('a controller offer arriving before the grant is processed is kept', () => {
+  // Accepting answers the controller over IPC, and the controller replies with
+  // its offer immediately — before `remote:started` has reached this window, so
+  // there is no session id here to compare it against yet.
+  assert.strictEqual(
+    routeSessionSignal({ sessionId: '', signalSessionId: 'session-1', ready: true }),
+    'queue'
   );
 });
 

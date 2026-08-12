@@ -8,7 +8,7 @@ import type {
 } from '../shared/types';
 import type { CallSignalEvent, ScreenSource, StatusTone } from '../shared/bridge';
 import { CallEngine, describeMediaError, type CallPeer } from './callEngine';
-import { routeCallSignal } from '../shared/callRouting';
+import { MAX_PENDING_SIGNALS, routeSessionSignal } from '../shared/signalRouting';
 import { Button, Modal } from './ui';
 import { initials } from './format';
 import {
@@ -27,16 +27,6 @@ import {
 
 import { api } from './api';
 import { hasNativeFeatures } from './httpApi';
-/**
- * How many signals may be held while a call is still being answered.
- *
- * An offer and the ICE candidates behind it, several times over, and no more:
- * the queue also collects signals arriving before there is any session to
- * match them against, so without a ceiling a ring left unanswered in the
- * corner of the screen would accumulate the other end's candidates for as long
- * as it kept sending them.
- */
-const MAX_PENDING_SIGNALS = 256;
 
 /** What the window knows about the call this device is in. */
 export type CallSession = {
@@ -217,9 +207,9 @@ export function useCall({
         setRinging((current) => (current?.callId === callId ? null : current));
       }),
       api.onCallSignal((event) => {
-        const route = routeCallSignal({
+        const route = routeSessionSignal({
           sessionId: sessionIdRef.current,
-          signalCallId: event.signal.callId,
+          signalSessionId: event.signal.callId,
           ready: readyRef.current && Boolean(engineRef.current)
         });
 
