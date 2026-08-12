@@ -38,6 +38,28 @@ export function shouldOfferDownload(
 }
 
 /**
+ * Whether a newly found update should be fetched without being asked for.
+ *
+ * Automatic updates mean automatic: somebody who turned the setting on has
+ * already said what they want to happen, and a confirmation step for each
+ * version is the thing they turned it on to avoid. It matters more here than in
+ * most apps, because two devices on different versions cannot talk to each
+ * other at all — an update waiting behind an unclicked button does not look
+ * like a pending update, it looks like the network is broken.
+ *
+ * The exception is a platform that cannot apply what it downloads. An unsigned
+ * macOS build is refused by Squirrel.Mac rather than installed, so fetching it
+ * automatically would spend somebody's bandwidth on ~170 MB that can only ever
+ * be installed by hand anyway.
+ */
+export function shouldFetchAutomatically(options: {
+  autoUpdatesEnabled: boolean;
+  canSelfInstall: boolean;
+}): boolean {
+  return options.autoUpdatesEnabled && options.canSelfInstall;
+}
+
+/**
  * Whether a failed download is worth trying again.
  *
  * Retrying is for a connection that died partway through an 85 MB transfer.
