@@ -171,7 +171,9 @@ export function SettingsPage({
     available: `Version ${update.availableVersion} is available`,
     downloading: `Downloading… ${update.percent ?? 0}%`,
     retrying: `Connection dropped — resuming (attempt ${(update.attempt ?? 1) + 1} of 4)`,
-    ready: `Version ${update.availableVersion} is ready to install`,
+    // Says what will happen on its own, so the button below reads as a way to
+    // have it sooner rather than the only way to have it at all.
+    ready: `Version ${update.availableVersion} installs when you close the app`,
     manual: 'Download it from the releases page',
     unsupported: 'Running from source — updates apply to installed builds',
     error: 'Could not check for updates'
@@ -969,7 +971,7 @@ export function SettingsPage({
 
               {update.state === 'ready' && (
                 <Button variant="primary" onClick={onInstallUpdate}>
-                  Restart and install v{update.availableVersion}
+                  Restart and install now
                 </Button>
               )}
 
@@ -982,8 +984,8 @@ export function SettingsPage({
 
             <div style={{ marginTop: 'var(--space-5)' }}>
               <SwitchRow
-                title="Check for updates automatically"
-                description="Looks for a new version every few hours and when the app starts. Nothing is downloaded or installed without you saying so."
+                title="Keep Campus Connect up to date"
+                description="Looks for a new version every few hours, downloads it quietly in the background, and installs it the next time you close the app. Nothing restarts on its own, and nothing interrupts a call or a transfer."
                 checked={settings.autoUpdate}
                 onChange={(next) => onUpdateSettings({ autoUpdate: next })}
               />

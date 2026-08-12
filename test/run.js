@@ -3659,7 +3659,7 @@ testAsync('a signal for somebody else’s transfer is ignored', async () => {
 
 console.log('\n-- not downloading the same update four times --');
 
-const { shouldOfferDownload, isWorthRetrying } = require(path.join(ROOT, 'updatePolicy.js'));
+const { shouldOfferDownload, isWorthRetrying, shouldFetchAutomatically } = require(path.join(ROOT, 'updatePolicy.js'));
 
 /*
  * From a real report: the same version downloading three or four times over
@@ -3689,6 +3689,34 @@ test('a download that did not finish is still offered', () => {
   // a partial file, so the offer has to stand.
   assert.strictEqual(shouldOfferDownload('error', undefined, '0.6.0'), true);
   assert.strictEqual(shouldOfferDownload('downloading', undefined, '0.6.0'), true);
+});
+
+test('automatic updates fetch without being asked', () => {
+  // The whole point of the setting. Two devices on different versions cannot
+  // see each other, so an update parked behind a button nobody pressed reads as
+  // a broken network rather than a pending update.
+  assert.strictEqual(
+    shouldFetchAutomatically({ autoUpdatesEnabled: true, canSelfInstall: true }),
+    true
+  );
+});
+
+test('turning automatic updates off means nothing is fetched', () => {
+  assert.strictEqual(
+    shouldFetchAutomatically({ autoUpdatesEnabled: false, canSelfInstall: true }),
+    false,
+    'the setting has to actually mean something'
+  );
+});
+
+test('a platform that cannot install is not made to download', () => {
+  // An unsigned macOS build is refused by Squirrel.Mac rather than installed,
+  // so fetching it automatically spends ~170 MB on a file that can only ever be
+  // installed by hand.
+  assert.strictEqual(
+    shouldFetchAutomatically({ autoUpdatesEnabled: true, canSelfInstall: false }),
+    false
+  );
 });
 
 test('a dropped connection is worth another go', () => {

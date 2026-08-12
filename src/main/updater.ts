@@ -2,7 +2,7 @@ import { app, autoUpdater as _electronAutoUpdater } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import type { UpdateStatus } from '../shared/types';
-import { isWorthRetrying, shouldOfferDownload } from './updatePolicy';
+import { isWorthRetrying, shouldFetchAutomatically, shouldOfferDownload } from './updatePolicy';
 
 /**
  * Keeping the app up to date from the GitHub releases feed.
@@ -11,6 +11,14 @@ import { isWorthRetrying, shouldOfferDownload } from './updatePolicy';
  * times in a day, and two machines on different versions cannot talk to each
  * other at all. Leaving that to whoever remembers to re-download an installer
  * is how people end up staring at an app that worked yesterday.
+ *
+ * That same reasoning is why nothing here waits to be asked. With automatic
+ * updates on, a new version is found, downloaded in the background and applied
+ * the next time the app is closed — no prompt, no button, no restart anybody
+ * did not choose. A confirmation step sounds careful and is not: an update
+ * sitting behind an unclicked button leaves two devices unable to see each
+ * other, which looks exactly like the network being broken and is far more
+ * disruptive than the install it was protecting them from.
  *
  * One honest limitation. **Automatic installation on macOS requires the app to
  * be code-signed**, and this project is not signed yet. Squirrel.Mac refuses an
@@ -40,6 +48,14 @@ export class Updater {
 
   /** The version already written to the updater cache, once one has been. */
   private downloadedVersion: string | undefined;
+  /**
+   * Whether a found update is fetched without being asked for.
+   *
+   * Tracks the same setting as the periodic check: somebody who has asked for
+   * automatic updates has already said what they want to happen, and being
+   * asked to confirm each one is the thing they turned it on to avoid.
+   */
+  private autoFetch = false;
   /** The download in progress, so a second request joins it rather than starting another. */
   private inFlight: Promise<UpdateStatus> | null = null;
 
@@ -61,8 +77,25 @@ export class Updater {
     }
     this.started = true;
 
-    // Downloading is explicit, so the user is never surprised by a restart.
+    this.autoFetch = enabled;
+
+    /*
+     * Left false, and the download started from the `update-available` handler
+     * below instead — which is not the same as leaving it to the user.
+     *
+     * electron-updater's own auto-download bypasses `runDownload`, and with it
+     * the resume-and-retry loop that exists because an ~85 MB installer over a
+     * congested network really does die partway through. Turning this on to get
+     * automatic downloads would have quietly traded a download that survives a
+     * dropped connection for one that gives up on the first.
+     */
     autoUpdater.autoDownload = false;
+    /*
+     * Applied on the way out rather than by interrupting anybody. Nothing here
+     * ever restarts the app to install: a quit is a moment the user chose, and
+     * it is the one moment an update cannot land in the middle of a call, a
+     * file transfer or a remote session.
+     */
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.logger = log;
     autoUpdater.allowPrerelease = false;
@@ -88,6 +121,27 @@ export class Updater {
         releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined
       });
       log.info(`Update available: ${info.version}`);
+
+      /*
+       * Fetched immediately, in the background, without asking. 'available' is
+       * then a state this passes through in a moment rather than one it sits in
+       * waiting to be noticed — which matters more here than in most apps,
+       * because two devices on different versions cannot talk to each other at
+       * all, and an update nobody clicks is indistinguishable from the network
+       * being broken.
+       *
+       * Not on macOS: an unsigned build cannot apply what it downloads, so
+       * fetching it would spend somebody's bandwidth on a file that can only
+       * ever be installed by hand.
+       */
+      if (
+        shouldFetchAutomatically({
+          autoUpdatesEnabled: this.autoFetch,
+          canSelfInstall: Updater.canSelfInstall
+        })
+      ) {
+        void this.download();
+      }
     });
 
     autoUpdater.on('update-not-available', () => this.set({ state: 'current' }));
@@ -122,8 +176,9 @@ export class Updater {
     }
   }
 
-  /** Turns the periodic check on or off without restarting the app. */
+  /** Turns the periodic check and the automatic fetch on or off, without a restart. */
   setEnabled(enabled: boolean): void {
+    this.autoFetch = enabled;
     this.stop();
     if (enabled) {
       this.schedule();
