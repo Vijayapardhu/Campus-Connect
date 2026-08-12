@@ -933,6 +933,7 @@ let udpSocket: dgram.Socket | null = null;
 let announceTimer: NodeJS.Timeout | null = null;
 let clipboardPollTimer: NodeJS.Timeout | null = null;
 let transferSweepTimer: NodeJS.Timeout | null = null;
+let dmResendTimer: NodeJS.Timeout | null = null;
 let callSweepTimer: NodeJS.Timeout | null = null;
 let compactTimer: NodeJS.Timeout | null = null;
 let tcp: TcpTransport | null = null;
@@ -3596,7 +3597,15 @@ function handleDirectMessage(message: WireMessage): void {
       }
       const stored = directMessages.receive(message.deviceId, message.deviceName, signal);
       if (!stored) {
-        return; // Already have it — a retransmit, not a new message.
+        /*
+         * Already have it — a retransmit, not a new message. Acknowledged
+         * again rather than ignored: the receipt that answered it the first
+         * time is the most likely thing to have gone missing, and staying
+         * silent here leaves the sender re-offering a message that arrived
+         * long ago for as long as the retry window lasts.
+         */
+        sendDmReceipt(message.deviceId, [signal.id], 'delivered');
+        return;
       }
       emit('dm:message', stored);
       sendStateToRenderer();
@@ -4005,6 +4014,7 @@ function startUdpService() {
     }, ANNOUNCE_INTERVAL_MS);
     clipboardPollTimer = setInterval(pollLocalClipboard, CLIPBOARD_POLL_MS);
     transferSweepTimer = setInterval(sweepTransfers, TRANSFER_SWEEP_MS);
+    dmResendTimer = setInterval(sweepDirectMessages, DM_RESEND_SWEEP_MS);
     callSweepTimer = setInterval(sweepCalls, CALL_HEARTBEAT_MS);
     compactTimer = setInterval(() => {
       if (compactStorage() > 0) {
@@ -4012,6 +4022,81 @@ function startUdpService() {
       }
     }, COMPACT_INTERVAL_MS);
   });
+}
+
+/** How often undelivered direct messages are offered to the network again. */
+const DM_RESEND_SWEEP_MS = 5000;
+/** The least time between two attempts at the same message. */
+const DM_RESEND_INTERVAL_MS = 15000;
+/**
+ * How long a message keeps being retried before it is left as undelivered.
+ *
+ * Long enough to cover a laptop shut for the night and opened the next
+ * morning, which is the case this exists for. Past that the message is almost
+ * certainly better said again than delivered silently a week late.
+ */
+const DM_RESEND_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/** Most messages re-offered per sweep, so a backlog does not arrive as a burst. */
+const DM_RESEND_BATCH = 5;
+
+/** When each message was last re-offered. In memory: a restart may retry sooner. */
+const dmResendAttempts = new Map<string, number>();
+
+/**
+ * Offers undelivered direct messages to the network again.
+ *
+ * Safe to repeat because the receiver has always deduplicated by message id and
+ * treated a second copy as a retransmit — it simply never got one, since
+ * nothing here ever sent one. It answers a repeat with a fresh `delivered`
+ * receipt too, so a lost receipt settles on the next attempt instead of leaving
+ * a delivered message being retried until the window closes.
+ *
+ * Only messages whose peer is reachable right now are attempted, so this costs
+ * nothing while somebody is away and starts the moment they are back.
+ */
+function sweepDirectMessages(): void {
+  if (!getSettings().online) {
+    return;
+  }
+
+  const now = Date.now();
+  const pending = directMessages.awaitingDelivery({ now, maxAgeMs: DM_RESEND_MAX_AGE_MS });
+
+  // Anything no longer pending — delivered, deleted, or aged out — stops being
+  // tracked, or this map is a slow leak for the life of the process.
+  const stillPending = new Set(pending.map((message) => message.id));
+  for (const id of Array.from(dmResendAttempts.keys())) {
+    if (!stillPending.has(id)) {
+      dmResendAttempts.delete(id);
+    }
+  }
+
+  let attempted = 0;
+  for (const message of pending) {
+    if (attempted >= DM_RESEND_BATCH) {
+      break;
+    }
+    if (now - (dmResendAttempts.get(message.id) ?? 0) < DM_RESEND_INTERVAL_MS) {
+      continue;
+    }
+    if (!getPeerHost(message.peerId)) {
+      continue; // Still away. Nothing to do but wait for them to announce.
+    }
+
+    dmResendAttempts.set(message.id, now);
+    attempted += 1;
+    sendDirectMessage(message.peerId, {
+      kind: 'message',
+      id: message.id,
+      type: message.type,
+      content: message.content,
+      dataUrl: message.dataUrl,
+      fileName: message.fileName,
+      fileSize: message.fileSize,
+      replyTo: message.replyTo,
+      sentAt: message.sentAt
+    });
+  }
 }
 
 /** Applies the retention window and the size ceiling to stored history. */
@@ -4080,6 +4165,10 @@ function stopUdpService() {
   if (clipboardPollTimer) {
     clearInterval(clipboardPollTimer);
     clipboardPollTimer = null;
+  }
+  if (dmResendTimer) {
+    clearInterval(dmResendTimer);
+    dmResendTimer = null;
   }
   if (transferSweepTimer) {
     clearInterval(transferSweepTimer);
