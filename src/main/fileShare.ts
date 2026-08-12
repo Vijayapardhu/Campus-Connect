@@ -93,6 +93,23 @@ export type FileShareManagerOptions = {
    * design exists to avoid — because a socket write queues rather than refuses.
    */
   awaitReady?: (peerId: string) => Promise<void>;
+  /**
+   * Whether this peer's files may be taken without stopping to ask.
+   *
+   * Asking once per transfer sounds cheap and is not: nothing can be picked
+   * until the far side has answered, so sending one file to somebody sitting
+   * next to you means clicking send, waiting for them to notice a dialog,
+   * and only then choosing the file. Between two devices that are already in
+   * the same room — which is to say, that have already proved they know its
+   * password — the dialog asks a question whose answer is always yes, and the
+   * cost of it lands every single time.
+   *
+   * Injected rather than decided here, because the trust boundary is room
+   * membership and this file deliberately knows nothing about rooms.
+   */
+  autoAccept?: (peerId: string) => boolean;
+  /** Told when a transfer was taken without asking, so it can still be shown. */
+  onAutoAccepted?: (peerName: string) => void;
 };
 
 type StreamedFile = {
@@ -390,6 +407,20 @@ export class FileShareManager {
       fromDeviceName,
       at: this.now()
     };
+
+    /*
+     * Answered here rather than by a person, when the peer is one this device
+     * already trusts. Routed through `respond` instead of inlining the accept,
+     * so the reachability check that has to happen before committing to
+     * `busy()` — and everything else that path has learned — is not quietly
+     * duplicated into a second version that will drift from it.
+     */
+    if (this.options.autoAccept?.(fromDeviceId)) {
+      this.options.onAutoAccepted?.(fromDeviceName);
+      void this.respond(signal.transferId, true).catch(() => undefined);
+      return;
+    }
+
     this.emit(true);
   }
 

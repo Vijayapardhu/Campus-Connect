@@ -3057,7 +3057,7 @@ const settle = (ms = 60) => new Promise((resolve) => setTimeout(resolve, ms));
  * reordering what the sender puts on the wire, which is the only way to test
  * the receiver's placement logic without an actual lossy link.
  */
-function twoDevices({ clock, intercept } = {}) {
+function twoDevices({ clock, intercept, autoAccept, onAutoAccepted } = {}) {
   const inbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-recv-'));
   const outbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-send-'));
   const now = clock ? () => clock.value : undefined;
@@ -3082,6 +3082,8 @@ function twoDevices({ clock, intercept } = {}) {
 
   receiver = new FileShareManager({
     now,
+    autoAccept,
+    onAutoAccepted,
     send: (_peerId, signal) => {
       setImmediate(() => sender.handleSignal('dev-b', 'Laptop B', signal));
       return true;
@@ -3112,6 +3114,80 @@ async function handshake(devices, files) {
 }
 
 const landed = (dir) => fs.readdirSync(dir).filter((name) => name !== '.partials');
+
+/*
+ * Sending to somebody already in your room.
+ *
+ * The handshake is unchanged on the wire — the receiver still answers, it just
+ * answers by itself. What these check is that answering automatically reaches
+ * exactly the same state as a person clicking accept, and that the cases where
+ * nobody should be answering for you still stop and ask.
+ */
+testAsync('a file from a room member needs no dialog', async () => {
+  const devices = twoDevices({ autoAccept: () => true });
+  const file = makeFile(devices.outbox, 'slides.pdf', 70 * 1024);
+
+  devices.sender.request('dev-b', 'Laptop B');
+  await settle(30);
+
+  assert.strictEqual(devices.receiver.state.incoming, undefined, 'nobody was asked');
+
+  const transfer = devices.sender.state.transfers.find((candidate) => candidate.status === 'active');
+  assert.ok(transfer, 'the sender was accepted without anyone clicking anything');
+
+  const result = await devices.sender.sendFiles(transfer.transferId, [file]);
+  await settle(120);
+
+  assert.strictEqual(result.ok, true, result.message);
+  assert.deepStrictEqual(landed(devices.inbox), ['slides.pdf']);
+  assert.strictEqual(devices.receiver.busy(), false);
+});
+
+testAsync('a device outside your rooms is still asked', async () => {
+  const devices = twoDevices({ autoAccept: () => false });
+
+  devices.sender.request('dev-b', 'Laptop B');
+  await settle(30);
+
+  assert.ok(devices.receiver.state.incoming, 'a stranger must not be let through');
+  assert.strictEqual(
+    devices.sender.state.transfers.find((candidate) => candidate.status === 'active'),
+    undefined,
+    'and the sender waits rather than proceeding'
+  );
+});
+
+testAsync('the peer is named when a transfer is taken without asking', async () => {
+  const announced = [];
+  const devices = twoDevices({ autoAccept: () => true, onAutoAccepted: (name) => announced.push(name) });
+
+  devices.sender.request('dev-b', 'Laptop B');
+  await settle(30);
+
+  assert.deepStrictEqual(announced, ['Laptop A'], 'a file must not arrive unannounced');
+});
+
+testAsync('being busy still refuses a trusted peer', async () => {
+  // Auto-accept decides who may skip the dialog, not how many transfers this
+  // device can run at once — one at a time is the whole reason `busy()` exists.
+  const devices = twoDevices({ autoAccept: () => true });
+  const file = makeFile(devices.outbox, 'first.bin', 40 * 1024);
+
+  devices.sender.request('dev-b', 'Laptop B');
+  await settle(30);
+  const transfer = devices.sender.state.transfers.find((candidate) => candidate.status === 'active');
+  const streaming = devices.sender.sendFiles(transfer.transferId, [file]);
+
+  devices.receiver.handleSignal('dev-c', 'Laptop C', { kind: 'request', transferId: 'other' });
+  assert.strictEqual(
+    devices.receiver.state.transfers.filter((candidate) => candidate.status === 'active').length,
+    1,
+    'a second transfer was accepted while one was already running'
+  );
+
+  await streaming;
+  await settle(120);
+});
 
 testAsync('one file arrives whole, and both sides finish', async () => {
   const devices = twoDevices();

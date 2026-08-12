@@ -784,6 +784,15 @@ export type AppSettings = {
   notificationSound: boolean;
   /** Tell other devices when their messages arrive and when you read them. */
   sendReceipts: boolean;
+  /**
+   * Take files from devices in your rooms without asking first.
+   *
+   * Scoped to accepted room members and nothing wider: they have proved they
+   * know the room's password and their key is bound, so the dialog was asking a
+   * question with one answer. Devices outside your rooms are still asked about
+   * every time, whatever this is set to.
+   */
+  autoAcceptFiles: boolean;
 
   /**
    * Ring out loud for an incoming call. A call is over in seconds if nobody
