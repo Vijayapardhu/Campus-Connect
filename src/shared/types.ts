@@ -859,14 +859,23 @@ export const RETENTION_CHOICES = [
   { value: 1, label: '1 day' },
   { value: 7, label: '7 days' },
   { value: 30, label: '30 days' },
+  { value: 90, label: '90 days' },
+  { value: 365, label: '1 year' },
   { value: 0, label: 'Never keep' }
 ] as const;
 
+/*
+ * Every value here has to stay in step with `DEFAULT_SETTINGS.maxStorageMb`:
+ * these populate a `<select>`, and a default that is not one of the options
+ * leaves the control showing nothing at all.
+ */
 export const STORAGE_CHOICES = [
   { value: 25, label: '25 MB' },
   { value: 100, label: '100 MB' },
   { value: 250, label: '250 MB' },
-  { value: 1000, label: '1 GB' }
+  { value: 1000, label: '1 GB' },
+  { value: 2000, label: '2 GB' },
+  { value: 5000, label: '5 GB' }
 ] as const;
 
 export type InterfaceReport = {

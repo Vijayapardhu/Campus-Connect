@@ -52,6 +52,16 @@ function isKeyMap(value: unknown): value is KeyMap {
 }
 
 export class KeyVault {
+  private opened = false;
+  private sealedState = false;
+  private cache: KeyMap = {};
+
+  constructor(
+    private readonly storage: VaultStorage,
+    private readonly encryptor: Encryptor,
+    private readonly onWarn: (message: string) => void = () => {}
+  ) {}
+
   /**
    * True when what is on disk is actually encrypted.
    *
@@ -59,36 +69,54 @@ export class KeyVault {
    * offered nowhere safe to put them. Callers surface this rather than
    * pretending the keys were saved.
    */
-  readonly sealed: boolean;
-
-  private cache: KeyMap;
-
-  constructor(
-    private readonly storage: VaultStorage,
-    private readonly encryptor: Encryptor,
-    private readonly onWarn: (message: string) => void = () => {}
-  ) {
-    this.sealed = encryptor.available();
-    this.cache = this.load();
-
-    /*
-     * Migration runs on construction rather than lazily, so a device that is
-     * opened once and never touched again still stops holding plaintext.
-     */
-    if (this.sealed && Object.keys(this.storage.readLegacy()).length > 0) {
-      this.persist();
-      this.storage.clearLegacy();
-      this.onWarn('Room keys moved into the OS credential store.');
-    }
+  get sealed(): boolean {
+    this.open();
+    return this.sealedState;
   }
 
   read(): KeyMap {
+    this.open();
     return { ...this.cache };
   }
 
   write(keys: KeyMap): void {
+    this.open();
     this.cache = { ...keys };
     this.persist();
+  }
+
+  /**
+   * Ask the platform once, on first use rather than at construction.
+   *
+   * `safeStorage.isEncryptionAvailable()` answers false — silently, without
+   * throwing — until Electron has emitted `ready`, and both vaults are built at
+   * module scope, thousands of lines before `app.whenReady()`. Sealing was
+   * therefore decided against a credential store that had not started yet: every
+   * launch concluded there was nowhere safe to write, kept this device's signing
+   * key in memory, and minted a fresh one next time. Every other device had the
+   * previous key pinned and refused the new one, which is how two healthy
+   * machines on one network could exchange packets and still deliver nothing.
+   *
+   * Deferring to first use costs nothing, because nothing reads a vault before
+   * the app is up, and the answer is still only asked for once.
+   */
+  private open(): void {
+    if (this.opened) {
+      return;
+    }
+    this.opened = true;
+    this.sealedState = this.encryptor.available();
+    this.cache = this.load();
+
+    /*
+     * Migration runs on first open rather than per key, so a device that is
+     * opened once and never touched again still stops holding plaintext.
+     */
+    if (this.sealedState && Object.keys(this.storage.readLegacy()).length > 0) {
+      this.persist();
+      this.storage.clearLegacy();
+      this.onWarn('Room keys moved into the OS credential store.');
+    }
   }
 
   // --- internals -----------------------------------------------------------
@@ -103,7 +131,7 @@ export class KeyVault {
   private load(): KeyMap {
     const blob = this.storage.readVault();
 
-    if (blob && this.sealed) {
+    if (blob && this.sealedState) {
       try {
         const parsed: unknown = JSON.parse(this.encryptor.decrypt(Buffer.from(blob, 'base64')));
         if (isKeyMap(parsed)) {
@@ -122,7 +150,7 @@ export class KeyVault {
       return {};
     }
 
-    if (blob && !this.sealed) {
+    if (blob && !this.sealedState) {
       this.onWarn('Room keys are stored encrypted but this system offers no way to decrypt them.');
       return {};
     }
@@ -141,7 +169,7 @@ export class KeyVault {
    * harm than writing it somewhere readable, and the warning says so.
    */
   private persist(): void {
-    if (!this.sealed) {
+    if (!this.sealedState) {
       this.storage.writeVault(undefined);
       this.storage.clearLegacy();
       this.onWarn(

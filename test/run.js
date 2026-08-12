@@ -22,7 +22,20 @@ if (!fs.existsSync(path.join(ROOT, 'crypto.js'))) {
 
 const crypto = require(path.join(ROOT, 'crypto.js'));
 const { RoomManager, directRoomId } = require(path.join(ROOT, 'roomManager.js'));
-const { HistoryManager } = require(path.join(ROOT, 'historyManager.js'));
+const {
+  HistoryManager,
+  MAX_CLIPBOARD_PER_ROOM,
+  MAX_CHAT_PER_ROOM
+} = require(path.join(ROOT, 'historyManager.js'));
+
+/*
+ * Caps are asserted against the exported constants rather than the numbers they
+ * happen to hold. These tests were written with 100 and 500 inline, so raising
+ * the caps failed five of them for no reason but the literal — which says
+ * nothing about whether trimming still works.
+ */
+const OVER_CLIPBOARD_CAP = MAX_CLIPBOARD_PER_ROOM + 50;
+const OVER_CHAT_CAP = MAX_CHAT_PER_ROOM + 100;
 const { DirectMessageManager } = require(path.join(ROOT, 'directMessage.js'));
 const { CallManager, PARTICIPANT_TTL_MS } = require(path.join(ROOT, 'callManager.js'));
 const { migrateUserData } = require(path.join(ROOT, 'migrate.js'));
@@ -661,9 +674,9 @@ test('the polled clipboard does not create duplicates', () => {
 
 test('per-room caps are enforced independently', () => {
   const h = makeHistory();
-  for (let i = 0; i < 130; i++) h.addClipboardEntry('text', `r1-${i}`, 'A', 'A', 'r1');
+  for (let i = 0; i < OVER_CLIPBOARD_CAP; i++) h.addClipboardEntry('text', `r1-${i}`, 'A', 'A', 'r1');
   for (let i = 0; i < 10; i++) h.addClipboardEntry('text', `r2-${i}`, 'A', 'A', 'r2');
-  assert.strictEqual(h.getClipboardHistory('r1').length, 100);
+  assert.strictEqual(h.getClipboardHistory('r1').length, MAX_CLIPBOARD_PER_ROOM);
   assert.strictEqual(h.getClipboardHistory('r2').length, 10, 'a busy room must not evict a quiet one');
 });
 
@@ -699,7 +712,7 @@ test('a pinned item is not evicted by newer items', () => {
   const h = makeHistory();
   const first = h.addClipboardEntry('text', 'keep me', 'A', 'A', 'r1');
   assert.strictEqual(h.togglePin(first.id), true);
-  for (let i = 0; i < 150; i++) h.addClipboardEntry('text', `noise-${i}`, 'A', 'A', 'r1');
+  for (let i = 0; i < OVER_CLIPBOARD_CAP; i++) h.addClipboardEntry('text', `noise-${i}`, 'A', 'A', 'r1');
   const survivors = h.getClipboardHistory('r1');
   assert.ok(survivors.some((e) => e.id === first.id), 'the pinned entry was evicted');
 });
@@ -710,10 +723,10 @@ test('pinned items do not consume the cap', () => {
     const e = h.addClipboardEntry('text', `pin-${i}`, 'A', 'A', 'r1');
     h.togglePin(e.id);
   }
-  for (let i = 0; i < 150; i++) h.addClipboardEntry('text', `noise-${i}`, 'A', 'A', 'r1');
+  for (let i = 0; i < OVER_CLIPBOARD_CAP; i++) h.addClipboardEntry('text', `noise-${i}`, 'A', 'A', 'r1');
   const all = h.getClipboardHistory('r1');
   assert.strictEqual(all.filter((e) => e.pinned).length, 5);
-  assert.strictEqual(all.filter((e) => !e.pinned).length, 100, 'unpinned entries should still be capped at 100');
+  assert.strictEqual(all.filter((e) => !e.pinned).length, MAX_CLIPBOARD_PER_ROOM, 'unpinned entries should still be capped');
 });
 
 test('pinned items sort above the rest', () => {
@@ -729,7 +742,7 @@ test('unpinning re-exposes an item to the cap', () => {
   const h = makeHistory();
   const first = h.addClipboardEntry('text', 'temporary', 'A', 'A', 'r1');
   h.togglePin(first.id);
-  for (let i = 0; i < 150; i++) h.addClipboardEntry('text', `noise-${i}`, 'A', 'A', 'r1');
+  for (let i = 0; i < OVER_CLIPBOARD_CAP; i++) h.addClipboardEntry('text', `noise-${i}`, 'A', 'A', 'r1');
   assert.strictEqual(h.togglePin(first.id), false);
   assert.ok(!h.getClipboardHistory('r1').some((e) => e.id === first.id), 'it should be trimmed once unpinned');
 });
@@ -764,7 +777,7 @@ test('a pinned chat message is not evicted by the ones after it', () => {
   const h = makeHistory();
   const first = addChat(h, 'r1', 'keep me');
   assert.strictEqual(h.toggleChatPin(first.id), true);
-  for (let i = 0; i < 600; i++) addChat(h, 'r1', `noise-${i}`);
+  for (let i = 0; i < OVER_CHAT_CAP; i++) addChat(h, 'r1', `noise-${i}`);
   assert.ok(h.getChatHistory('r1').some((m) => m.id === first.id), 'the pinned message was evicted');
 });
 
@@ -773,17 +786,17 @@ test('pinned chat messages do not consume the cap', () => {
   for (let i = 0; i < 5; i++) {
     h.toggleChatPin(addChat(h, 'r1', `pin-${i}`).id);
   }
-  for (let i = 0; i < 600; i++) addChat(h, 'r1', `noise-${i}`);
+  for (let i = 0; i < OVER_CHAT_CAP; i++) addChat(h, 'r1', `noise-${i}`);
   const all = h.getChatHistory('r1');
   assert.strictEqual(all.filter((m) => m.pinned).length, 5);
-  assert.strictEqual(all.filter((m) => !m.pinned).length, 500, 'unpinned messages are still capped');
+  assert.strictEqual(all.filter((m) => !m.pinned).length, MAX_CHAT_PER_ROOM, 'unpinned messages are still capped');
 });
 
 test('unpinning a chat message re-exposes it to the cap', () => {
   const h = makeHistory();
   const first = addChat(h, 'r1', 'temporary');
   h.toggleChatPin(first.id);
-  for (let i = 0; i < 600; i++) addChat(h, 'r1', `noise-${i}`);
+  for (let i = 0; i < OVER_CHAT_CAP; i++) addChat(h, 'r1', `noise-${i}`);
   assert.strictEqual(h.toggleChatPin(first.id), false);
   assert.ok(!h.getChatHistory('r1').some((m) => m.id === first.id), 'it should be trimmed once unpinned');
 });
@@ -796,7 +809,7 @@ test('a pinned DM survives the per-peer cap, and unpinning gives it back', () =>
   const dm = makeDirectMessages();
   const kept = dm.send('B', 'B', { type: 'text', content: 'keep me' });
   assert.strictEqual(dm.togglePin('B', kept.id).pinned, true);
-  for (let i = 0; i < 600; i++) dm.send('B', 'B', { type: 'text', content: `noise-${i}` });
+  for (let i = 0; i < OVER_CHAT_CAP; i++) dm.send('B', 'B', { type: 'text', content: `noise-${i}` });
   assert.ok(dm.findMessage('B', kept.id), 'the pinned message was evicted');
 
   assert.strictEqual(dm.togglePin('B', kept.id).pinned, false);
@@ -3576,6 +3589,63 @@ test('emptying the vault clears the stored blob', () => {
   vault.write({ room: 'aa' });
   vault.write({});
   assert.strictEqual(store.state.vault, undefined);
+});
+
+/*
+ * safeStorage as Electron actually behaves: it answers false, silently and
+ * without throwing, until the app has emitted `ready`. Both vaults are built at
+ * module scope, long before that, so a vault that decides whether it can seal
+ * at construction time always decides no — and then writes nothing, for the
+ * life of the install.
+ */
+function wakingCrypto() {
+  const real = fakeCrypto();
+  const gate = { ready: false, asked: 0 };
+  return {
+    gate,
+    encryptor: {
+      available: () => {
+        gate.asked += 1;
+        return gate.ready;
+      },
+      encrypt: real.encrypt,
+      decrypt: real.decrypt
+    }
+  };
+}
+
+test('the credential store is consulted on first use, not at construction', () => {
+  const store = fakeStore();
+  const { gate, encryptor } = wakingCrypto();
+
+  const vault = new KeyVault(store, encryptor);
+  assert.strictEqual(gate.asked, 0, 'building the vault asks the platform nothing');
+
+  gate.ready = true; // app.whenReady() fires.
+  vault.write({ room: 'a1b2c3d4' });
+
+  assert.strictEqual(vault.sealed, true, 'it seals once there is somewhere to seal to');
+  assert.ok(store.state.vault, 'and the keys actually reach the disk');
+  assert.strictEqual(gate.asked, 1, 'the platform is still only asked once');
+});
+
+test('an identity outlives the launch that created it', () => {
+  const store = fakeStore();
+  const { gate, encryptor } = wakingCrypto();
+
+  // This launch: vault built before ready, identity written after it.
+  const first = new KeyVault(store, encryptor);
+  gate.ready = true;
+  first.write({ publicKey: 'pub-1', privateKey: 'priv-1' });
+
+  // The next launch reads the same storage and must find the same key. Deciding
+  // sealability at construction meant it found nothing, generated a replacement,
+  // and every peer that had pinned 'pub-1' refused the device from then on.
+  assert.deepStrictEqual(
+    new KeyVault(store, fakeCrypto()).read(),
+    { publicKey: 'pub-1', privateKey: 'priv-1' },
+    'the same key comes back, so no peer is asked to accept a new one'
+  );
 });
 
 

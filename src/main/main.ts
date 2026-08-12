@@ -153,6 +153,13 @@ type AppStore = {
   identityVault?: string;
   /** Which public key belongs to which device id. Public data, not secret. */
   deviceKeys: Record<string, DeviceKeyRecord>;
+  /**
+   * When the pins written by versions that could not keep an identity were
+   * cleared. Set once; its presence is what stops the repair running again.
+   */
+  pinnedKeysRepairedAt?: number;
+  /** When the retention defaults were last lifted on an existing profile. */
+  retentionRaisedAt?: number;
   clipboardHistory: ClipboardHistoryEntry[];
   chatHistory: ChatMessage[];
   /** Direct 1:1 messages, device-to-device — not part of any room's history. */
@@ -206,8 +213,13 @@ const CHUNK_CHARS = 8000;
  * The socket buffers matter far more than the chunk size. With the OS default
  * a 3 MB transfer lost ~50% of its datagrams to buffer overflow before they
  * ever reached the wire; at 8 MB the same transfer loses none.
+ *
+ * 16 MB rather than 8 because this is charged to the kernel's socket buffer,
+ * not the heap, and every machine this targets has the headroom several times
+ * over. The OS clamps the request to its own maximum where it will not grant
+ * it, so asking for more than a platform allows costs nothing.
  */
-const SOCKET_BUFFER_BYTES = 8 * 1024 * 1024;
+const SOCKET_BUFFER_BYTES = 16 * 1024 * 1024;
 /**
  * Refuse to even start a transfer beyond this — measured, not chosen.
  *
@@ -223,8 +235,16 @@ const OUTBOUND_TRANSFER_TTL_MS = 20000;
 /** Quiet period before the receiver asks for the pieces it is missing. */
 const NACK_AFTER_MS = 500;
 const TRANSFER_SWEEP_MS = 300;
-/** Chunks are paced so the socket buffer is not overwhelmed and dropped. */
-const CHUNK_BATCH = 8;
+/**
+ * Chunks are paced so the socket buffer is not overwhelmed and dropped.
+ *
+ * Raised in step with `SOCKET_BUFFER_BYTES` and no further: 16 chunks of
+ * `CHUNK_CHARS` is ~128 KB per tick against a 16 MB buffer, the same ratio that
+ * was measured to lose nothing at half of each. The pacing interval is left
+ * alone — the batch size is what fills the buffer, and shortening the gap as
+ * well would be two changes at once with only one of them measured.
+ */
+const CHUNK_BATCH = 16;
 const CHUNK_PACING_MS = 2;
 /** Cap on how many gaps one retransmit request advertises. */
 const MAX_NACK_INDICES = 512;
@@ -308,8 +328,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   hasOnboarded: false,
   launchAtLogin: false,
   launchMinimized: true,
-  retainMediaDays: 7,
-  maxStorageMb: 100,
+  retainMediaDays: 30,
+  // Must be one of STORAGE_CHOICES, or the settings dropdown renders blank.
+  maxStorageMb: 1000,
   autoUpdate: true
 };
 
@@ -330,7 +351,10 @@ const migration = migrateUserData({
   legacyNames: ['shared-clipboard-desktop', 'Shared Clipboard']
 });
 
-const store = new Store<AppStore>({
+/** Everything except the history collections, which have their own file. */
+type SettingsStore = Omit<AppStore, keyof HistoryStore>;
+
+const store = new Store<SettingsStore>({
   defaults: {
     deviceId: randomUUID(),
     deviceName: getSystemDeviceName(),
@@ -341,9 +365,9 @@ const store = new Store<AppStore>({
     rooms: [],
     roomKeys: {},
     deviceKeys: {},
-    clipboardHistory: [],
-    chatHistory: [],
-    directMessages: [],
+    // clipboardHistory, chatHistory and directMessages deliberately absent —
+    // they live in `historyStore`, and defaulting them here would have
+    // electron-store write the empty slots straight back into config.json.
     dmArchivedThreads: [],
     blocked: [],
     snippets: [],
@@ -351,16 +375,69 @@ const store = new Store<AppStore>({
   }
 });
 
+/** The collections that grow without bound, kept in a file of their own. */
+type HistoryStore = Pick<AppStore, 'clipboardHistory' | 'chatHistory' | 'directMessages'>;
+
+const HISTORY_KEYS = new Set<keyof AppStore>([
+  'clipboardHistory',
+  'chatHistory',
+  'directMessages'
+]);
+
 /**
- * Everything reads through here rather than touching the store directly.
+ * History lives beside the settings, not among them.
+ *
+ * electron-store rewrites a store's entire file on every `set`, and these three
+ * values are at once the largest the app holds and the ones it appends to most
+ * often. Together in `config.json` that is quadratic-feeling work for no reason:
+ * a single clipboard copy rewrote every room, key pin, pairing and setting
+ * alongside a megabyte of clips already saved, and the file this was measured on
+ * was 996 KB of history against 5 KB of everything else.
+ *
+ * Split, a write carries only its own weight — which is what makes the larger
+ * retention limits worth having rather than a way to make every copy slower.
+ */
+const historyStore = new Store<HistoryStore>({
+  name: 'history',
+  defaults: { clipboardHistory: [], chatHistory: [], directMessages: [] }
+});
+
+/**
+ * Carry history across into its own file, once.
+ *
+ * Only ever moves a non-empty value onto an empty one, so it cannot overwrite
+ * anything already split out, and it clears the old slot either way so
+ * `config.json` stops paying for a copy nothing reads.
+ */
+function splitHistoryFile(): void {
+  /** The same file, seen as the shape it had before the split. */
+  const legacyStore = store as unknown as Store<HistoryStore>;
+
+  for (const key of ['clipboardHistory', 'chatHistory', 'directMessages'] as const) {
+    const legacy = legacyStore.get(key);
+    if (!Array.isArray(legacy) || legacy.length === 0) {
+      continue;
+    }
+
+    if ((historyStore.get(key) as unknown[]).length === 0) {
+      historyStore.set(key, legacy as never);
+      log.info(`[store] Moved ${legacy.length} ${key} entries into history.json.`);
+    }
+    legacyStore.delete(key);
+  }
+}
+
+splitHistoryFile();
+
+/**
+ * Everything reads through here rather than touching the stores directly.
  *
  * electron-store re-reads and re-parses its entire file on every single `get`,
- * and rewrites the whole thing on every `set`. That file also holds the
- * clipboard and chat history, so it is routinely megabytes of JSON — and the
- * hot paths hit it constantly: the room roster is checked for every message
- * that arrives, and a peer's last-seen time is refreshed for every packet,
- * which during a large image is thousands of them. The app was spending most of
- * a transfer parsing its own settings file.
+ * and rewrites the whole thing on every `set`. The hot paths hit it constantly:
+ * the room roster is checked for every message that arrives, and a peer's
+ * last-seen time is refreshed for every packet, which during a large image is
+ * thousands of them. The app was spending most of a transfer parsing its own
+ * settings file.
  *
  * So values are read from disk once and kept in memory afterwards. Writes still
  * go straight through, because they have to survive a crash.
@@ -369,7 +446,12 @@ const cache = new Map<keyof AppStore, unknown>();
 
 function read<K extends keyof AppStore>(key: K): AppStore[K] {
   if (!cache.has(key)) {
-    cache.set(key, store.get(key));
+    cache.set(
+      key,
+      HISTORY_KEYS.has(key)
+        ? historyStore.get(key as keyof HistoryStore)
+        : store.get(key as keyof SettingsStore)
+    );
   }
   return cache.get(key) as AppStore[K];
 }
@@ -401,10 +483,12 @@ const retryingSaves = new Set<keyof AppStore>();
  */
 function save<K extends keyof AppStore>(key: K, value: AppStore[K]): void {
   try {
-    if (value === undefined) {
-      store.delete(key);
+    if (HISTORY_KEYS.has(key)) {
+      historyStore.set(key as keyof HistoryStore, value as never);
+    } else if (value === undefined) {
+      store.delete(key as keyof SettingsStore);
     } else {
-      store.set(key, value);
+      store.set(key as keyof SettingsStore, value as never);
     }
   } catch (error) {
     log.warn(`Could not save ${String(key)}, will try again: ${(error as Error).message}`);
@@ -482,7 +566,22 @@ const identityVault = new KeyVault(
   (message) => log.warn(`[identity] ${message}`)
 );
 
-const identity: DeviceIdentity = (() => {
+let identityCache: DeviceIdentity | null = null;
+
+/**
+ * This device's keypair, resolved on first use rather than at import.
+ *
+ * Deliberately not a module-scope constant. Reading the vault is what decides
+ * whether anything can be sealed, and before `app.whenReady()` the platform
+ * always answers no — so resolving the identity here at import time minted a
+ * throwaway signing key on every launch and persisted none of them, leaving
+ * every peer refusing us against the key it had pinned. See `KeyVault.open`.
+ */
+function getIdentity(): DeviceIdentity {
+  if (identityCache) {
+    return identityCache;
+  }
+
   const stored = identityVault.read();
   const fresh = createIdentity();
 
@@ -512,13 +611,104 @@ const identity: DeviceIdentity = (() => {
     );
   }
 
+  identityCache = next;
   return next;
-})();
+}
 
 const deviceRegistry = new DeviceRegistry({
   read: () => read('deviceKeys'),
   write: (records) => write('deviceKeys', records)
 });
+
+/**
+ * Forget the keys pinned while no device could keep the key it pinned them with.
+ *
+ * Signing and pinning arrived in the same change that built the identity vault
+ * at module scope, so for the whole life of the feature no install ever
+ * persisted its signing key: each launch minted a new one. Every record in
+ * `deviceKeys` therefore names a key its device threw away, and `check()`
+ * answers 'mismatch' forever after.
+ *
+ * That state cannot heal on its own. `authenticate()` gates *every* inbound
+ * message, join requests included, so the usual remedy — rejoin the room, which
+ * rebinds the key properly — is itself refused before any handler sees it. Two
+ * devices in this condition are deadlocked, and nothing either user can do
+ * inside the app breaks the tie.
+ *
+ * So the pins are dropped exactly once, on the first launch that can actually
+ * keep an identity. It costs the trust-on-first-use history and re-opens the
+ * window TOFU always has; it buys back a working app, and every device is about
+ * to present a key it will still hold tomorrow. Rejoining a room re-establishes
+ * the stronger `bound` binding on top, as it always did.
+ */
+function repairPinnedKeys(): void {
+  if (read('pinnedKeysRepairedAt')) {
+    return;
+  }
+
+  const stale = Object.keys(read('deviceKeys'));
+  write('pinnedKeysRepairedAt', Date.now());
+
+  if (stale.length === 0) {
+    return;
+  }
+
+  for (const id of stale) {
+    deviceRegistry.forget(id);
+  }
+
+  log.warn(
+    `[identity] Cleared ${stale.length} stale key pin(s) left by a version that could not keep its own signing key. Devices will be learned again as they announce themselves.`
+  );
+}
+
+/** What `DEFAULT_SETTINGS` held before history moved out of `config.json`. */
+const FORMER_DEFAULT_STORAGE_MB = 100;
+const FORMER_DEFAULT_RETAIN_DAYS = 7;
+
+/**
+ * Lift the retention settings on profiles that never chose them.
+ *
+ * A raised default only reaches new installs — an existing profile has the old
+ * number written into it and keeps it forever. The old numbers were low because
+ * history shared `config.json` with everything else, and that constraint is
+ * gone, so leaving them would mean the change never reaches the devices that
+ * have been running longest.
+ *
+ * Only a value that still exactly matches the old default is touched, which is
+ * as close as the stored settings come to recording "never chosen". Anything a
+ * person actually picked — including picking the old default again from the
+ * dropdown — is left alone, at the cost of missing the few who chose it
+ * deliberately. That is the right way round: quietly raising a ceiling somebody
+ * set on purpose is worse than leaving one they never thought about.
+ */
+function raiseUntouchedRetention(): void {
+  if (read('retentionRaisedAt')) {
+    return;
+  }
+
+  const settings = read('settings');
+  const next = { ...settings };
+  let raised = false;
+
+  if (settings.maxStorageMb === FORMER_DEFAULT_STORAGE_MB) {
+    next.maxStorageMb = DEFAULT_SETTINGS.maxStorageMb;
+    raised = true;
+  }
+  if (settings.retainMediaDays === FORMER_DEFAULT_RETAIN_DAYS) {
+    next.retainMediaDays = DEFAULT_SETTINGS.retainMediaDays;
+    raised = true;
+  }
+
+  write('retentionRaisedAt', Date.now());
+
+  if (raised) {
+    write('settings', next);
+    log.info(
+      `[store] Raised untouched retention settings to ${next.maxStorageMb} MB / ${next.retainMediaDays} days.`
+    );
+  }
+}
 
 const roomManager = new RoomManager({
   readRooms: () => read('rooms'),
@@ -626,7 +816,7 @@ const directMessages = new DirectMessageManager({
  */
 function dmKeyFor(peerId: string): Buffer | null {
   const boxKey = read('peers').find((peer) => peer.id === peerId)?.boxPublicKey;
-  return boxKey ? dmAgreedKey(identity.boxPrivateKey, boxKey, deviceId(), peerId) : null;
+  return boxKey ? dmAgreedKey(getIdentity().boxPrivateKey, boxKey, deviceId(), peerId) : null;
 }
 
 /**
@@ -1033,17 +1223,17 @@ function signableOf(message: WireMessage): Signable {
   };
 }
 
-function deliver(message: WireMessage, targets: string[]): boolean {
-  if (!udpSocket || targets.length === 0) {
-    return false;
-  }
-
-  /*
-   * Signed here rather than where the message was built, because this is the
-   * one place every outbound message passes through — including the chunks a
-   * large payload is split into, which are messages in their own right.
-   */
-  message.pubKey = identity.publicKey;
+/**
+ * Attach this device's keys and signature to an outbound message.
+ *
+ * Every message that reaches the wire has to pass through here, because
+ * `authenticate()` drops anything unsigned before a handler ever sees it. That
+ * includes the chunk envelopes a large payload is split into: they are messages
+ * in their own right, built fresh around an already-signed payload, and a
+ * signature on what is inside does nothing for the envelope carrying it.
+ */
+function signMessage(message: WireMessage): void {
+  message.pubKey = getIdentity().publicKey;
   // Set *before* signing, not after — `signableOf`'s digest covers whatever
   // is on the message at this point, and this has to be one of them. Unsigned,
   // an attacker able to tamper with packets on this LAN (exactly what the
@@ -1053,8 +1243,16 @@ function deliver(message: WireMessage, targets: string[]): boolean {
   // alongside everything else, forging a different one needs the sender's
   // signing private key — which is the same guarantee `deviceRegistry`
   // already gives every other field on the message.
-  message.boxPubKey = identity.boxPublicKey;
-  message.sig = signPayload(identity.privateKey, signableOf(message));
+  message.boxPubKey = getIdentity().boxPublicKey;
+  message.sig = signPayload(getIdentity().privateKey, signableOf(message));
+}
+
+function deliver(message: WireMessage, targets: string[]): boolean {
+  if (!udpSocket || targets.length === 0) {
+    return false;
+  }
+
+  signMessage(message);
 
   const json = JSON.stringify(message);
   const bytes = Buffer.byteLength(json);
@@ -1195,6 +1393,13 @@ function chunkDatagram(transferId: string, index: number, total: number, data: s
   message.index = index;
   message.total = total;
   message.data = data;
+  /*
+   * Signed here because these go out through `sendDatagram` directly, not
+   * through `deliver` — the payload inside was signed before it was split, but
+   * the receiver authenticates the envelope it actually received, and an
+   * unsigned envelope is dropped before it can ever be reassembled.
+   */
+  signMessage(message);
   return message;
 }
 
@@ -1331,6 +1536,9 @@ function sweepTransfers(): void {
     nack.transferId = pending.transferId;
     nack.targetDeviceId = pending.senderId;
     nack.missing = missing;
+    // Goes out through `sendDatagram` rather than `deliver`, so it has to be
+    // signed here or the sender drops the request and never resends.
+    signMessage(nack);
 
     const host = getPeerHost(pending.senderId);
     sendDatagram(nack, targetList(host ? [host] : [], !host));
@@ -4248,6 +4456,22 @@ app.whenReady().then(() => {
   seedLaunchSettingFromSystem();
   applyLaunchSettings();
   registerProtocolClient();
+
+  /*
+   * Settle this device's identity before anything can announce it.
+   *
+   * This is the earliest point `safeStorage` answers truthfully, and the key has
+   * to be established before the first advert leaves rather than whenever some
+   * message first happens to need signing.
+   */
+  getIdentity();
+  if (!identityVault.sealed) {
+    log.warn(
+      '[identity] No OS credential store is available, so this device cannot keep its signing key between launches. Other devices will refuse it after every restart.'
+    );
+  }
+  repairPinnedKeys();
+  raiseUntouchedRetention();
 
   /*
    * What the window is allowed to ask the system for. Everything unrecognised is

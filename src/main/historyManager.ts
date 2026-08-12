@@ -7,10 +7,40 @@ import type {
   StorageStats
 } from '../shared/types';
 
-const MAX_CLIPBOARD_PER_ROOM = 100;
-const MAX_CHAT_PER_ROOM = 500;
-/** Images above this size stay in memory but are not written to disk. */
-const MAX_PERSISTED_DATA_URL_BYTES = 256 * 1024;
+/*
+ * Per-room retention.
+ *
+ * These were held down by where the history was stored rather than by what a
+ * machine could hold: every entry sat in `config.json`, which electron-store
+ * rewrites in full on every write, so each extra clip made every unrelated
+ * setting change more expensive. History now has its own file, and the cost of
+ * keeping more of it is the file itself — a few MB of JSON against caps a
+ * laptop would not notice.
+ *
+ * Chat is allowed an order of magnitude more than clipboard because a message
+ * is a line of text while a clip can be an image; the byte ceilings below and
+ * `maxStorageMb` are what actually bound the attachments.
+ */
+export const MAX_CLIPBOARD_PER_ROOM = 500;
+export const MAX_CHAT_PER_ROOM = 5000;
+/**
+ * Images above this size stay in memory but are not written to disk — so a
+ * screenshot larger than this pastes fine all session and is gone by the next
+ * launch, which reads as the app losing things at random.
+ *
+ * 256 KB was sized against a history that shared `config.json` with every
+ * setting the app owns, where each persisted image was re-serialised on every
+ * unrelated write. History has its own file now and the storage ceiling is
+ * 1 GB, so the old number had become the binding constraint for no remaining
+ * reason: a plain screenshot on an ordinary display clears 256 KB easily and
+ * comfortably fits 1 MB.
+ *
+ * Worst case is bounded by the two limits either side of it —
+ * `MAX_CLIPBOARD_PER_ROOM` entries at this size, swept back under
+ * `maxStorageMb` by `compact()` — so raising it widens what survives a restart
+ * without moving the ceiling on what the app will store.
+ */
+const MAX_PERSISTED_DATA_URL_BYTES = 1024 * 1024;
 const PERSIST_DEBOUNCE_MS = 750;
 
 export interface HistoryPersistence {

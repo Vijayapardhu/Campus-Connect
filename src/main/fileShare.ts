@@ -32,8 +32,22 @@ import type {
 /** How long an unanswered request stays on offer. */
 export const REQUEST_TIMEOUT_MS = 60000;
 
-/** Largest single file this will move. Streaming keeps memory low either way. */
-export const MAX_FILE_SHARE_BYTES = 512 * 1024 * 1024;
+/**
+ * Largest single file this will move. Streaming keeps memory low either way.
+ *
+ * This is the one size ceiling in the app that is not paying for the file in
+ * memory: slices are read from disk into a reused `SLICE_BYTES` buffer and
+ * written straight back out, so a 2 GB file and a 2 MB one have the same
+ * footprint — `MAX_BUFFERED_SLICES` bounds the receiver at ~6 MB regardless.
+ * What it costs instead is time and disk, both of which an ordinary machine has
+ * in quantity, so the limit is set where a transfer stops being reasonable to
+ * sit through rather than where it stops fitting in RAM.
+ *
+ * Deliberately unlike `MAX_TRANSFER_BYTES` and `MAX_FILE_BYTES` in main.ts,
+ * which hold the whole payload as one string and are pinned by V8's ~512 MB
+ * string ceiling rather than by the size of the machine.
+ */
+export const MAX_FILE_SHARE_BYTES = 2 * 1024 * 1024 * 1024;
 
 /**
  * Raw bytes per slice. Small enough that a slice plus its envelope fits one
