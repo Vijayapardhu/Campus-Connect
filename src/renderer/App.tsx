@@ -1164,6 +1164,11 @@ export default function App() {
                   if (status.state === 'error') push(status.error ?? 'Could not check for updates.', 'error');
                 });
               }}
+              onNetworkReset={async () => {
+                const result = await api.networkReset();
+                setState(await api.getState());
+                push(result.message, result.ok ? 'success' : 'error');
+              }}
               onDownloadUpdate={() => api.updateDownload()}
               onInstallUpdate={() => run(api.updateInstall())}
             />
