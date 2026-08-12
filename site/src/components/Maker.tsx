@@ -15,7 +15,7 @@ import { useTilt, CountUp, Words } from '../lib/effects';
  * is worse here than no figure at all — recount them when they next matter.
  */
 const STATS: Array<{ value: string; label: string; note: string }> = [
-  { value: '80', label: 'commits', note: 'all by one person' },
+  { value: '83', label: 'commits', note: 'all by one person' },
   { value: '31k', label: 'lines of TypeScript', note: 'main, renderer and shared' },
   { value: '361', label: 'tests', note: 'green on every build' },
   { value: '6', label: 'wire protocol revisions', note: 'versioned, and checked on every packet' }

@@ -37,9 +37,9 @@ const ROOT = '../';
  * the page is that a reader can go and check any of it, which only works if
  * nothing on it was estimated.
  *
- * It includes the mistakes. Seventeen of eighty commits are the project
- * correcting itself, and a build log that lists only what went right is a
- * marketing page wearing a lab coat.
+ * It includes the mistakes. Eighteen of eighty-three commits are the
+ * project correcting itself, and a build log that lists only what went
+ * right is a marketing page wearing a lab coat.
  */
 export default function BuildLog() {
   const calm = useReducedMotion();
@@ -57,7 +57,7 @@ export default function BuildLog() {
           <div className="wrap">
             <motion.p className="eyebrow" {...reveal()}>The build log</motion.p>
             <h1>
-              <Words delay={0.1}>Eighty commits,</Words>{' '}
+              <Words delay={0.1}>Eighty-three commits,</Words>{' '}
               <em><Words delay={0.35}>and what each one cost.</Words></em>
             </h1>
             <motion.p className="lede" {...reveal(0.5)}>
@@ -84,11 +84,11 @@ export default function BuildLog() {
           <div className="wrap">
             <motion.p className="eyebrow" {...reveal()}>How it went</motion.p>
             <h2 className="statement">
-              <Words inView>Eleven days with commits in them,</Words>{' '}
-              <em><Words inView delay={0.28}>inside a sixteen-day span.</Words></em>
+              <Words inView>Twelve days with commits in them,</Words>{' '}
+              <em><Words inView delay={0.28}>inside a seventeen-day span.</Words></em>
             </h2>
             <motion.p className="lede" {...reveal(0.12)}>
-              Twenty-two tagged releases, most of them on the day the work landed. A version number
+              Twenty-three tagged releases, most of them on the day the work landed. A version number
               here is closer to a save point than an announcement.
             </motion.p>
 
@@ -373,7 +373,7 @@ export default function BuildLog() {
           <div className="wrap">
             <motion.p className="eyebrow" {...reveal()}>What broke</motion.p>
             <h2 className="statement">
-              <Words inView>Seventeen of the eighty commits</Words>{' '}
+              <Words inView>Eighteen of the eighty-three commits</Words>{' '}
               <em><Words inView delay={0.3}>are the project correcting itself.</Words></em>
             </h2>
             <motion.p className="lede" {...reveal(0.12)}>

@@ -24,9 +24,9 @@ export interface Stat {
 }
 
 export const STATS: Stat[] = [
-  { value: '80', label: 'commits', note: 'one author, no co-authors' },
-  { value: '22', label: 'tagged releases', note: 'v0.1.0 through v0.8.0' },
-  { value: '11', label: 'days with commits', note: 'inside a sixteen-day span' },
+  { value: '83', label: 'commits', note: 'one author, no co-authors' },
+  { value: '23', label: 'tagged releases', note: 'v0.1.0 through v0.9.0' },
+  { value: '12', label: 'days with commits', note: 'inside a seventeen-day span' },
   { value: '31k', label: 'lines of TypeScript', note: 'across 68 source files' },
   { value: '361', label: 'tests', note: 'run on every build' },
   { value: '6', label: 'wire protocol revisions', note: 'checked on every packet' }
@@ -149,7 +149,7 @@ export const TIMELINE: Day[] = [
   },
   {
     date: '9–11 August',
-    commits: 5,
+    commits: 4,
     releases: [],
     title: 'A full pass over everything, twice',
     body:
@@ -160,6 +160,19 @@ export const TIMELINE: Day[] = [
       'ones. A second, narrower pass went back over file sharing specifically and found three more. ' +
       'The custom domain needed one more correction in between — dropping a leading www. that never ' +
       'actually resolved.'
+  },
+  {
+    date: '12 August',
+    commits: 3,
+    releases: ['v0.9.0'],
+    title: 'The name catches up with itself',
+    body:
+      'The repository was renamed to Campus-Connect a while before this, and the old name had kept ' +
+      'quietly living on: hardcoded in package.json — including the electron-builder config the ' +
+      'shipped app’s own auto-updater reads — in the CLI installer’s actual download logic, in the ' +
+      'in-app About screen, and across every doc and site link. All of it pointed at the current ' +
+      'repository by the end of the day, alongside the security and reliability fixes from the two ' +
+      'days before it, released together as v0.9.0.'
   }
 ];
 
@@ -406,14 +419,14 @@ export interface Misstep {
 }
 
 /*
- * Real commit subjects, in the words they were committed in. Seventeen of
- * the eighty commits are shaped like this — counted by grepping commit
- * subjects for fix/stop/never/resume/close/correct, which almost certainly
- * undercounts it (a commit titled "Sign every message, so a device id has
- * to be proved rather than claimed" is fixing a weakness without using any
- * of those words) but is a number anyone can rerun rather than one taken on
- * faith. A build log that lists only what went right is a marketing page
- * wearing a lab coat.
+ * Real commit subjects, in the words they were committed in. Eighteen of
+ * the eighty-three commits are shaped like this — counted by grepping
+ * commit subjects for fix/stop/never/resume/close/correct, which almost
+ * certainly undercounts it (a commit titled "Sign every message, so a
+ * device id has to be proved rather than claimed" is fixing a weakness
+ * without using any of those words) but is a number anyone can rerun
+ * rather than one taken on faith. A build log that lists only what went
+ * right is a marketing page wearing a lab coat.
  */
 export const MISSTEPS: Misstep[] = [
   {
