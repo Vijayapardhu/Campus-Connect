@@ -276,6 +276,17 @@ function refuseIfTooLarge(bytes: number): ActionResult | null {
  * was meant to prevent.
  */
 const FILE_SHARE_HIGH_WATER_BYTES = 4 * 1024 * 1024;
+/**
+ * How long a file transfer waits for the direct link before giving up on it.
+ *
+ * Slices travel over TCP and nowhere else, so a link that is not up *yet* used
+ * to end the transfer on its first slice with "the connection was lost" — for
+ * two devices that could see each other perfectly well and simply had not been
+ * dialled, or had been idle long enough to be dropped. Long enough for a dial
+ * across a local network several times over, short enough that a peer which has
+ * actually gone says so rather than hanging.
+ */
+const FILE_SHARE_DIAL_TIMEOUT_MS = 8000;
 
 /** Enough to make common files preview and open correctly on the far side. */
 const MIME_BY_EXTENSION: Record<string, string> = {
@@ -321,6 +332,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   notifications: true,
   notificationSound: true,
   sendReceipts: true,
+  autoAcceptFiles: true,
   ringOnCalls: true,
   startCallsMuted: false,
   quickPasteShortcut: 'Control+Shift+V',
@@ -751,7 +763,39 @@ const remoteSessions = new RemoteSessionManager();
  * transfer is a thing that happens now, and nothing about it should survive a
  * restart except the files the receiver chose to keep.
  */
+/**
+ * Whether a peer's files may be taken without stopping to ask.
+ *
+ * The boundary is an accepted place in a room this device is also in. That is
+ * not a guess about who somebody is: joining a room means having proved you
+ * know its password, the owner binds your key at that moment, and every message
+ * since has been checked against it by `authenticate` before reaching any of
+ * this. A device that clears all of that is one the person here has already
+ * decided to share a room with, and asking them again per transfer adds a
+ * dialog rather than a decision.
+ *
+ * Everything outside that — an unknown device on the same network, a room this
+ * device has left, a member still pending approval — still asks, because for
+ * those the dialog is the only thing standing between a stranger on the LAN and
+ * a file appearing in somebody's downloads folder.
+ */
+function mayAutoAcceptFiles(peerId: string): boolean {
+  if (!read('settings').autoAcceptFiles) {
+    return false;
+  }
+
+  return roomManager
+    .getRooms()
+    .some((room) => roomManager.isAcceptedMember(room.roomId, peerId));
+}
+
 const fileShares = new FileShareManager({
+  autoAccept: mayAutoAcceptFiles,
+  onAutoAccepted: (peerName) => {
+    // Not a prompt, but not silent either: a file appearing unannounced is its
+    // own kind of alarming, and this is the only moment it can be mentioned.
+    notify('Receiving files', `${peerName} is sending you files.`);
+  },
   send: (peerId, signal) => {
     const host = getPeerHost(peerId);
     if (!host) {
@@ -770,8 +814,7 @@ const fileShares = new FileShareManager({
      * TCP already orders and retransmits, and every discovered peer is dialled,
      * so refusing here costs nothing and turns silent corruption into a clear
      * "no direct connection" the moment it matters.
-     */
-    /*
+     *
      * Signed even though this bypasses `deliver` — especially because it
      * bypasses `deliver`. The receiver authenticates every slice like anything
      * else, so an unsigned one is dropped on arrival: the sender streams the
@@ -789,6 +832,22 @@ const fileShares = new FileShareManager({
     if (!host) {
       return;
     }
+
+    /*
+     * Dial before streaming, rather than failing because nobody had yet.
+     *
+     * This runs before every slice, so it is also what recovers a link dropped
+     * halfway through a large file: the transfer pauses while the socket comes
+     * back instead of ending on the first slice that found it missing.
+     */
+    if (!tcp?.isConnected(host)) {
+      tcp?.connect(host);
+      const deadline = Date.now() + FILE_SHARE_DIAL_TIMEOUT_MS;
+      while (tcp && !tcp.isConnected(host) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+
     // Bounded memory rather than bounded speed: the file streams as fast as the
     // link drains, and never queues more than this much ahead of it.
     while (tcp?.isConnected(host) && tcp.pendingBytes(host) > FILE_SHARE_HIGH_WATER_BYTES) {

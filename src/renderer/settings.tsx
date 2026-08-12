@@ -461,6 +461,12 @@ export function SettingsPage({
               checked={settings.sendReceipts}
               onChange={(next) => onUpdateSettings({ sendReceipts: next })}
             />
+            <SwitchRow
+              title="Accept files from my rooms"
+              description="Take files from devices in your rooms without asking first — they already know the room password. Anyone else is still asked about every time."
+              checked={settings.autoAcceptFiles}
+              onChange={(next) => onUpdateSettings({ autoAcceptFiles: next })}
+            />
           </section>
         )}
 
