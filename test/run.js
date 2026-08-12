@@ -3629,6 +3629,31 @@ test('the credential store is consulted on first use, not at construction', () =
   assert.strictEqual(gate.asked, 1, 'the platform is still only asked once');
 });
 
+/*
+ * main.ts imports Electron, so it cannot be required here and its send paths
+ * cannot be exercised directly. What can be checked is the shape of the code,
+ * and for this particular fault that turns out to be the useful thing to check:
+ * three separate call sites — chunk envelopes, retransmit requests, and file
+ * data slices — each put `JSON.stringify(message)` straight into a `send`, and
+ * each produced a message the far end silently discarded as unsigned. Every one
+ * of them looked correct in review and passed every behavioural test, because
+ * the modules under test are handed a fake `send` and never authenticate
+ * anything.
+ *
+ * `signedJson` is the only sanctioned way to turn a message into bytes. This
+ * asserts nothing goes around it.
+ */
+test('nothing serialises a message onto a socket without signing it', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.ts'), 'utf8');
+  const unsigned = [...source.matchAll(/\.send\([^;]*?JSON\.stringify\(/g)];
+
+  assert.deepStrictEqual(
+    unsigned.map((match) => match[0]),
+    [],
+    'a send() is serialising a message itself instead of going through signedJson()'
+  );
+});
+
 test('an identity outlives the launch that created it', () => {
   const store = fakeStore();
   const { gate, encryptor } = wakingCrypto();
