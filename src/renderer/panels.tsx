@@ -1593,6 +1593,17 @@ export function MembersPanel({
   const invitable = peers.filter(
     (peer) => !room.members.some((member) => member.deviceId === peer.id)
   );
+  const [inviteQuery, setInviteQuery] = React.useState('');
+  const inviteNeedle = inviteQuery.trim().toLowerCase();
+  // Nobody is listed until something is typed — the same reasoning as the
+  // Files and Messages pickers: a name or device id you already know is a
+  // faster, more deliberate way to find one specific person than scrolling
+  // a roster of everyone currently on the network.
+  const inviteMatches = inviteNeedle
+    ? invitable.filter(
+        (peer) => peer.name.toLowerCase().includes(inviteNeedle) || peer.id.toLowerCase().includes(inviteNeedle)
+      )
+    : [];
   const [qr, setQr] = React.useState<string | null>(null);
   const [showQr, setShowQr] = React.useState(false);
 
@@ -1660,7 +1671,7 @@ export function MembersPanel({
         <section className="card">
           <div className="card__header">
             <div style={{ flex: 1 }}>
-              <h3 className="card__title">Devices on this network</h3>
+              <h3 className="card__title">Invite someone</h3>
               <p className="card__desc">
                 Invite someone directly instead of passing on a code. They still have to
                 accept, and you still have to approve them.
@@ -1675,40 +1686,77 @@ export function MembersPanel({
               running on them and they are on the same network.
             </p>
           ) : (
-            invitable.map((peer) => {
-              const invited = invitedIds.includes(peer.id);
-              return (
-                <div key={peer.id} className="member">
-                  <span className="member__avatar">{initials(peer.name)}</span>
-                  <div className="member__body">
-                    <div className="member__name">{peer.name}</div>
-                    <div className="member__meta">
-                      {invited ? 'Invited — waiting for them to accept' : peer.host}
+            <>
+              <div className="search">
+                <SearchIcon size={14} />
+                <input
+                  className="search__input"
+                  value={inviteQuery}
+                  onChange={(event) => setInviteQuery(event.target.value)}
+                  onKeyDown={(event) => event.key === 'Escape' && setInviteQuery('')}
+                  placeholder="Find a name or device id here"
+                  aria-label="Find a device to invite"
+                  spellCheck={false}
+                />
+                {inviteQuery ? (
+                  <Button
+                    size="sm"
+                    icon
+                    variant="ghost"
+                    onClick={() => setInviteQuery('')}
+                    aria-label="Clear search"
+                  >
+                    <XIcon size={13} />
+                  </Button>
+                ) : null}
+              </div>
+
+              {!inviteNeedle ? (
+                <p className="text-sm text-tertiary" style={{ paddingTop: 'var(--space-2)' }}>
+                  {invitable.length} {invitable.length === 1 ? 'device is' : 'devices are'} visible
+                  right now — type a name or id above to find one.
+                </p>
+              ) : inviteMatches.length === 0 ? (
+                <p className="text-sm text-tertiary" style={{ paddingTop: 'var(--space-2)' }}>
+                  Nothing visible matches “{inviteQuery.trim()}”.
+                </p>
+              ) : (
+                inviteMatches.map((peer) => {
+                  const invited = invitedIds.includes(peer.id);
+                  return (
+                    <div key={peer.id} className="member">
+                      <span className="member__avatar">{initials(peer.name)}</span>
+                      <div className="member__body">
+                        <div className="member__name">{peer.name}</div>
+                        <div className="member__meta">
+                          {invited ? 'Invited — waiting for them to accept' : peer.host}
+                        </div>
+                      </div>
+                      <div className="member__actions">
+                        <Button
+                          size="sm"
+                          variant={invited ? 'ghost' : 'default'}
+                          onClick={() => onInvite(peer.id)}
+                          disabled={invited}
+                        >
+                          {invited ? (
+                            <>
+                              <CheckIcon size={14} />
+                              Invited
+                            </>
+                          ) : (
+                            <>
+                              <SendIcon size={14} />
+                              Invite
+                            </>
+                          )}
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                  <div className="member__actions">
-                    <Button
-                      size="sm"
-                      variant={invited ? 'ghost' : 'default'}
-                      onClick={() => onInvite(peer.id)}
-                      disabled={invited}
-                    >
-                      {invited ? (
-                        <>
-                          <CheckIcon size={14} />
-                          Invited
-                        </>
-                      ) : (
-                        <>
-                          <SendIcon size={14} />
-                          Invite
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </div>
-              );
-            })
+                  );
+                })
+              )}
+            </>
           )}
         </section>
       )}

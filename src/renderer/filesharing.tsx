@@ -9,6 +9,7 @@ import {
   DownloadIcon,
   FileIcon,
   PaperclipIcon,
+  SearchIcon,
   SendIcon,
   UsersIcon,
   XIcon
@@ -361,6 +362,17 @@ export function FilesPanel({
       (peer.protocolVersion === undefined || peer.protocolVersion === protocolVersion)
   );
 
+  const [query, setQuery] = React.useState('');
+  const needle = query.trim().toLowerCase();
+  // Nobody is listed until something is typed — a name or device id, not a
+  // browsable roster. The count badge still says how many are reachable, so
+  // there is a reason to search in the first place, just not who they are.
+  const matches = needle
+    ? reachable.filter(
+        (peer) => peer.name.toLowerCase().includes(needle) || peer.id.toLowerCase().includes(needle)
+      )
+    : [];
+
   const busy =
     fileShare.incoming !== undefined ||
     fileShare.transfers.some((transfer) => transfer.status === 'requested' || transfer.status === 'active');
@@ -398,7 +410,7 @@ export function FilesPanel({
       <section className="card">
         <div className="card__header">
           <div style={{ flex: 1 }}>
-            <h3 className="card__title">Devices on this network</h3>
+            <h3 className="card__title">Send to a device</h3>
             <p className="card__desc">
               Send files straight to another machine — no room, no history, nothing stored. They have
               to accept before you pick anything.
@@ -414,30 +426,62 @@ export function FilesPanel({
             text="Devices appear here once Campus Connect is running on them and they are on the same network."
           />
         ) : (
-          reachable.map((peer) => (
-            <div key={peer.id} className="member">
-              <span className="member__avatar">{initials(peer.name)}</span>
-              <div className="member__body">
-                <div className="member__name">{peer.name}</div>
-                <div className="member__meta">{peer.host}</div>
-              </div>
-              <div className="member__actions">
-                <Button
-                  size="sm"
-                  onClick={() => onSend(peer.id, peer.name)}
-                  disabled={busy}
-                  title={
-                    busy
-                      ? `One transfer at a time${partner ? ` — ${partner.peerName} is using it` : ''}.`
-                      : undefined
-                  }
-                >
-                  <PaperclipIcon size={14} />
-                  Send files
+          <>
+            <div className="search">
+              <SearchIcon size={14} />
+              <input
+                className="search__input"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => event.key === 'Escape' && setQuery('')}
+                placeholder="Find a name or device id here"
+                aria-label="Find a device to send files to"
+                autoFocus
+                spellCheck={false}
+              />
+              {query ? (
+                <Button size="sm" icon variant="ghost" onClick={() => setQuery('')} aria-label="Clear search">
+                  <XIcon size={13} />
                 </Button>
-              </div>
+              ) : null}
             </div>
-          ))
+
+            {!needle ? (
+              <p className="text-sm text-tertiary" style={{ paddingTop: 'var(--space-2)' }}>
+                {reachable.length} {reachable.length === 1 ? 'device is' : 'devices are'} reachable
+                right now — type a name or id above to find one.
+              </p>
+            ) : matches.length === 0 ? (
+              <p className="text-sm text-tertiary" style={{ paddingTop: 'var(--space-2)' }}>
+                Nothing reachable matches “{query.trim()}”.
+              </p>
+            ) : (
+              matches.map((peer) => (
+                <div key={peer.id} className="member">
+                  <span className="member__avatar">{initials(peer.name)}</span>
+                  <div className="member__body">
+                    <div className="member__name">{peer.name}</div>
+                    <div className="member__meta">{peer.host}</div>
+                  </div>
+                  <div className="member__actions">
+                    <Button
+                      size="sm"
+                      onClick={() => onSend(peer.id, peer.name)}
+                      disabled={busy}
+                      title={
+                        busy
+                          ? `One transfer at a time${partner ? ` — ${partner.peerName} is using it` : ''}.`
+                          : undefined
+                      }
+                    >
+                      <PaperclipIcon size={14} />
+                      Send files
+                    </Button>
+                  </div>
+                </div>
+              ))
+            )}
+          </>
         )}
       </section>
 

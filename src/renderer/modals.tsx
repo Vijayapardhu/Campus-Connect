@@ -790,7 +790,7 @@ export function FindUserModal({
           className="input"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="A name, or a device id"
+          placeholder="Find a name or device id here"
           autoFocus
           spellCheck={false}
         />

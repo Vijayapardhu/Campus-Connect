@@ -517,7 +517,12 @@ export function DmPanel({
   // digging it out of a collapsed section — the query already did the work
   // of finding it.
   const archivedExpanded = showArchived || Boolean(needle);
-  const matchingPeers = needle ? reachable.filter((peer) => peer.name.toLowerCase().includes(needle)) : reachable;
+  // Nobody is listed until something is typed — a name or device id you
+  // already know is a faster, more deliberate way to reach one specific
+  // person than scrolling everyone currently visible on the network.
+  const matchingPeers = needle
+    ? reachable.filter((peer) => peer.name.toLowerCase().includes(needle) || peer.id.toLowerCase().includes(needle))
+    : [];
   const visiblePeers = matchingPeers.slice(0, MAX_VISIBLE_PEERS);
   const hiddenPeerCount = matchingPeers.length - visiblePeers.length;
 
@@ -604,8 +609,8 @@ export function DmPanel({
           className="search__input"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search messages and devices"
-          aria-label="Search messages"
+          placeholder="Find a conversation, or a name or device id here"
+          aria-label="Search messages and devices"
           spellCheck={false}
         />
       </div>
@@ -657,15 +662,17 @@ export function DmPanel({
           <Badge>{matchingPeers.length}</Badge>
         </div>
 
-        {visiblePeers.length === 0 ? (
+        {!needle ? (
+          <p className="text-sm text-tertiary" style={{ paddingTop: 'var(--space-2)' }}>
+            {reachable.length > 0
+              ? `${reachable.length} ${reachable.length === 1 ? 'device is' : 'devices are'} reachable right now — type a name or id above to find one.`
+              : 'Devices appear here once Campus Connect is running on them and they are on the same network.'}
+          </p>
+        ) : visiblePeers.length === 0 ? (
           <EmptyState
             icon={<UsersIcon size={22} />}
-            title={needle ? 'No matches' : 'No devices in range'}
-            text={
-              needle
-                ? `Nothing on this network matches “${query.trim()}”.`
-                : 'Devices appear here once Campus Connect is running on them and they are on the same network.'
-            }
+            title="No matches"
+            text={`Nothing on this network matches “${query.trim()}”.`}
           />
         ) : (
           visiblePeers.map((peer) => (

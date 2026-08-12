@@ -39,16 +39,32 @@ type SectionId =
   | 'updates'
   | 'about';
 
+/*
+ * Grouped by what a setting is actually *about*, in the order most people
+ * would reach for it — not by whichever section happened to have room:
+ *
+ *   1. Who this device is, and how it starts       (device)
+ *   2. What it does day to day                      (sync, notifications, privacy)
+ *   3. How it looks                                 (appearance)
+ *   4. What it keeps                                (snippets, storage)
+ *   5. How it reaches other devices                 (network, phone)
+ *   6. Upkeep                                        (updates, about)
+ *
+ * "Starting with this computer" used to sit inside Notifications, which is
+ * where it happened to be added rather than where anyone would look for it —
+ * it is about this device, not about being told things, and now lives there
+ * instead.
+ */
 const SECTIONS: Array<{ id: SectionId; label: string; icon: React.ReactNode }> = [
   { id: 'device', label: 'This device', icon: <UserIcon size={15} /> },
-  { id: 'appearance', label: 'Appearance', icon: <TypeIcon size={15} /> },
   { id: 'sync', label: 'Sharing', icon: <ClipboardIcon size={15} /> },
   { id: 'notifications', label: 'Notifications', icon: <BellIcon size={15} /> },
   { id: 'privacy', label: 'Privacy', icon: <ShieldIcon size={15} /> },
+  { id: 'appearance', label: 'Appearance', icon: <TypeIcon size={15} /> },
   { id: 'snippets', label: 'Snippets', icon: <BookmarkIcon size={15} /> },
-  { id: 'phone', label: 'Phone', icon: <QrIcon size={15} /> },
   { id: 'storage', label: 'Storage', icon: <DatabaseIcon size={15} /> },
   { id: 'network', label: 'Network', icon: <SignalIcon size={15} /> },
+  { id: 'phone', label: 'Phone', icon: <QrIcon size={15} /> },
   { id: 'updates', label: 'Updates', icon: <DownloadIcon size={15} /> },
   { id: 'about', label: 'About', icon: <GithubIcon size={15} /> }
 ];
@@ -236,7 +252,7 @@ export function SettingsPage({
         {section === 'device' && (
           <section className="settings__section">
             <h2 className="settings__title">This device</h2>
-            <p className="settings__lede">How this machine appears to everyone else.</p>
+            <p className="settings__lede">How this machine appears to everyone else, and how it starts.</p>
 
             <Field label="Device name" hint="Shown next to everything you share.">
               <div className="row">
@@ -291,6 +307,34 @@ export function SettingsPage({
                 <dd>{state.rooms.filter((room) => room.type !== 'direct').length}</dd>
               </div>
             </dl>
+
+            <h3 className="settings__subtitle">Starting with this computer</h3>
+
+            <SwitchRow
+              title="Open Campus Connect at login"
+              description="Start automatically when you sign in to this computer. Your clipboard, the quick-paste shortcut and file transfers only work while it is running."
+              checked={settings.launchAtLogin}
+              onChange={(next) => onUpdateSettings({ launchAtLogin: next })}
+            />
+
+            <SwitchRow
+              title="Start in the tray"
+              description={
+                settings.launchAtLogin
+                  ? 'Start without opening the window. Everything runs as normal in the background — click the tray icon whenever you want to see it.'
+                  : 'Start without opening the window. Only matters once "Open Campus Connect at login" is on — there is nothing to start hidden otherwise.'
+              }
+              checked={settings.launchMinimized}
+              disabled={!settings.launchAtLogin}
+              onChange={(next) => onUpdateSettings({ launchMinimized: next })}
+            />
+
+            <SwitchRow
+              title="Show the welcome tour again"
+              description="Replays the short introduction right over whatever is on screen now. Useful when handing this machine to somebody who has not seen it before."
+              checked={!settings.hasOnboarded}
+              onChange={(next) => onUpdateSettings({ hasOnboarded: !next })}
+            />
           </section>
         )}
 
@@ -445,34 +489,6 @@ export function SettingsPage({
               checked={settings.notificationSound}
               disabled={!settings.notifications}
               onChange={(next) => onUpdateSettings({ notificationSound: next })}
-            />
-
-            <h3 className="settings__subtitle">Starting with this computer</h3>
-
-            <SwitchRow
-              title="Show the welcome tour again"
-              description="Replays the short introduction right over whatever is on screen now. Useful when handing this machine to somebody who has not seen it before."
-              checked={!settings.hasOnboarded}
-              onChange={(next) => onUpdateSettings({ hasOnboarded: !next })}
-            />
-
-            <SwitchRow
-              title="Open Campus Connect at login"
-              description="Start automatically when you sign in to this computer. Your clipboard, the quick-paste shortcut and file transfers only work while it is running."
-              checked={settings.launchAtLogin}
-              onChange={(next) => onUpdateSettings({ launchAtLogin: next })}
-            />
-
-            <SwitchRow
-              title="Start in the tray"
-              description={
-                settings.launchAtLogin
-                  ? 'Start without opening the window. Everything runs as normal in the background — click the tray icon whenever you want to see it.'
-                  : 'Start without opening the window. Only matters once "Open Campus Connect at login" is on — there is nothing to start hidden otherwise.'
-              }
-              checked={settings.launchMinimized}
-              disabled={!settings.launchAtLogin}
-              onChange={(next) => onUpdateSettings({ launchMinimized: next })}
             />
 
             <h3 className="settings__subtitle">Calls</h3>
@@ -747,9 +763,7 @@ export function SettingsPage({
               )}
             </div>
 
-            <h3 className="h3" style={{ margin: 'var(--space-6) 0 var(--space-3)' }}>
-              Network adapters
-            </h3>
+            <h3 className="settings__subtitle">Network adapters</h3>
             <div className="facts">
               {net.interfaces.map((nic) => (
                 <div key={nic.name + nic.address}>
@@ -774,9 +788,7 @@ export function SettingsPage({
 
             {state.peers.length > 0 && (
               <>
-                <h3 className="h3" style={{ margin: 'var(--space-6) 0 var(--space-3)' }}>
-                  Devices on this network
-                </h3>
+                <h3 className="settings__subtitle">Devices on this network</h3>
                 <div className="peer-list">
                   {state.peers.map((peer) => (
                     <div key={peer.id} className="peer-item">
@@ -794,9 +806,7 @@ export function SettingsPage({
               </>
             )}
 
-            <h3 className="h3" style={{ margin: 'var(--space-6) 0 var(--space-3)' }}>
-              Test a connection
-            </h3>
+            <h3 className="settings__subtitle">Test a connection</h3>
             <p className="field__hint" style={{ marginBottom: 'var(--space-3)' }}>
               Enter the address the other machine shows here, and this checks which
               transports actually survive your network.
@@ -879,9 +889,7 @@ export function SettingsPage({
 
             {state.rememberedPeers.length > 0 && (
               <>
-                <h3 className="h3" style={{ margin: 'var(--space-6) 0 var(--space-3)' }}>
-                  Remembered devices
-                </h3>
+                <h3 className="settings__subtitle">Remembered devices</h3>
                 <p className="field__hint" style={{ marginBottom: 'var(--space-3)' }}>
                   Reconnected to automatically every time Campus Connect starts, so the address only
                   has to be typed once.
@@ -1030,9 +1038,7 @@ export function SettingsPage({
             </div>
 
             <div className="shortcuts">
-              <h3 className="h3" style={{ marginBottom: 'var(--space-3)' }}>
-                Keyboard shortcuts
-              </h3>
+              <h3 className="settings__subtitle">Keyboard shortcuts</h3>
               {[
                 ['Ctrl + 1 … 9', 'Switch to that room'],
                 ['Ctrl + F', 'Search the clipboard history'],
