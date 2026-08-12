@@ -94,6 +94,7 @@ export function SettingsPage({
   onBlockDevice,
   onTestConnection,
   onCheckUpdate,
+  onNetworkReset,
   onDownloadUpdate,
   onInstallUpdate
 }: {
@@ -115,6 +116,8 @@ export function SettingsPage({
   onBlockDevice: (deviceId: string, deviceName: string) => void;
   onTestConnection: (host: string) => Promise<ConnectivityResult>;
   onCheckUpdate: () => void;
+  /** Leaves every room and forgets every device. Messages and settings are kept. */
+  onNetworkReset: () => Promise<void>;
   onDownloadUpdate: () => void;
   onInstallUpdate: () => void;
 }) {
@@ -188,6 +191,25 @@ export function SettingsPage({
       setResult(await onTestConnection(testHost.trim()));
     } finally {
       setTesting(false);
+    }
+  }
+
+  /*
+   * Two presses rather than a dialog. Leaving every room is not undoable, so it
+   * should not happen on one stray click — but it is also the thing somebody
+   * reaches for when nothing works, and a modal to dismiss is one more obstacle
+   * in front of the fix.
+   */
+  const [confirmingReset, setConfirmingReset] = React.useState(false);
+  const [resetting, setResetting] = React.useState(false);
+
+  async function runReset() {
+    setResetting(true);
+    try {
+      await onNetworkReset();
+      setConfirmingReset(false);
+    } finally {
+      setResetting(false);
     }
   }
 
@@ -813,6 +835,31 @@ export function SettingsPage({
                 </div>
               </>
             )}
+
+            <h3 className="settings__subtitle">Start over</h3>
+            <p className="field__hint" style={{ marginBottom: 'var(--space-3)' }}>
+              Leaves every room, forgets every device this one has met, and starts
+              looking again from nothing. Worth trying when devices can see each other
+              but nothing gets through — a device that was reinstalled, or a room
+              somebody else has already closed, can leave this one holding details that
+              no longer match. <strong>Your messages, files and settings are kept.</strong>
+            </p>
+            <div className="row">
+              {confirmingReset ? (
+                <>
+                  <Button variant="danger" onClick={runReset} disabled={resetting}>
+                    {resetting ? 'Starting over…' : 'Yes, leave everything'}
+                  </Button>
+                  <Button onClick={() => setConfirmingReset(false)} disabled={resetting}>
+                    Cancel
+                  </Button>
+                </>
+              ) : (
+                <Button variant="danger" onClick={() => setConfirmingReset(true)}>
+                  Leave all rooms and start over
+                </Button>
+              )}
+            </div>
 
             <h3 className="settings__subtitle">Test a connection</h3>
             <p className="field__hint" style={{ marginBottom: 'var(--space-3)' }}>

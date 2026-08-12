@@ -141,6 +141,8 @@ export type CampusConnectApi = {
   roomUpdate: (roomId: string, patch: RoomUpdate) => Promise<ActionResult>;
   roomSwitch: (roomId: string) => Promise<ActionResult>;
   roomLeave: (roomId: string) => Promise<ActionResult>;
+  /** Leaves every room, forgets every device, and starts discovery again. */
+  networkReset: () => Promise<ActionResult>;
   roomApproveMember: (roomId: string, memberId: string) => Promise<ActionResult>;
   roomRejectMember: (roomId: string, memberId: string) => Promise<ActionResult>;
   roomRemoveMember: (roomId: string, memberId: string) => Promise<ActionResult>;

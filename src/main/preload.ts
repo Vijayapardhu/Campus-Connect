@@ -27,6 +27,7 @@ const api: CampusConnectApi = {
   roomUpdate: (roomId, patch) => ipcRenderer.invoke('room:update', roomId, patch),
   roomSwitch: (roomId) => ipcRenderer.invoke('room:switch', roomId),
   roomLeave: (roomId) => ipcRenderer.invoke('room:leave', roomId),
+  networkReset: () => ipcRenderer.invoke('network:reset'),
   roomApproveMember: (roomId, memberId) => ipcRenderer.invoke('room:approve-member', roomId, memberId),
   roomRejectMember: (roomId, memberId) => ipcRenderer.invoke('room:reject-member', roomId, memberId),
   roomRemoveMember: (roomId, memberId) => ipcRenderer.invoke('room:remove-member', roomId, memberId),

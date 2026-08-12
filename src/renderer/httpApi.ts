@@ -468,6 +468,7 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
       return { ok: true, message: '' };
     },
     roomLeave: (roomId) => rpc('room:leave', roomId),
+    networkReset: () => rpc('network:reset'),
     roomApproveMember: (roomId, memberId) => rpc('room:approve-member', roomId, memberId),
     roomRejectMember: (roomId, memberId) => rpc('room:reject-member', roomId, memberId),
     roomRemoveMember: (roomId, memberId) => rpc('room:remove-member', roomId, memberId),

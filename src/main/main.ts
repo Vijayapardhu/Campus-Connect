@@ -5547,12 +5547,17 @@ handle('room:update', (_event, roomId: string, patch: RoomUpdate): ActionResult 
   return ok(patch.regenerateJoinCode ? `${next.name} has a new join code.` : `${next.name} updated.`);
 });
 
-handle('room:leave', (_event, roomId: string): ActionResult => {
-  const room = roomManager.getRoom(roomId);
-  if (!room) {
-    return fail('Room not found.');
-  }
-
+/**
+ * Leaves or closes one room, and forgets it here.
+ *
+ * Pulled out of the IPC handler so the reset below leaves each room the same
+ * way a person leaving it by hand would — telling the other members, ending its
+ * calls, releasing its key — rather than deleting the rooms locally and leaving
+ * every other device still listing this one as a member of somewhere it has
+ * silently gone.
+ */
+function leaveRoom(room: RoomInfo): { isOwner: boolean; provable: boolean } {
+  const roomId = room.roomId;
   const isOwner = room.ownerId === deviceId();
   // Leave the call before leaving the room, while we still hold the key needed
   // to tell anyone.
@@ -5595,6 +5600,17 @@ handle('room:leave', (_event, roomId: string): ActionResult => {
     write('currentRoomId', undefined);
   }
 
+  return { isOwner, provable };
+}
+
+handle('room:leave', (_event, roomId: string): ActionResult => {
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return fail('Room not found.');
+  }
+
+  const { isOwner, provable } = leaveRoom(room);
+
   sendStateToRenderer();
   return ok(
     isOwner
@@ -5602,6 +5618,60 @@ handle('room:leave', (_event, roomId: string): ActionResult => {
       : provable
         ? `You left ${room.name}.`
         : `Removed ${room.name} from this device. This device never unlocked it, so it could not prove that to the owner — if you are still listed as a member there, ask the owner to remove you.`
+  );
+});
+
+/**
+ * Puts this device back to how it was before it met anybody.
+ *
+ * Every room left or closed properly, every remembered peer forgotten, every
+ * pinned key dropped, every discovered room cleared — then it announces itself
+ * again and starts finding people from nothing.
+ *
+ * This exists because the state that accumulates here is invisible and, when it
+ * goes wrong, indistinguishable from the app being broken: a key pinned to a
+ * device that has since been reinstalled, a roster still listing somebody who
+ * left, a room nobody remembers creating. Each has its own repair, and none of
+ * them is something a person can reasonably be expected to diagnose. One button
+ * that puts everything back to the start is worth more than a page of
+ * individual fixes nobody knows to look for.
+ *
+ * History and settings are deliberately kept. Losing the rooms is recoverable —
+ * rejoin them — but nothing brings back a year of messages, so a button meant to
+ * fix a broken connection must not be the one that deletes those too.
+ */
+handle('network:reset', (): ActionResult => {
+  const rooms = roomManager.getRooms();
+  for (const room of rooms) {
+    leaveRoom(room);
+  }
+
+  // Every pin, not the stale ones: after this device has left everything, a
+  // key bound to a membership that no longer exists is not worth keeping, and
+  // keeping it is what makes a reinstalled peer unreachable forever.
+  for (const id of Object.keys(read('deviceKeys'))) {
+    deviceRegistry.forget(id);
+  }
+
+  roomManager.clearAdverts();
+  callManager.clear();
+  write('peers', []);
+  write('rememberedPeers', []);
+  write('currentRoomId', undefined);
+
+  // Straight back on the air, so the window fills up again rather than looking
+  // like the reset broke the last thing that was working.
+  if (getSettings().online) {
+    broadcastPresence();
+    advertiseOwnedRooms();
+  }
+
+  sendStateToRenderer();
+  log.warn(`[reset] Left ${rooms.length} room(s) and forgot every known device.`);
+  return ok(
+    rooms.length > 0
+      ? `Left ${rooms.length} ${rooms.length === 1 ? 'room' : 'rooms'} and forgot every device. Your messages and settings are untouched.`
+      : 'Forgot every device and started discovery again. Your messages and settings are untouched.'
   );
 });
 
