@@ -486,6 +486,86 @@ test('a sent message round-trips through the thread and the summary', () => {
   assert.strictEqual(dm.listThreads()[0].lastMessage, 'hi');
 });
 
+/*
+ * A message was put on the wire exactly once. If the peer was asleep, off the
+ * network, or simply had not been heard from recently enough to still count as
+ * reachable, that single attempt was the whole of it — the message sat behind
+ * an "undelivered" clock that nothing was ever going to clear.
+ */
+test('a message the peer never acknowledged is still waiting to be sent', () => {
+  const dm = makeDirectMessages();
+  const sent = dm.send('B', 'Phone-B', { type: 'text', content: 'are you there' });
+
+  const waiting = dm.awaitingDelivery({ now: sent.sentAt + 1000, maxAgeMs: 60000 });
+  assert.deepStrictEqual(waiting.map((m) => m.id), [sent.id]);
+});
+
+test('an acknowledged message stops being retried', () => {
+  const dm = makeDirectMessages();
+  const sent = dm.send('B', 'Phone-B', { type: 'text', content: 'hi' });
+  dm.recordReceipt('B', [sent.id], 'delivered');
+
+  assert.deepStrictEqual(
+    dm.awaitingDelivery({ now: sent.sentAt + 1000, maxAgeMs: 60000 }),
+    [],
+    'a delivered message must not be sent again'
+  );
+});
+
+test('what the peer sent us is never retried back at them', () => {
+  const dm = makeDirectMessages();
+  dm.receive('B', 'Phone-B', { kind: 'message', id: 'm1', type: 'text', content: 'yo', sentAt: 1000 });
+
+  assert.deepStrictEqual(
+    dm.awaitingDelivery({ now: 2000, maxAgeMs: 60000 }),
+    [],
+    'only this device’s own messages are ours to resend'
+  );
+});
+
+test('a message older than the window is left alone', () => {
+  const dm = makeDirectMessages();
+  const sent = dm.send('B', 'Phone-B', { type: 'text', content: 'ancient' });
+
+  assert.deepStrictEqual(
+    dm.awaitingDelivery({ now: sent.sentAt + 120000, maxAgeMs: 60000 }),
+    [],
+    'retrying forever would deliver something silently days late'
+  );
+});
+
+test('a deleted message is not resurrected by the retry', () => {
+  const dm = makeDirectMessages();
+  const sent = dm.send('B', 'Phone-B', { type: 'text', content: 'oops' });
+  dm.markDeleted('B', sent.id, true);
+
+  assert.deepStrictEqual(dm.awaitingDelivery({ now: sent.sentAt + 1000, maxAgeMs: 60000 }), []);
+});
+
+test('the backlog comes back oldest first', () => {
+  const dm = makeDirectMessages();
+  const first = dm.send('B', 'Phone-B', { type: 'text', content: 'one' });
+  const second = dm.send('B', 'Phone-B', { type: 'text', content: 'two' });
+
+  const waiting = dm.awaitingDelivery({ now: second.sentAt + 1000, maxAgeMs: 60000 });
+  assert.deepStrictEqual(
+    waiting.map((m) => m.content),
+    ['one', 'two'],
+    'a thread that was offline must not come back backwards'
+  );
+});
+
+test('a retransmit is recognised rather than duplicated', () => {
+  // What makes resending safe at all: the receiving side has always deduplicated
+  // by id, it simply never got a second copy because nothing ever sent one.
+  const dm = makeDirectMessages();
+  const signal = { kind: 'message', id: 'm1', type: 'text', content: 'once', sentAt: 1000 };
+
+  assert.ok(dm.receive('B', 'Phone-B', signal), 'the first copy is new');
+  assert.strictEqual(dm.receive('B', 'Phone-B', signal), undefined, 'the second is not');
+  assert.strictEqual(dm.getThread('B').length, 1);
+});
+
 test('a retransmitted receive is not stored twice, but a genuinely new one from the same peer is', () => {
   const dm = makeDirectMessages();
   const signal = { kind: 'message', id: 'm1', type: 'text', content: 'hey', sentAt: Date.now() };

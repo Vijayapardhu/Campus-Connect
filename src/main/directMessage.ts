@@ -113,6 +113,33 @@ export class DirectMessageManager {
     return message;
   }
 
+  /**
+   * Messages sent from here that the other device has never acknowledged.
+   *
+   * A direct message is put on the wire exactly once. If the peer was asleep,
+   * off the network, between addresses, or simply had not been heard from
+   * recently enough to still be in `peers`, that single attempt was the whole
+   * of it: the message was stored, shown with the "undelivered" clock, and
+   * never sent again. The clock was telling the truth about the present and
+   * lying about the future — nothing was going to change it.
+   *
+   * Oldest first, so a thread that has been offline for a while comes back in
+   * the order it was written rather than backwards.
+   */
+  awaitingDelivery(options: { now: number; maxAgeMs: number }): DirectMessage[] {
+    const oldest = options.now - options.maxAgeMs;
+
+    return this.messages
+      .filter(
+        (message) =>
+          message.fromSelf &&
+          !message.deleted &&
+          message.sentAt >= oldest &&
+          !(message.deliveredTo ?? []).includes(message.peerId)
+      )
+      .sort((a, b) => a.sentAt - b.sentAt);
+  }
+
   /** One message, from either side of the thread. */
   findMessage(peerId: string, id: string): DirectMessage | undefined {
     return this.messages.find((message) => message.peerId === peerId && message.id === id);
