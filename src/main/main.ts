@@ -2097,7 +2097,17 @@ function handleRoomRequest(message: WireMessage, host: string) {
     return;
   }
 
-  if (room.type === 'public') {
+  /*
+   * A public room lets people straight in — unless its owner asked not to.
+   *
+   * That is the whole of what "public" meant, and for a room everybody in a lab
+   * should be able to walk into it is exactly right. It is also not what
+   * somebody naming a room "Public" necessarily has in mind, and the difference
+   * only becomes visible once strangers are already inside it. `requireApproval`
+   * lets the owner have the openness without the surprise, without turning
+   * every public room into one somebody has to sit and watch.
+   */
+  if (room.type === 'public' && !room.requireApproval) {
     const updated = roomManager.addAcceptedMember(room.roomId, message.deviceId, message.deviceName);
     fanOut(buildAcceptMessage(updated ?? room, message.deviceId), [host]);
     broadcastRoster(room);
@@ -4935,7 +4945,7 @@ handle('app:forget-peer', (_event, host: string, port: number): AppState => {
 
 handle(
   'room:create',
-  (_event, name: string, type: RoomType, password: string): ActionResult => {
+  (_event, name: string, type: RoomType, password: string, requireApproval?: boolean): ActionResult => {
     const trimmedName = name.trim();
     if (!trimmedName) {
       return fail('Give the room a name.');
@@ -4951,7 +4961,8 @@ handle(
       type,
       password,
       ownerId: deviceId(),
-      ownerName: deviceName()
+      ownerName: deviceName(),
+      requireApproval
     });
 
     write('currentRoomId', room.roomId);

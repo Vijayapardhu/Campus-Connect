@@ -73,6 +73,24 @@ export type RoomInfo = {
   createdAt: number;
   /** Known to the owner and to accepted members only. Stripped from adverts. */
   joinCode?: string;
+  /**
+   * Whether the owner has to admit each device by hand.
+   *
+   * Private rooms have always worked this way. Public rooms admit on the
+   * password alone — or, with no password, on nothing at all, which is what
+   * "public" was always meant to mean and is genuinely wanted for a room
+   * everybody in a lab is supposed to be able to walk into. It is not what
+   * somebody who called a room "Public" without reading closely expects, and
+   * the difference only shows up once strangers are already inside.
+   *
+   * So it is per room rather than per type: on by default for private, off for
+   * public, and changeable either way. Only the owner ever reads this — a
+   * joining device is not asked to enforce its own admission — so an older
+   * version that has never heard of the field still behaves correctly against
+   * an owner that has. Optional for the same reason: rooms created before it
+   * existed fall back to their type's original behaviour.
+   */
+  requireApproval?: boolean;
 };
 
 /**

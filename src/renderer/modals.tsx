@@ -36,17 +36,29 @@ export function CreateRoomModal({
   onCreate
 }: {
   onClose: () => void;
-  onCreate: (name: string, type: RoomType, password: string) => Promise<boolean>;
+  onCreate: (
+    name: string,
+    type: RoomType,
+    password: string,
+    requireApproval: boolean
+  ) => Promise<boolean>;
 }) {
   const [name, setName] = React.useState('');
   const [type, setType] = React.useState<RoomType>('private');
   const [password, setPassword] = React.useState('');
+  /*
+   * Follows the room type until it is touched, then stops. Somebody who has
+   * said what they want about approval should not have it silently changed
+   * back by then switching between public and private.
+   */
+  const [approval, setApproval] = React.useState<boolean | null>(null);
   const [error, setError] = React.useState('');
   const [busy, setBusy] = React.useState(false);
 
   const strength = passwordStrength(password);
   // Private rooms are approval-gated, which is only meaningful with a secret.
   const passwordRequired = type === 'private';
+  const requireApproval = approval ?? type === 'private';
 
   async function submit() {
     if (!name.trim()) {
@@ -59,7 +71,7 @@ export function CreateRoomModal({
     }
 
     setBusy(true);
-    const created = await onCreate(name.trim(), type, password);
+    const created = await onCreate(name.trim(), type, password, requireApproval);
     setBusy(false);
     if (created) {
       onClose();
@@ -102,7 +114,7 @@ export function CreateRoomModal({
               <GlobeIcon size={14} />
               Public
             </span>
-            <span className="segmented__desc">Anyone on this WiFi can join instantly.</span>
+            <span className="segmented__desc">Anyone on this WiFi can join.</span>
           </button>
           <button
             className={type === 'private' ? 'segmented__option is-selected' : 'segmented__option'}
@@ -141,6 +153,19 @@ export function CreateRoomModal({
           autoComplete="new-password"
         />
       </Field>
+
+      <div style={{ marginTop: 'var(--space-4)' }}>
+        <SwitchRow
+          title="Approve everyone who joins"
+          description={
+            requireApproval
+              ? 'Nobody gets in until you say so. You will be asked about each device.'
+              : 'Anyone who has what this room asks for is let straight in, with no prompt.'
+          }
+          checked={requireApproval}
+          onChange={setApproval}
+        />
+      </div>
     </Modal>
   );
 }
@@ -250,7 +275,7 @@ export function EditRoomModal({
               <GlobeIcon size={14} />
               Public
             </span>
-            <span className="segmented__desc">Anyone on this WiFi can join instantly.</span>
+            <span className="segmented__desc">Anyone on this WiFi can join.</span>
           </button>
           <button
             className={type === 'private' ? 'segmented__option is-selected' : 'segmented__option'}

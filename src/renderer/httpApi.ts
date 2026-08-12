@@ -454,7 +454,8 @@ export function createHttpApi(onUnpaired: () => void): CampusConnectApi {
     openExternal: (url) => rpc('app:open-external', url),
     openLink: (url) => rpc('app:open-link', url),
 
-    roomCreate: (name, type, password) => rpc('room:create', name, type, password),
+    roomCreate: (name, type, password, requireApproval) =>
+      rpc('room:create', name, type, password, requireApproval),
     roomRequestJoin: (roomId, password, joinCode) =>
       rpc('room:request-join', roomId, password, joinCode),
     roomJoinByCode: (joinCode, password) => rpc('room:join-by-code', joinCode, password),

@@ -359,6 +359,79 @@ test('an unjoined advert shows as discovered; a joined one does not', () => {
   assert.strictEqual(rm.getDiscoveredRooms().length, 1, 'a room we are in must not appear as discoverable');
 });
 
+/*
+ * Who has to be let in by hand.
+ *
+ * A public room admitting everybody is the design, not an accident — a room a
+ * whole lab should be able to walk into cannot be gated on somebody watching
+ * for prompts. It is also not what everybody naming a room "Public" has in
+ * mind, and the difference only becomes visible once strangers are inside. The
+ * defaults preserve what each room type has always done; the flag is what lets
+ * an owner choose otherwise.
+ */
+test('a private room asks the owner by default', () => {
+  const rm = makeManager();
+  const room = rm.createRoom({ name: 'R', type: 'private', password: 'pw1234', ownerId: 'A', ownerName: 'A' });
+  assert.strictEqual(room.requireApproval, true);
+});
+
+test('a public room does not ask by default', () => {
+  const rm = makeManager();
+  const room = rm.createRoom({ name: 'R', type: 'public', password: '', ownerId: 'A', ownerName: 'A' });
+  assert.strictEqual(room.requireApproval, false, 'public has to stay walk-in by default');
+});
+
+test('a public room can be told to ask', () => {
+  const rm = makeManager();
+  const room = rm.createRoom({
+    name: 'R',
+    type: 'public',
+    password: '',
+    ownerId: 'A',
+    ownerName: 'A',
+    requireApproval: true
+  });
+  assert.strictEqual(room.requireApproval, true);
+});
+
+test('a private room can be told not to ask', () => {
+  const rm = makeManager();
+  const room = rm.createRoom({
+    name: 'R',
+    type: 'private',
+    password: 'pw1234',
+    ownerId: 'A',
+    ownerName: 'A',
+    requireApproval: false
+  });
+  assert.strictEqual(room.requireApproval, false, 'the choice has to work in both directions');
+});
+
+test('the setting survives a restart', () => {
+  let rooms = [];
+  let keys = {};
+  const persistence = {
+    readRooms: () => rooms,
+    writeRooms: (next) => { rooms = next; },
+    readKeys: () => keys,
+    writeKeys: (next) => { keys = next; }
+  };
+
+  const first = new RoomManager(persistence);
+  const room = first.createRoom({
+    name: 'R',
+    type: 'public',
+    password: '',
+    ownerId: 'A',
+    ownerName: 'A',
+    requireApproval: true
+  });
+
+  // An access rule that quietly reverts on the next launch is worse than one
+  // that was never offered.
+  assert.strictEqual(new RoomManager(persistence).getRoom(room.roomId).requireApproval, true);
+});
+
 console.log('\n-- member restrictions --');
 
 /** A room with one accepted, non-owner member — the only kind that can be restricted. */

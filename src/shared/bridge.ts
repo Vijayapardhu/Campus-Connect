@@ -129,7 +129,7 @@ export type CampusConnectApi = {
    */
   openLink: (url: string) => Promise<ActionResult>;
 
-  roomCreate: (name: string, type: RoomType, password: string) => Promise<ActionResult>;
+  roomCreate: (name: string, type: RoomType, password: string, requireApproval?: boolean) => Promise<ActionResult>;
   roomRequestJoin: (roomId: string, password: string, joinCode: string) => Promise<ActionResult>;
   roomJoinByCode: (joinCode: string, password: string) => Promise<ActionResult>;
   roomUnlock: (roomId: string, password: string) => Promise<ActionResult>;
