@@ -1,6 +1,6 @@
 {
   "name": "campus-connect-desktop",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "private": true,
   "description": "An offline-first campus network: encrypted rooms for clipboard sync, chat, file transfer, and voice, video and screen-sharing calls between devices on the same LAN.",
   "main": "dist/main/main.js",
