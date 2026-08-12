@@ -602,7 +602,7 @@ export function DmPanel({
   }
 
   return (
-    <div className="stack dm-page">
+    <div className="stack">
       <div className="search">
         <SearchIcon size={14} />
         <input

@@ -611,7 +611,9 @@ export function CallStage({
           {count} {count === 1 ? 'device' : 'devices'} · {elapsed}
         </span>
         <span className="call-stage__spacer" />
-        {room?.encrypted ? <span className="call-stage__meta">Encrypted end to end</span> : null}
+        {room?.encrypted ? (
+          <span className="call-stage__meta call-stage__meta--secure">Encrypted end to end</span>
+        ) : null}
 
         {spotlight ? (
           <button className="call-btn call-btn--slim" onClick={() => setFocused('')}>
@@ -675,35 +677,43 @@ export function CallStage({
           className={local.micOn ? 'call-btn' : 'call-btn is-off'}
           onClick={onToggleMic}
           aria-pressed={!local.micOn}
+          aria-label={local.micOn ? 'Mute your microphone' : 'Unmute your microphone'}
           title={local.micOn ? 'Mute your microphone' : 'Unmute your microphone'}
         >
           {local.micOn ? <MicIcon size={17} /> : <MicOffIcon size={17} />}
-          <span>{local.micOn ? 'Mute' : 'Unmute'}</span>
+          <span className="call-btn__label">{local.micOn ? 'Mute' : 'Unmute'}</span>
         </button>
 
         <button
           className={local.cameraOn ? 'call-btn' : 'call-btn is-off'}
           onClick={onToggleCamera}
           aria-pressed={!local.cameraOn}
+          aria-label={local.cameraOn ? 'Turn your camera off' : 'Turn your camera on'}
           title={local.cameraOn ? 'Turn your camera off' : 'Turn your camera on'}
         >
           {local.cameraOn ? <VideoIcon size={17} /> : <VideoOffIcon size={17} />}
-          <span>{local.cameraOn ? 'Camera' : 'Camera off'}</span>
+          <span className="call-btn__label">{local.cameraOn ? 'Camera' : 'Camera off'}</span>
         </button>
 
         <button
           className={local.sharing ? 'call-btn is-active' : 'call-btn'}
           onClick={local.sharing ? onStopSharing : onShare}
           aria-pressed={local.sharing}
+          aria-label={local.sharing ? 'Stop sharing your screen' : 'Share a screen or window'}
           title={local.sharing ? 'Stop sharing your screen' : 'Share a screen or window'}
         >
           <ScreenShareIcon size={17} />
-          <span>{local.sharing ? 'Stop sharing' : 'Share screen'}</span>
+          <span className="call-btn__label">{local.sharing ? 'Stop sharing' : 'Share screen'}</span>
         </button>
 
-        <button className="call-btn call-btn--leave" onClick={onLeave} title="Leave the call">
+        <button
+          className="call-btn call-btn--leave"
+          onClick={onLeave}
+          aria-label="Leave the call"
+          title="Leave the call"
+        >
           <PhoneOffIcon size={17} />
-          <span>Leave</span>
+          <span className="call-btn__label">Leave</span>
         </button>
       </div>
     </div>

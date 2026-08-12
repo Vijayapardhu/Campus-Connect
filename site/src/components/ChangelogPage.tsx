@@ -32,8 +32,48 @@ export default function ChangelogPage() {
 
           <div className="release">
             <div className="release__head">
-              <h2>0.9.2</h2>
+              <h2>0.9.3</h2>
               <span className="release__now">Latest</span>
+              <span className="release__date">12 August 2026</span>
+            </div>
+
+            <p className="intro">
+              A full pass over the stylesheet against every element that actually uses it,
+              in both directions: classes applied in the interface with no rule behind
+              them, and rules with nothing left applying them.
+            </p>
+
+            <h3>Fixed</h3>
+            <ul>
+              <li><strong>Settings → Network's device list rendered with no styling at
+              all.</strong> Raw browser defaults — no card, no spacing, no icon — next to
+              every other device list in the app, which all share one properly styled
+              row. The class it was built on was never actually defined.</li>
+              <li><strong>An image in the clipboard history never got the wider layout it
+              was supposed to.</strong> The code has said "an image needs the full width;
+              a line of text does not" since the masonry grid was built — the class
+              carrying that decision had no rule to back it up, so every image sat at the
+              same width as a line of text.</li>
+              <li><strong>The paired-phone page's clipboard fallback text had no visual
+              framing.</strong> Selectable, scrollable, and otherwise correct — just
+              floating with none of the padding or border its own styles were written
+              for, because the wrapper carrying them was never actually placed around it.</li>
+              <li>Call controls — mute, camera, share, leave — now carry an accessible
+              name of their own rather than relying on a screen reader to read visible
+              button text that was not guaranteed to be there.</li>
+            </ul>
+
+            <h3>Also</h3>
+            <ul>
+              <li>Removed a dozen or so CSS rules that had stopped matching anything —
+              mostly older names left behind by an earlier version of the same component,
+              renamed since without anyone going back to remove what it left unused.</li>
+            </ul>
+          </div>
+
+          <div className="release">
+            <div className="release__head">
+              <h2>0.9.2</h2>
               <span className="release__date">12 August 2026</span>
             </div>
 

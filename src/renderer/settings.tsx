@@ -819,11 +819,24 @@ export function SettingsPage({
             {state.peers.length > 0 && (
               <>
                 <h3 className="settings__subtitle">Devices on this network</h3>
-                <div className="peer-list">
+                {/*
+                 * `.peer-list`/`.peer-item` were never actually defined
+                 * anywhere in styles.css — this rendered with zero styling,
+                 * raw block/inline browser defaults, unlike every other
+                 * peer list in the app. Rebuilt on `.blocklist`, the same
+                 * row pattern the Privacy section already uses for the
+                 * identical kind of list two tabs over.
+                 */}
+                <div className="blocklist">
                   {state.peers.map((peer) => (
-                    <div key={peer.id} className="peer-item">
-                      <strong>{peer.name}</strong>
-                      <span className="mono">{peer.host}</span>
+                    <div key={peer.id} className="blocklist__row">
+                      <span className="blocklist__icon">
+                        <SignalIcon size={15} />
+                      </span>
+                      <span className="blocklist__body">
+                        <span className="blocklist__name">{peer.name}</span>
+                        <span className="blocklist__meta mono">{peer.host}</span>
+                      </span>
                       {peer.protocolVersion !== undefined &&
                         peer.protocolVersion !== net.protocolVersion && (
                           <span className="badge badge--danger">

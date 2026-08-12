@@ -165,7 +165,17 @@ export function PhoneHome({ push }: { push: (message: string, tone?: StatusTone)
         </span>
       </button>
 
-      {fallback ? <pre className="laptop-clip__text">{fallback}</pre> : null}
+      {/*
+       * `.laptop-clip` was never actually wrapped around this — the text
+       * rendered bare, with none of the card framing its own styles were
+       * built for (padding, border, background), just the scroll/wrap
+       * rules that live directly on `.laptop-clip__text`.
+       */}
+      {fallback ? (
+        <div className="laptop-clip">
+          <pre className="laptop-clip__text">{fallback}</pre>
+        </div>
+      ) : null}
 
       {composing ? (
         <div className="phone-compose">
