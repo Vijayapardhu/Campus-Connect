@@ -32,8 +32,120 @@ export default function ChangelogPage() {
 
           <div className="release">
             <div className="release__head">
-              <h2>0.9.0</h2>
+              <h2>0.9.2</h2>
               <span className="release__now">Latest</span>
+              <span className="release__date">12 August 2026</span>
+            </div>
+
+            <p className="intro">
+              Files, calls and remote desktop all failed the same way and for closely
+              related reasons: something was put on the wire and quietly thrown away at
+              the other end. Nothing reported an error, because from the code's point of
+              view nothing had gone wrong.
+            </p>
+
+            <h3>Fixed — nothing was arriving</h3>
+            <ul>
+              <li><strong>A shared file reached 100% on the sender and never arrived.</strong>{' '}
+              Every slice went onto the direct connection unsigned, so the receiver
+              discarded all of them. The offer, the acceptance and the completion signal
+              were all signed and got through, which is exactly why the transfer could be
+              agreed, watched to completion, and still deliver nothing.</li>
+              <li><strong>A call connected and carried no sound.</strong> Answering takes
+              an instant — long enough to tell the other device you are joining, not long
+              enough to have somewhere to put its reply. The offer that came back in that
+              gap was treated as belonging to a call this device was not in, and dropped.
+              An offer is sent once, so that was the call: both ends showed each other as
+              connected participants with silence between them.</li>
+              <li><strong>Remote desktop connected to a black screen.</strong> The same
+              fault, with nothing to soften it. Accepting a request tells the other device
+              to start, and it answers before this one has finished capturing a screen —
+              so the offer arrived either with no session to match it against, or with no
+              engine built yet, and was dropped both ways.</li>
+              <li><strong>A direct message sent to someone who was away was never sent
+              again.</strong> It was put on the wire exactly once. If the other device was
+              asleep or off the network, the message was saved, shown as undelivered, and
+              abandoned — the interface was telling the truth about the present and
+              promising something about the future that nothing was going to deliver.</li>
+            </ul>
+
+            <h3>New</h3>
+            <ul>
+              <li><strong>Files from people already in your rooms arrive without a
+              dialog.</strong> Being asked once per transfer sounds cheap and is not:
+              nothing could be picked until the other person had answered, so sending one
+              file to somebody sitting next to you meant clicking send, waiting for them
+              to notice a prompt, and only then choosing the file. Anyone outside your
+              rooms is still asked about, every time.</li>
+              <li><strong>Updates install themselves.</strong> A new version is now
+              downloaded quietly in the background and applied the next time you close the
+              app — no prompt, no button, and no restart you did not choose. It can never
+              interrupt a call, a transfer or a remote session.</li>
+              <li><strong>Rooms decide who gets let in, rather than their type deciding
+              for them.</strong> Public rooms let everyone straight in and private rooms
+              ask the owner — that stays the default, but either can now be set the other
+              way when you create the room.</li>
+              <li><strong>Settings → Network → Start over.</strong> Leaves every room,
+              forgets every device this one has met, and begins discovery again from
+              nothing. For when two devices can see each other and nothing gets through.
+              Your messages, files and settings are kept.</li>
+            </ul>
+
+            <h3>Also</h3>
+            <ul>
+              <li>A file transfer now dials the direct connection instead of failing
+              because nothing had dialled it yet — and recovers if that connection drops
+              partway through a large file, rather than ending on the first slice that
+              finds it missing.</li>
+            </ul>
+          </div>
+
+          <div className="release">
+            <div className="release__head">
+              <h2>0.9.1</h2>
+              <span className="release__date">12 August 2026</span>
+            </div>
+
+            <p className="intro">
+              Two devices on the same network, on the same version, could exchange packets
+              and deliver nothing to each other. One cause had been there for the whole
+              life of the feature meant to prevent impersonation.
+            </p>
+
+            <h3>Fixed</h3>
+            <ul>
+              <li><strong>A device could not keep its own identity between launches.</strong>{' '}
+              The check for whether the system offered somewhere safe to store keys was
+              made before the app had finished starting, when the answer is always no —
+              so every launch generated a fresh signing key and saved none of them. Every
+              other device had the previous key on file and refused the new one, which
+              looks exactly like the network being broken. Devices that were already
+              refusing each other repair themselves on first launch.</li>
+              <li><strong>Anything larger than a datagram was dropped.</strong> Large
+              payloads are split into pieces, and the pieces were being sent unsigned —
+              so images and long clipboard items were discarded on arrival. The requests
+              asking for a missing piece had the same fault, so nothing could recover
+              either.</li>
+            </ul>
+
+            <h3>Changed</h3>
+            <ul>
+              <li><strong>History moved out of the settings file.</strong> It was 996 KB
+              of clips against 5 KB of everything else, and the whole file was rewritten
+              every time anything changed — so each copy rewrote every room, key and
+              setting alongside a megabyte of past clips.</li>
+              <li><strong>Much more is kept.</strong> 500 clipboard entries and 5,000
+              messages per room, 1 GB of attachments over 30 days, images up to 1 MB kept
+              across restarts rather than 256 KB, and shared files up to 2 GB.</li>
+              <li><strong>Finding a device means typing who you want.</strong> The pickers
+              in Files, Messages and Find someone opened onto everyone currently in range;
+              they now match a name or a device id instead of asking you to scroll.</li>
+            </ul>
+          </div>
+
+          <div className="release">
+            <div className="release__head">
+              <h2>0.9.0</h2>
               <span className="release__date">12 August 2026</span>
             </div>
 

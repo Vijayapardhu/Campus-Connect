@@ -24,12 +24,12 @@ export interface Stat {
 }
 
 export const STATS: Stat[] = [
-  { value: '83', label: 'commits', note: 'one author, no co-authors' },
-  { value: '23', label: 'tagged releases', note: 'v0.1.0 through v0.9.0' },
+  { value: '98', label: 'commits', note: 'one author, no co-authors' },
+  { value: '25', label: 'tagged releases', note: 'v0.1.0 through v0.9.2' },
   { value: '12', label: 'days with commits', note: 'inside a seventeen-day span' },
-  { value: '31k', label: 'lines of TypeScript', note: 'across 68 source files' },
-  { value: '361', label: 'tests', note: 'run on every build' },
-  { value: '6', label: 'wire protocol revisions', note: 'checked on every packet' }
+  { value: '32k', label: 'lines of TypeScript', note: 'across 69 source files' },
+  { value: '389', label: 'tests', note: 'run on every build' },
+  { value: '7', label: 'wire protocol revisions', note: 'checked on every packet' }
 ];
 
 /* ---------------------------------------------------------------- days -- */
@@ -537,5 +537,34 @@ export const MISSTEPS: Misstep[] = [
       'A single lost "the transfer is finished" packet — sent once, never acknowledged, unlike every ' +
       'file slice before it — left a fully-received file stuck open forever on the receiving end, ' +
       'with the app itself refusing every future transfer because it still believed one was running.'
+  },
+  {
+    commit: 'Fix two bugs that stopped devices delivering anything to each other',
+    date: '12 August',
+    lesson:
+      'Whether the system offered somewhere safe to keep a key was decided before the app had ' +
+      'finished starting, when the answer is always no — so every launch minted a signing key and ' +
+      'saved none of them, and every other device refused the one it had never seen before. The ' +
+      'feature added to stop devices impersonating each other had, for its entire life, stopped ' +
+      'them talking at all.'
+  },
+  {
+    commit: 'Sign the file slices, so a shared file arrives instead of stopping at 100%',
+    date: '12 August',
+    lesson:
+      'Third instance of one mistake: a message serialised by hand next to the call that sends it, ' +
+      'with nothing signing it on the way. Each one read naturally and passed every test, because ' +
+      'the modules under test are handed a fake transport and never authenticate anything. ' +
+      'Serialising is no longer available without the signature attached.'
+  },
+  {
+    commit: 'Keep the offer that arrives while a call is still being answered',
+    date: '12 August',
+    lesson:
+      'Answering a call takes two awaits, and the other end replies to the first of them. The ' +
+      'reply was compared against a session id that did not exist yet, judged to belong to nobody, ' +
+      'and dropped — so both people sat in a call that had connected successfully and carried no ' +
+      'sound. Remote desktop had the identical fault, and none of it was visible in WebRTC: it was ' +
+      'one comparison, inside a React effect where nothing could test it.'
   }
 ];
