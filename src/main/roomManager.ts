@@ -39,6 +39,11 @@ export type CreateRoomOptions = {
   password: string;
   ownerId: string;
   ownerName: string;
+  /**
+   * Whether the owner admits each device by hand. Defaults to what the room
+   * type has always done: private asks, public does not.
+   */
+  requireApproval?: boolean;
 };
 
 export class RoomManager {
@@ -59,7 +64,7 @@ export class RoomManager {
 
   // --- rooms ---------------------------------------------------------------
 
-  createRoom({ name, type, password, ownerId, ownerName }: CreateRoomOptions): RoomInfo {
+  createRoom({ name, type, password, ownerId, ownerName, requireApproval }: CreateRoomOptions): RoomInfo {
     const keySalt = generateSalt();
     const encrypted = password.length > 0;
 
@@ -71,6 +76,7 @@ export class RoomManager {
       ownerName,
       keySalt,
       encrypted,
+      requireApproval: requireApproval ?? type === 'private',
       createdAt: Date.now(),
       joinCode: generateJoinCode(),
       members: [

@@ -1447,7 +1447,9 @@ export default function App() {
       {modal?.kind === 'create' && (
         <CreateRoomModal
           onClose={() => setModal(null)}
-          onCreate={(name, type: RoomType, password) => run(api.roomCreate(name, type, password))}
+          onCreate={(name, type: RoomType, password, requireApproval) =>
+            run(api.roomCreate(name, type, password, requireApproval))
+          }
         />
       )}
 

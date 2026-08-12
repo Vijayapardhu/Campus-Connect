@@ -19,7 +19,8 @@ const api: CampusConnectApi = {
   openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
   openLink: (url) => ipcRenderer.invoke('app:open-link', url),
 
-  roomCreate: (name, type, password) => ipcRenderer.invoke('room:create', name, type, password),
+  roomCreate: (name, type, password, requireApproval) =>
+    ipcRenderer.invoke('room:create', name, type, password, requireApproval),
   roomRequestJoin: (roomId, password, joinCode) =>
     ipcRenderer.invoke('room:request-join', roomId, password, joinCode),
   roomJoinByCode: (joinCode, password) => ipcRenderer.invoke('room:join-by-code', joinCode, password),
