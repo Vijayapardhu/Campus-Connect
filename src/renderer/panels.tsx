@@ -301,6 +301,14 @@ function ClipCard({
 }: React.HTMLAttributes<HTMLElement> & { className: string }) {
   const innerRef = React.useRef<HTMLDivElement>(null);
   const [span, setSpan] = React.useState(1);
+  /**
+   * The height last actually measured, fed to `.clip__inner` as
+   * `--clip-settled` so it can clamp and ease toward it via CSS instead of
+   * ever rendering taller than the grid space currently reserved. `null`
+   * until the first measurement — leaving the surface unclamped for that one
+   * frame is fine, since `useLayoutEffect` runs before paint.
+   */
+  const [settledHeight, setSettledHeight] = React.useState<number | null>(null);
   /** Measurements taken while expanded would freeze the expanded size in. */
   const hovering = React.useRef(false);
 
@@ -316,6 +324,7 @@ function ClipCard({
       }
       const height = element.getBoundingClientRect().height;
       setSpan(Math.max(1, Math.ceil((height + CARD_GAP_PX) / ROW_PX)));
+      setSettledHeight(height);
     };
 
     measure();
@@ -336,8 +345,13 @@ function ClipCard({
         hovering.current = false;
       }}
     >
-      <div className="clip__inner" ref={innerRef}>
-        {children}
+      <div
+        className="clip__inner"
+        style={settledHeight !== null ? ({ ['--clip-settled' as string]: `${settledHeight}px` } as React.CSSProperties) : undefined}
+      >
+        <div className="clip__surface" ref={innerRef}>
+          {children}
+        </div>
       </div>
     </article>
   );

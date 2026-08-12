@@ -1843,11 +1843,41 @@ kbd {
   position: absolute;
   inset: 0 0 auto 0;
   min-width: 0;
-  padding: var(--space-4) var(--space-5);
   border-radius: var(--radius-xl);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  transition: border-color 200ms var(--ease), box-shadow 200ms var(--ease);
+  /*
+   * Clamped to the height last actually measured (`--clip-settled`, set from
+   * JS), and eased toward it rather than jumping — the same idiom the text
+   * clamp below uses for `--clip-full`. This is what closes the gap between
+   * the grid reserving new space and the surface actually filling it: before
+   * this, a card whose true height only became known after mount (an image
+   * that had not finished decoding at the first measurement, most visibly)
+   * could render taller than the space still reserved for it the instant
+   * that height changed, covering the row underneath until the next paint
+   * caught up. Clamped, the surface can never exceed what has already been
+   * reserved — it grows into newly reserved space over this transition
+   * instead of past whatever space existed a frame ago.
+   */
+  max-height: var(--clip-settled, none);
+  overflow: hidden;
+  transition: border-color 200ms var(--ease), box-shadow 200ms var(--ease),
+    max-height 240ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* The measured surface, inside the clamped/animated frame above — padding
+   lives here, not on `.clip__inner`, so what gets measured (this element's
+   natural, unclamped height) already includes it, matching what used to be
+   measured directly on `.clip__inner` before the frame/surface split. */
+.clip__surface {
+  padding: var(--space-4) var(--space-5);
+  min-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clip__inner {
+    transition: border-color 200ms var(--ease), box-shadow 200ms var(--ease);
+  }
 }
 
 .clip:hover,
@@ -1858,6 +1888,10 @@ kbd {
 
 .clip:hover .clip__inner,
 .clip:focus-within .clip__inner {
+  /* Free to grow past whatever is reserved — this is the one place that is
+     still meant to happen; see the file-level comment on `.clip` above. */
+  max-height: none;
+  overflow: visible;
   border-color: var(--border-strong);
   box-shadow: var(--shadow-lg);
 }
